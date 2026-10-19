@@ -149,7 +149,7 @@ namespace Mau.Bricks
                             maxIndex = spans[i].Index;
                         }
                     }
-                    int maxLines = CountLinesOf(replaced.Substring(maxIndex, maxChars));
+                    int maxLines = CountLinesOf(Slice(unified, maxIndex, maxChars));
                     spanNote = " · 匹配跨度 最长 " + maxLines.ToString() + " 行 / " + maxChars.ToString() + " 字符 · 命中合计 " + totalChars.ToString() + " 字符";
                     if (maxLines >= SpanWarnLines || maxChars >= SpanWarnChars)
                     {
@@ -240,6 +240,14 @@ namespace Mau.Bricks
         /// <returns>行摘要文本</returns>
         private static string SnippetAround(string content, int index)
         {
+            if (index < 0)
+            {
+                index = 0;
+            }
+            if (index > content.Length)
+            {
+                index = content.Length;
+            }
             int lineStart = index;
             int lineEnd = index;
             while (lineStart > 0 && content[lineStart - 1] != '\n')
@@ -320,4 +328,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:7544F5CF0A6BC343848F4AF4AEF191F1E0F710F6C09694359EACB71AF347C69A
+// #MAU_CHECKSUM:SHA256:8220E13C39F6A0910B5A309B78AA138A548C4AE8529BBA3C5E79917C96CCE2CB
