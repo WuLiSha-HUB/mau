@@ -2356,6 +2356,10 @@ namespace CatHome4.Admin
             catch (Exception ex)
             {
                 LogStore.Add("CatHome4", 2, "启动扫描目录枚举失败（跳过加载）: " + ex.Message, "CHAT");
+                // A260 二期——多猫拉起失败接启动降级登记面
+                StartupDegradation.Report("CATS_SCAN_FAILED", StartupDegradation.KindEnv, "多猫（会话目录扫描）",
+                    StartupDegradation.StateEmpty, "sessions 目录枚举失败：" + sessionsDir + " | " + ex.Message,
+                    "检查 Data/sessions 权限后重启", "S7");
                 return;
             }
             // 运行态分离——running/port 取自 Data/runtime/cats.json（cat.cfg 只承载用户配置；启动链零写入 cat.cfg）
@@ -2382,6 +2386,9 @@ namespace CatHome4.Admin
                 if (cat == null)
                 {
                     LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 会话构造失败", "CHAT");
+                    StartupDegradation.Report("CAT_BOOT_FAILED", StartupDegradation.KindData, "多猫（" + cfg.Id + "）",
+                        StartupDegradation.StateUnavailable, "会话构造失败：sessions/" + cfg.Id + "/cat.cfg",
+                        "管理面板 → 猫管理 → 检查该猫配置后重启", "S7");
                     continue;
                 }
                 _cats.Add(cat);
@@ -2410,6 +2417,9 @@ namespace CatHome4.Admin
                 if (port < 0)
                 {
                     LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 端口分配失败", "CHAT");
+                    StartupDegradation.Report("CAT_BOOT_FAILED", StartupDegradation.KindEnv, "多猫（" + cfg.Id + "）",
+                        StartupDegradation.StateUnavailable, "端口分配失败（端口段耗尽）：猫 " + cfg.Id,
+                        "关闭占用端口的进程后重启，或减少同时运行的猫", "S7");
                     continue;
                 }
                 try
@@ -2419,6 +2429,9 @@ namespace CatHome4.Admin
                 catch (Exception ex)
                 {
                     LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 拉起失败：" + ex.Message, "CHAT");
+                    StartupDegradation.Report("CAT_BOOT_FAILED", StartupDegradation.KindEnv, "多猫（" + cfg.Id + "）",
+                        StartupDegradation.StateUnavailable, "拉起失败：猫 " + cfg.Id + " 端口 " + port.ToString() + " | " + ex.Message,
+                        "管理面板 → 猫管理 → 手动启动该猫", "S7");
                     continue;
                 }
                 cat.Running = true;

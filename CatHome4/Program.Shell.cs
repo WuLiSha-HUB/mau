@@ -5,6 +5,7 @@ using System.Threading;
 using System.Windows.Forms;
 using Mau.Runtime;
 using CatHome4.Admin;
+using CatHome4.Contracts;
 using CatHome4.Http;
 
 namespace CH4
@@ -434,7 +435,7 @@ namespace CH4
                 MaximizeBox = false;
                 MinimizeBox = true;
                 StartPosition = FormStartPosition.CenterScreen;
-                ClientSize = new Size(430, 380);
+                ClientSize = new Size(430, 414);
                 AutoScaleMode = AutoScaleMode.Dpi;
                 ApplyFormIcon();
                 // [段2] 标题（猫头颜文字）/ 版本 / 构建时刻 / 运行时长
@@ -458,6 +459,15 @@ namespace CH4
                 Controls.Add(BuildLabel("Majordomo", LeftMargin, 174, Font));
                 Controls.Add(BuildLink(ResolveMajorUrl(), ValueX, 174));
                 // [段4] 开机自启——与托盘菜单同源（app.autostart）；勾选框状态即反馈（不做文字提示行）
+                // A260 启动降级——常驻可见面（与托盘 ToolTip / 提示窗同源；无降级时不显示，点击打开启动报告）
+                if (StartupDegradation.HasAny)
+                {
+                    Label degradeLabel = BuildLabel("⚠ 启动降级 " + StartupDegradation.Count.ToString() + " 项（点此查看报告）", LeftMargin, 242, Font);
+                    degradeLabel.ForeColor = Color.FromArgb(255, 200, 90, 40);
+                    degradeLabel.Cursor = Cursors.Hand;
+                    degradeLabel.Click += delegate (object sender, EventArgs e) { OpenFolder(StartupReportPath); };
+                    Controls.Add(degradeLabel);
+                }
                 _autoStartBox = new CheckBox();
                 _autoStartBox.Text = "开机自启";
                 _autoStartBox.AutoSize = true;
@@ -472,7 +482,7 @@ namespace CH4
                 _powerIconHover = CreatePowerIcon(100, true);
                 _powerButton = new PictureBox();
                 _powerButton.Size = new Size(100, 100);
-                _powerButton.Location = new Point((ClientSize.Width - _powerButton.Size.Width) / 2, 242);
+                _powerButton.Location = new Point((ClientSize.Width - _powerButton.Size.Width) / 2, 276);
                 _powerButton.Image = _powerIconNormal;
                 _powerButton.SizeMode = PictureBoxSizeMode.StretchImage;
                 _powerButton.BackColor = Color.Transparent;
@@ -481,9 +491,9 @@ namespace CH4
                 _powerButton.MouseLeave += delegate (object sender, EventArgs e) { _powerButton.Image = _powerIconNormal; };
                 _powerButton.Click += delegate (object sender, EventArgs e) { OnStopClicked(); };
                 Controls.Add(_powerButton);
-                Label stopCaption = BuildLabel("停止运行", 0, 348, Font);
+                Label stopCaption = BuildLabel("停止运行", 0, 382, Font);
                 stopCaption.ForeColor = Color.FromArgb(255, 100, 100, 100);
-                stopCaption.Location = new Point((ClientSize.Width - stopCaption.PreferredWidth) / 2, 348);
+                stopCaption.Location = new Point((ClientSize.Width - stopCaption.PreferredWidth) / 2, 382);
                 Controls.Add(stopCaption);
                 // [段6] 运行时长刷新——每秒
                 _uptimeTimer = new System.Windows.Forms.Timer();

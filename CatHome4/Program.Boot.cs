@@ -238,26 +238,32 @@ namespace CH4
 
                 FlowLayoutPanel bar = new FlowLayoutPanel();
                 bar.Dock = DockStyle.Bottom;
-                bar.Height = 46;
+                bar.Height = 56;
                 bar.FlowDirection = FlowDirection.RightToLeft;
+                bar.WrapContents = false;
+                bar.AutoScroll = true;
 
+                // 按钮宽高一律 AutoSize——高 DPI 下固定像素宽会把中文按钮文字裁断（A260 目视验收判例）
                 Button btnOk = new Button();
                 btnOk.Text = "知道了";
-                btnOk.Width = 96;
+                btnOk.AutoSize = true;
+                btnOk.AutoSizeMode = AutoSizeMode.GrowAndShrink;
                 btnOk.Height = 30;
                 btnOk.Margin = new Padding(6);
                 btnOk.Click += delegate (object sender, EventArgs e) { form.Close(); };
 
                 Button btnReport = new Button();
                 btnReport.Text = "查看启动报告";
-                btnReport.Width = 120;
+                btnReport.AutoSize = true;
+                btnReport.AutoSizeMode = AutoSizeMode.GrowAndShrink;
                 btnReport.Height = 30;
                 btnReport.Margin = new Padding(6);
                 btnReport.Click += delegate (object sender, EventArgs e) { OpenFolder(StartupReportPath); };
 
                 Button btnConfig = new Button();
                 btnConfig.Text = "打开配置目录";
-                btnConfig.Width = 120;
+                btnConfig.AutoSize = true;
+                btnConfig.AutoSizeMode = AutoSizeMode.GrowAndShrink;
                 btnConfig.Height = 30;
                 btnConfig.Margin = new Padding(6);
                 btnConfig.Click += delegate (object sender, EventArgs e)

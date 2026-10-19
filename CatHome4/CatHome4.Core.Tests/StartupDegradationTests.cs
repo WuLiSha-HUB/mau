@@ -22,7 +22,7 @@ namespace CatHome4.Core.Tests
             Assert.True(StartupDegradation.HasAny);
             Assert.Equal(1, StartupDegradation.Count);
             StartupDegradeEntry[] entries = StartupDegradation.Snapshot();
-            Assert.Equal(1, entries.Length);
+            Assert.Single(entries);
             Assert.Equal("ROOT_UNREACHABLE", entries[0].Code);
             Assert.Equal("env", entries[0].Kind);
             Assert.Equal("文件工具", entries[0].Ability);

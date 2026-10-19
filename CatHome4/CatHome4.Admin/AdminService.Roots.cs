@@ -128,16 +128,6 @@ namespace CatHome4.Admin
             return null;
         }
 
-        /// <summary>
-        /// 固定根判定——读面标记与写面校验同源。
-        /// </summary>
-        /// <param name="id">根标识（任意大小写）</param>
-        /// <returns>true=固定命名根</returns>
-        internal static bool IsFixedRootId(string id)
-        {
-            return FindFixedRoot(id) != null;
-        }
-
         // [段2] 写入校验
         /// <summary>
         /// 受控根提交校验——id 字符集（小写字母数字）+ 非 PS 内置驱动器名 + 重名（忽略大小写）+ path 绝对且存在 + 固定根齐备。
