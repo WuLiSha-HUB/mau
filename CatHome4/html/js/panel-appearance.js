@@ -40,7 +40,7 @@ function renderAppearanceRow(apc) {
     if (!apc.petKind) { tdPet.style.color = 'var(--ch-fg-weak)'; }
     tr.appendChild(tdPet);
     var tdTts = document.createElement('td');
-    tdTts.textContent = apc.ttsStyle ? apc.ttsStyle : '（无）';
+    tdTts.textContent = apc.ttsStyle ? kokoroVoiceLabel(apc.ttsStyle) : '（无）';
     if (!apc.ttsStyle) { tdTts.style.color = 'var(--ch-fg-weak)'; }
     tr.appendChild(tdTts);
     var tdSummary = document.createElement('td');
@@ -93,7 +93,7 @@ function startAppearanceEdit(apc) {
     editingApcId = apc.appearanceId;
     document.getElementById('apcNewName').value = apc.displayName || '';
     document.getElementById('apcNewPet').value = apc.petKind || '';
-    document.getElementById('apcNewTts').value = apc.ttsStyle || '';
+    setVoiceSelectValue(apc.ttsStyle || '');
     document.getElementById('apcNewSummary').checked = !!apc.roundSummary;
     document.getElementById('apcNewAudio').checked = !!apc.summaryAudio;
     document.getElementById('apcAddBtn').textContent = '保存';
@@ -175,3 +175,40 @@ syncSummaryAudioEnabled();
 document.getElementById('apcRefresh').onclick = loadAppearances;
 document.getElementById('apcCancelEdit').onclick = cancelAppearanceEdit;
 loadAppearances();
+
+// [段2] 音色下拉——选项来自 ui-common.KOKORO_VOICES（与 schema audio.voice.values 同集）
+// 旧数据容错：库里存着不在候选集内的音色名时，临时补一项显示原名，不静默清空
+function fillVoiceSelect() {
+    var sel = document.getElementById('apcNewTts');
+    if (!sel || sel.options.length > 0) { return; }
+    var emptyOpt = document.createElement('option');
+    emptyOpt.value = '';
+    emptyOpt.textContent = '（空 = 服务默认）';
+    sel.appendChild(emptyOpt);
+    for (var i = 0; i < KOKORO_VOICES.length; i++) {
+        var opt = document.createElement('option');
+        opt.value = KOKORO_VOICES[i].id;
+        opt.textContent = kokoroVoiceLabel(KOKORO_VOICES[i].id);
+        sel.appendChild(opt);
+    }
+}
+
+function setVoiceSelectValue(value) {
+    var sel = document.getElementById('apcNewTts');
+    if (!sel) { return; }
+    fillVoiceSelect();
+    var raw = String(value || '');
+    var found = false;
+    for (var i = 0; i < sel.options.length; i++) {
+        if (sel.options[i].value === raw) { found = true; break; }
+    }
+    if (!found) {
+        var legacy = document.createElement('option');
+        legacy.value = raw;
+        legacy.textContent = raw.length > 0 ? raw + '（库中既有）' : '（空 = 服务默认）';
+        sel.appendChild(legacy);
+    }
+    sel.value = raw;
+}
+
+fillVoiceSelect();

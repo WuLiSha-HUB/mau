@@ -1,5 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Text;
+using System.Text.Json;
+using Mau.Contracts;
 using Mau.Runtime;
 
 namespace CH4
@@ -394,6 +397,216 @@ namespace CH4
                 }
             }
             return false;
+        }
+        /// <summary>
+        /// 总结播报执行体（后台线程）——先播播报名（全局默认音色），再播正文（该猫外观音色）；两段共用同一个播放串行键。
+        /// </summary>
+        /// <param name="catKey">猫 key（日志定位用）</param>
+        /// <param name="displayName">猫显示名（播报名 = displayName + 说）</param>
+        /// <param name="voice">正文音色（外观池 ttsStyle；空=服务默认）</param>
+        /// <param name="text">总结正文</param>
+        private static void RunSummarySpeak(string catKey, string displayName, string voice, string text)
+        {
+            IPyService py = null;
+            if (!DataBox.TryResolve<IPyService>(out py) || py == null)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IPyService 未注入", "CHAT");
+                return;
+            }
+            IAudioService audio = null;
+            if (!DataBox.TryResolve<IAudioService>(out audio) || audio == null)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IAudioService 未注入", "CHAT");
+                return;
+            }
+            // [段0] 提示音——固定资产（钟声）；缺失由 ResolveChimePath 记 WARN 后跳过
+            string chimePath = ResolveChimePath();
+            if (chimePath.Length > 0)
+            {
+                string chimeResult = audio.Enqueue(RoundSummaryAudioKey, chimePath, -1f);
+                if (chimeResult != null && chimeResult.Length > 0)
+                {
+                    LogStore.Add("CatHome4", 2, "轮末总结提示音入队失败: " + chimeResult, "CHAT");
+                }
+            }
+            // [段1] 播报名——全局默认音色（先告诉听众是谁在说）
+            string intro = displayName == null || displayName.Length == 0 ? "" : displayName + "说";
+            if (intro.Length > 0)
+            {
+                SpeakOne(py, audio, intro, ResolveGlobalVoice(), catKey);
+            }
+            // [段2] 正文——该猫外观音色
+            SpeakOne(py, audio, text, voice, catKey);
+        }
+        /// <summary>
+        /// 单段合成并入队——失败记 Log 即返回（不影响后续段）；播放键固定 RoundSummaryAudioKey（跨猫全串行）。
+        /// </summary>
+        /// <param name="py">py 服务</param>
+        /// <param name="audio">音频服务</param>
+        /// <param name="text">待合成文本</param>
+        /// <param name="voice">音色（空=服务默认）</param>
+        /// <param name="catKey">猫 key（日志定位用）</param>
+        private static void SpeakOne(IPyService py, IAudioService audio, string text, string voice, string catKey)
+        {
+            if (text == null || text.Length == 0)
+            {
+                return;
+            }
+            string outPath = BuildSummaryAudioPath();
+            if (outPath.Length == 0)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录未配置（py.service.kokoro.out_dir）", "CHAT");
+                return;
+            }
+            Dictionary<string, object> payload = new Dictionary<string, object>();
+            payload["id"] = "summary";
+            payload["op"] = "speak";
+            payload["text"] = NormalizeForSpeech(text);
+            if (voice != null && voice.Length > 0)
+            {
+                payload["voice"] = voice;
+            }
+            payload["speed"] = 1.0;
+            payload["out"] = outPath;
+            string invokeArgs = JsonUtil.Object(("name", "kokoro"), ("payload", JsonUtil.Serialize(payload)));
+            string reply = py.Invoke(invokeArgs);
+            if (reply == null || reply.Length == 0 || reply.StartsWith("ERR|", StringComparison.Ordinal))
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + (reply == null ? "(无回执)" : reply) + " | cat=" + catKey, "CHAT");
+                return;
+            }
+            string produced = outPath;
+            JsonDocument doc = JsonUtil.Parse(reply, "summary-speak");
+            if (doc == null)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结合成回执不可解析: " + reply, "CHAT");
+                return;
+            }
+            try
+            {
+                JsonElement root = doc.RootElement;
+                if (!JsonUtil.GetBool(root, "ok", false))
+                {
+                    LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + reply, "CHAT");
+                    return;
+                }
+                produced = JsonUtil.GetStr(root, "out", outPath);
+            }
+            finally
+            {
+                doc.Dispose();
+            }
+            string enqueue = audio.Enqueue(RoundSummaryAudioKey, produced, -1f);
+            if (enqueue != null && enqueue.Length > 0)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结播放入队失败: " + enqueue, "CHAT");
+            }
+        }
+        /// <summary>
+        /// 全局默认音色——audio.voice 落盘值优先，未落盘回落 schema 默认；空=服务默认（zf_001）。
+        /// </summary>
+        /// <returns>音色名</returns>
+        private static string ResolveGlobalVoice()
+        {
+            ConfigStore cfg = null;
+            if (!DataBox.TryResolve<ConfigStore>(out cfg) || cfg == null)
+            {
+                return "";
+            }
+            string voice = cfg.Get("audio.voice", "");
+            if (voice != null && voice.Length > 0)
+            {
+                return voice;
+            }
+            ConfigSchema schema = null;
+            if (DataBox.TryResolve<ConfigSchema>(out schema) && schema != null)
+            {
+                ConfigSchema.Item? item = schema.Find("audio.voice");
+                if (item != null)
+                {
+                    return item.Default;
+                }
+            }
+            return "";
+        }
+        /// <summary>
+        /// 播报名解析——固定 key 走中文转义（majordomo 的 displayName 不可改，espeak 读英文不自然）；
+        /// 其余猫用 displayName（可改名调整读音），空则回落 catKey。
+        /// </summary>
+        /// <param name="catKey">猫 key</param>
+        /// <returns>播报名（不含「说」）</returns>
+        private string ResolveSpeakName(string catKey)
+        {
+            if (string.Equals(catKey, "majordomo", StringComparison.Ordinal))
+            {
+                return "大管家";
+            }
+            return DisplayName.Length > 0 ? DisplayName : catKey;
+        }
+        /// <summary>
+        /// 播报文本归一——点分版本号逐位转汉字（cn2an 会把 1.8.152 的尾段按数值读成「一百五十二」）。
+        /// 只处理点分数字（版本号形态）；数量类数字保持原样由 G2P 按量词读。
+        /// </summary>
+        /// <param name="text">原始文本</param>
+        /// <returns>播报用文本（无版本号则原样返回）</returns>
+        private static string NormalizeForSpeech(string text)
+        {
+            if (text == null || text.Length == 0)
+            {
+                return text;
+            }
+            // 同音替换——只换词表内的明确错读（如「重来 → 虫来」），词表外原样
+            string replaced = text;
+            for (int r = 0; r < SpeechReplacements.Length; r = r + 1)
+            {
+                replaced = replaced.Replace(SpeechReplacements[r][0], SpeechReplacements[r][1]);
+            }
+            return System.Text.RegularExpressions.Regex.Replace(replaced, @"\d+(?:\.\d+)+", delegate (System.Text.RegularExpressions.Match match)
+            {
+                string value = match.Value;
+                StringBuilder sb = new StringBuilder(value.Length * 2);
+                for (int i = 0; i < value.Length; i = i + 1)
+                {
+                    char c = value[i];
+                    if (c == '.')
+                    {
+                        sb.Append('点');
+                    }
+                    else if (c >= '0' && c <= '9')
+                    {
+                        sb.Append("零一二三四五六七八九"[c - '0']);
+                    }
+                    else
+                    {
+                        sb.Append(c);
+                    }
+                }
+                return sb.ToString();
+            });
+        }
+        /// <summary>
+        /// 播报同音替换表——只收明确读错的词（Kokoro 的 ZHG2P 按分词选音，独词形态下「重」读成 zhòng）。
+        /// 词表外一律不动；新增词目须先实测确认读错（判例：「重来/重做/重跑」读 zhòng，「重启/重新/重量/重要」正确）。
+        /// </summary>
+        private static readonly string[][] SpeechReplacements = new string[][]
+        {
+            new string[] { "重来", "虫来" },
+            new string[] { "重做", "虫做" },
+            new string[] { "重跑", "虫跑" }
+        };
+        /// <summary>
+        /// 轮末总结提示音路径——部署包 assets/audio/roundsummary_chime.wav；缺失记 WARN 并跳过（不阻断播报）。
+        /// </summary>
+        /// <returns>提示音绝对路径；缺失空串</returns>
+        private static string ResolveChimePath()
+        {
+            string path = System.IO.Path.Combine(AppContext.BaseDirectory, "assets", "audio", "roundsummary_chime.wav");
+            if (System.IO.File.Exists(path))
+            {
+                return path;
+            }
+            LogStore.Add("CatHome4", 2, "轮末总结提示音缺失（assets/audio/roundsummary_chime.wav）——跳过提示音", "CHAT");
+            return "";
         }
     }
 }

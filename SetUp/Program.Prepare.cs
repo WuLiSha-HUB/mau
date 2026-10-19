@@ -131,6 +131,13 @@ namespace SetUp
                     return Fail("步5 publish CatHome4 失败——宿主部署区未生成，中止。");
                 }
 
+                // [段5b] 音频资产复制——仓库 assets/ → public/app/assets/（随 incr 搬运进入运行区；缺失不阻断）
+                string assetsPublishSrc = Path.Combine(repoRoot, "assets");
+                if (Directory.Exists(assetsPublishSrc))
+                {
+                    CopyDirectory(assetsPublishSrc, Path.Combine(repoRoot, "public", "app", "assets"));
+                }
+
                 // [段6] 步6：宿主自检——CLI 全链（主线程直执 + 进程自退；8080 单例——验证前确认无宿主占用）
                 string hostExe = Path.Combine(repoRoot, "public", "app", "CatHome4.exe");
                 if (!File.Exists(hostExe))

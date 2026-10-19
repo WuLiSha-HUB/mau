@@ -604,14 +604,34 @@ function renderConfig(items) {
             td1.appendChild(noteEl);
         }
         var td2 = document.createElement('td');
-        var inp = document.createElement('input');
-        inp.value = it.value;
-        inp.className = 'input-mini text';
-        inp.style.width = '100%';
-        // §4.3 描述 + 空值语义进 title（反直觉默认可观测）
-        inp.title = (it.desc || '') + (it.emptyDesc ? '｜' + it.emptyDesc : '');
-        if (it['default'] !== undefined && it['default'] !== '' && (it.value === undefined || it.value === '')) {
-            inp.placeholder = '默认值 ' + it['default'] + '（落盘后生效）';
+        var inp;
+        if (it.key === 'audio.voice') {
+            // 音色专用——schema 值域四项渲染下拉（注释来自 ui-common.KOKORO_VOICES；空=服务默认）
+            inp = document.createElement('select');
+            inp.className = 'input-mini';
+            inp.style.width = '100%';
+            var emptyOpt = document.createElement('option');
+            emptyOpt.value = '';
+            emptyOpt.textContent = '（空 = 服务默认音色）';
+            inp.appendChild(emptyOpt);
+            for (var vi = 0; vi < KOKORO_VOICES.length; vi++) {
+                var voiceOpt = document.createElement('option');
+                voiceOpt.value = KOKORO_VOICES[vi].id;
+                voiceOpt.textContent = kokoroVoiceLabel(KOKORO_VOICES[vi].id);
+                inp.appendChild(voiceOpt);
+            }
+            inp.value = String(it.value || '');
+            inp.title = (it.desc || '') + (it.emptyDesc ? '｜' + it.emptyDesc : '');
+        } else {
+            inp = document.createElement('input');
+            inp.value = it.value;
+            inp.className = 'input-mini text';
+            inp.style.width = '100%';
+            // §4.3 描述 + 空值语义进 title（反直觉默认可观测）
+            inp.title = (it.desc || '') + (it.emptyDesc ? '｜' + it.emptyDesc : '');
+            if (it['default'] !== undefined && it['default'] !== '' && (it.value === undefined || it.value === '')) {
+                inp.placeholder = '默认值 ' + it['default'] + '（落盘后生效）';
+            }
         }
         td2.appendChild(inp);
         var td3 = document.createElement('td');

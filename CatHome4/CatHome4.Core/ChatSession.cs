@@ -47,11 +47,11 @@ namespace CH4
         /// <summary>RoundSummary 工单超时帧上限——一次性 LLM 调用（60s 现实耗时 + 余量）</summary>
         private const long RoundSummaryTimeoutFrames = 2400;
 
-        /// <summary>RoundSummary 前段提示词（注入服务 system 参——语气 / 输出 / 风格规范）。</summary>
-        private const string RoundSummaryPromptHead = "你是轮次总结器。用一句自然语言（20-50 字）概括给定的一轮对话，直接陈述结论；语气平实、信息密度高；不要客套、不要分点、不要引号、不要复述原文。";
+        /// <summary>RoundSummary 播报串行键——播报名与正文、全部猫的总结共用（跨猫全串行，不并发）。</summary>
+        private const string RoundSummaryAudioKey = "roundsummary";
 
-        /// <summary>RoundSummary 后段提示词（拼在待总结内容之后——固定分隔符，界定待总结范围）。</summary>
-        private const string RoundSummaryPromptTail = "\n——以上为本轮对话的全部内容（用户输入与助手回复按序合并），请据此给出一句总结。";
+        /// <summary>RoundSummary 后段提示词（拼在待总结内容之后——固定分隔符，界定待总结范围；第一人称口径）。</summary>
+        private const string RoundSummaryPromptTail = "\n——以上是本轮的全部往来（用户输入与你自己的回复按序合并）。请用第一人称向用户交代这一轮你做了什么、结果如何。";
         /// <summary>系统注入类型——现行唯一值 systemauto（后续类型扩在此处；未知值一律拒绝，不静默回落）。</summary>
         internal const string SysKindSystemAuto = "systemauto";
 
@@ -3028,6 +3028,23 @@ namespace CH4
             _usageCacheHit = 0;
         }
         /// <summary>
+        /// RoundSummary 前段提示词——按猫身份生成的第一人称视角（向用户交代，不做第三方总结）。
+        /// </summary>
+        /// <returns>system 提示词</returns>
+        private string BuildRoundSummaryPromptHead()
+        {
+            string name = DisplayName;
+            if (name == null || name.Length == 0)
+            {
+                name = _catKey;
+            }
+            return "你是「" + name + "」。这一轮你刚做完事，现在向用户亲口交代你做了什么、结果如何。"
+                + "第一人称（我 / 我这边），口语，像当面说话；只说自己的动作与结果，不复述用户的要求，"
+                + "不用「用户」「助手」「该轮」这类旁观措辞；一句话 20-50 字；不要客套、不要分点、不要引号。"
+                + "这句话会被直接念出来，数字与缩写按读音写：版本号、编号、端口号逐位写成汉字（1.8.152 写成 一点八点一五二，8080 写成 八零八零），"
+                + "只有表示数量时才用阿拉伯数字（3 个文件）；技术缩写拆成大写单字母加空格（CUDA 写成 C U D A）。";
+        }
+        /// <summary>
         /// RoundSummary——轮末调度：组 prompt 并投 LLMSimpleRequest 服务工单（开关开 + 配置可用 + 有内容时才发）。
         /// 谁发谁收——officeId 记入 _roundSummaryOfficeId，由 Pump 每帧轮询回收。
         /// </summary>
@@ -3059,7 +3076,7 @@ namespace CH4
             _oa.SetStr(officeId, RoundSummaryOwnerId, "endpoint", llm[0]);
             _oa.SetStr(officeId, RoundSummaryOwnerId, "apikey", llm[1]);
             _oa.SetStr(officeId, RoundSummaryOwnerId, "model", llm[2]);
-            _oa.SetStr(officeId, RoundSummaryOwnerId, "system", RoundSummaryPromptHead);
+            _oa.SetStr(officeId, RoundSummaryOwnerId, "system", BuildRoundSummaryPromptHead());
             _oa.SetStr(officeId, RoundSummaryOwnerId, "content", content);
             _roundSummaryOfficeId = officeId;
         }
@@ -3259,87 +3276,18 @@ namespace CH4
                 return;
             }
             string voice = cfg[1] == null ? "" : cfg[1];
+            string displayName = ResolveSpeakName(catKey);
             Task.Run(delegate ()
             {
                 try
                 {
-                    RunSummarySpeak(catKey, voice, text);
+                    RunSummarySpeak(catKey, displayName, voice, text);
                 }
                 catch (Exception ex)
                 {
                     LogStore.Add("CatHome4", 3, "轮末总结播报异常: " + ex.Message, "CHAT");
                 }
             });
-        }
-        /// <summary>
-        /// 总结播报执行体（后台线程）——合成 WAV 后入队播放；全程失败可见（Log），不影响轮次。
-        /// </summary>
-        /// <param name="catKey">猫 key（播放串行分组键）</param>
-        /// <param name="voice">音色槽位值（空 = 服务默认音色）</param>
-        /// <param name="text">待合成文本</param>
-        private static void RunSummarySpeak(string catKey, string voice, string text)
-        {
-            IPyService py = null;
-            if (!DataBox.TryResolve<IPyService>(out py) || py == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IPyService 未注入", "CHAT");
-                return;
-            }
-            string outPath = BuildSummaryAudioPath();
-            if (outPath.Length == 0)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录未配置（py.service.kokoro.out_dir）", "CHAT");
-                return;
-            }
-            Dictionary<string, object> payload = new Dictionary<string, object>();
-            payload["id"] = "summary";
-            payload["op"] = "speak";
-            payload["text"] = text;
-            if (voice.Length > 0)
-            {
-                payload["voice"] = voice;
-            }
-            payload["speed"] = 1.0;
-            payload["out"] = outPath;
-            string invokeArgs = JsonUtil.Object(("name", "kokoro"), ("payload", JsonUtil.Serialize(payload)));
-            string reply = py.Invoke(invokeArgs);
-            if (reply == null || reply.Length == 0 || reply.StartsWith("ERR|", StringComparison.Ordinal))
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + (reply == null ? "(无回执)" : reply), "CHAT");
-                return;
-            }
-            string produced = outPath;
-            JsonDocument doc = JsonUtil.Parse(reply, "summary-speak");
-            if (doc == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结合成回执不可解析: " + reply, "CHAT");
-                return;
-            }
-            try
-            {
-                JsonElement root = doc.RootElement;
-                if (!JsonUtil.GetBool(root, "ok", false))
-                {
-                    LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + reply, "CHAT");
-                    return;
-                }
-                produced = JsonUtil.GetStr(root, "out", outPath);
-            }
-            finally
-            {
-                doc.Dispose();
-            }
-            IAudioService audio = null;
-            if (!DataBox.TryResolve<IAudioService>(out audio) || audio == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IAudioService 未注入", "CHAT");
-                return;
-            }
-            string enqueue = audio.Enqueue(catKey, produced, -1f);
-            if (enqueue != null && enqueue.Length > 0)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播放入队失败: " + enqueue, "CHAT");
-            }
         }
         /// <summary>
         /// 总结播报产物路径——配置 py.service.kokoro.out_dir 下按时间戳命名（未配置返回空串，不猜目录）。

@@ -676,6 +676,10 @@ namespace CH4
             // M4e 猫级白名单——默认猫启用根（cat.cfg enabledRoots；缺省全量）+ 工具执行猫上下文
             _chatBridge.DefaultSession.SetCatKey("majordomo");
             _chatBridge.DefaultSession.SetUserInjectIdleOnly(defaultCfg != null && defaultCfg.UserInjectIdleOnly);
+            // 外观池生效值——桌宠 / 轮末总结（与 catcfg.apply §1520-1521 同源）
+            // 🔴 缺这两句 = 重启后 majordomo 外观不生效、只有点保存（catcfg.apply）才应用（判例 2026-10-20）
+            _chatBridge.DefaultSession.SetRoundSummary(AdminService.ResolveEffectiveRoundSummary("majordomo"));
+            _chatBridge.DefaultSession.SetPetKind(AdminService.ResolveEffectivePetKind("majordomo"));
             AdminService.ApplyCatRoots("majordomo");
             _chatBridge.DefaultSession.AttachEnvInfo(() => BuildEnvInfo());
             _chatBridge.DefaultSession.AttachRoundNotify(Program.NotifyBalloon);

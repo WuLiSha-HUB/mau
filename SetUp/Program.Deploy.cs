@@ -119,6 +119,12 @@ namespace SetUp
             {
                 CopyDirectory(configTpl, Path.Combine(targetNew, "config"));
             }
+            // [段3c] 音频资产复制——仓库 assets/ → 新目录 assets/（轮末总结提示音等随包分发；缺失不阻断）
+            string assetsSrc = Path.Combine(repoRoot, "assets");
+            if (Directory.Exists(assetsSrc))
+            {
+                CopyDirectory(assetsSrc, Path.Combine(targetNew, "assets"));
+            }
 
             // [段4] 版本落盘——version.txt（读取 Directory.Build.props 单点 Version；写新目录）
             string version = ReadVersion(repoRoot);
