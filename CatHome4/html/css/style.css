@@ -205,3 +205,50 @@ h2 { font-size: var(--ch-fs-strong); color: var(--ch-title); margin: 10px 12px 6
 
 /* A254 资源页滚动——内容超出即滚（与 #stateScroll 同范式，2026-10-16） */
 #resScroll { flex: 1; overflow-y: auto; padding: 8px 12px 20px 12px; }
+
+/* A260 启动健康区——降级清单卡片 */
+#bootbar {
+    display: flex;
+    gap: 6px;
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--ch-line-faint);
+    align-items: center;
+}
+#bootScroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+}
+.boot-item {
+    border: 1px solid var(--ch-line-faint);
+    border-left: 3px solid var(--ch-warn);
+    border-radius: 4px;
+    padding: 8px 10px;
+    margin-bottom: 8px;
+    background: var(--ch-bg-raised);
+}
+.boot-head {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+    margin-bottom: 4px;
+}
+.boot-code {
+    color: var(--ch-warn);
+    font-weight: 600;
+    font-size: var(--ch-fs-body);
+}
+.boot-ability {
+    color: var(--ch-fg-weak);
+    font-size: var(--ch-fs-tag);
+}
+.boot-detail {
+    color: var(--ch-fg);
+    font-size: var(--ch-fs-sub);
+    word-break: break-all;
+}
+.boot-fix {
+    color: var(--ch-ok);
+    font-size: var(--ch-fs-tag);
+    margin-top: 4px;
+}

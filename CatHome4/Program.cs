@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using CatHome4.Admin;
 using CatHome4.Contracts;
+using CatHome4.Core;
 using CatHome4.Http;
 using CatHome4.QQ;
 using CatHome4.Observe;
@@ -105,6 +106,8 @@ namespace CH4
             // A118 外壳初始化——高 DPI（必须早于任何窗口创建）+ 启动时刻（已运行时间基准）+ AUMID（通知图标身份键）
             ShellInit();
             InitAppUserModelId();
+            // A260 启动韧性——早期诊断 sink 先于一切配置解析（数据根不可写时回落 %TEMP%，再回落仅内存）
+            BootLog.Init(ResolveDataRoot());
             try
             {
                 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -116,12 +119,20 @@ namespace CH4
             }
             try
             {
-                // [段1a] 参数面校验——零容忍（未知参数/缺值/互斥）；--majordomopush 仅常驻交互模式（design-ch4-host-restart §五）
+                // [段1a] 参数面校验——非交互零容忍（调用方是程序，必须拿到失败退出码）；
+                // 交互模式降级为提示后以无参交互继续（A260 R2：环境/配置类问题不得阻断启动）
                 string argErr = ValidateHostArgs(args, out bool nonInteractive);
                 if (argErr.Length > 0)
                 {
                     Console.WriteLine("[CMD] " + argErr);
-                    return 1;
+                    BootLog.Add("S0", "参数面：" + argErr);
+                    if (nonInteractive)
+                    {
+                        return 1;
+                    }
+                    StartupDegradation.Report("ARG_DEGRADED", StartupDegradation.KindConfig, "启动参数",
+                        StartupDegradation.StateFallback, argErr,
+                        "按正确用法重新启动（启动提示窗列有用法）", "S0");
                 }
                 // A118：非交互模式输出双写落盘（WinExe 无控制台——shell 直调取不到 stdout；父进程重定向链路不受影响）
                 if (nonInteractive)
@@ -143,6 +154,8 @@ namespace CH4
                 catch (Exception ex)
                 {
                     Console.WriteLine("[CMD] 启动失败: " + ex.Message);
+                    BootLog.Add("S7", "启动链异常：" + ex.ToString());
+                    WriteStartupReport("failed");
                     // A118：WinExe 无控制台——启动失败必须可见（原 Console.ReadKey 在无控制台时抛异常且失败静默）；
                     // 脚本/自检/探针模式无人值守不弹窗，仅以退出码 1 表达
                     bool showFailBox = !nonInteractive;
@@ -251,6 +264,12 @@ namespace CH4
             string dataRoot = ResolveDataRoot();
             WorkspaceConfig workspace = WorkspaceConfig.Load(Path.Combine(dataRoot, "Data", "config", "workspace.json"), dataRoot);
             DataBox.Bind<WorkspaceConfig>(workspace);
+            // A260 受控根降级登记——加载期已自动兜底的事实进启动健康面（不阻断启动）
+            for (int i = 0; i < workspace.LoadDegrades.Count; i = i + 1)
+            {
+                ReportLoadDegrade(workspace.LoadDegrades[i], "文件工具（受控根）",
+                    "管理面板 → 工作区 → 修正 workspace.json 根路径", "S2");
+            }
             // A153 受控根启动对账——生效根回显 + 同 path 多根检出（文本在 LogStore 就绪后于段3b 落盘）
             bool rootsConflict = false;
             string rootsNote = RootsAuditNote(workspace, out rootsConflict);
@@ -282,6 +301,12 @@ namespace CH4
             string schemaTemplatePath;
             string schemaSyncNote = EnsureSchemaSync(configDir, out schemaTemplatePath);
             ConfigSchema schema = ConfigSchema.Load(Path.Combine(configDir, "schema.json"));
+            // A260 schema 降级登记——损坏已回退为空 schema（配置面只读可见），事实进启动健康面
+            if (schema.LoadDegrade.Length > 0)
+            {
+                ReportLoadDegrade(schema.LoadDegrade, "配置面（schema）",
+                    "打开配置目录替换 schema.json（坏档已备份 .bad-<ts>）", "S1");
+            }
             // A152 派生段声明通道——模板路径注入（声明时模板与运行副本同步写，避免启动期模板同步覆盖）
             schema.TemplatePath = schemaTemplatePath;
             DataBox.Bind<ConfigSchema>(schema);
@@ -293,16 +318,19 @@ namespace CH4
                 Path.Combine(dataRoot, "Data", "config"),
                 Path.Combine(dataRoot, "Data", "secrets"));
             DataBox.Bind<CH_LlmApiConfigStore>(apiConfigStore);
+            ReportStorageDegrade(apiConfigStore.StorageWritable, apiConfigStore.StorageError, "配置面（LLM 端点）");
             // M3 管理面静态引用——catcfg.apply 重建 Runtime 消费（S4 迁 Admin 域——Configure 注入）
             // R2.3 QQ Bot 配置池——qqbot.json 明文（零 secret）+ Data/secrets 独立秘密文件（对齐 LLM API 池 M1 模式）
             CH_QqBotConfigStore qqBotStore = new CH_QqBotConfigStore(
                 Path.Combine(dataRoot, "Data", "config"),
                 Path.Combine(dataRoot, "Data", "secrets"));
             DataBox.Bind<CH_QqBotConfigStore>(qqBotStore);
+            ReportStorageDegrade(qqBotStore.StorageWritable, qqBotStore.StorageError, "QQ 通道（Bot 配置）");
             // A244 外观配置池——appearance.json 明文（无密钥面；每猫 appearanceId 引用 + 唯一默认项）
             CH_AppearanceConfigStore appearanceStore = new CH_AppearanceConfigStore(
                 Path.Combine(dataRoot, "Data", "config"));
             DataBox.Bind<CH_AppearanceConfigStore>(appearanceStore);
+            ReportStorageDegrade(appearanceStore.StorageWritable, appearanceStore.StorageError, "外观配置池");
             // M1 语料面 Runtime——默认端点语义（QuickCat 工单 llm.stream 消费面；Guid.Empty=每次调用实时解析默认配置）
             // 空配置池无默认端点 → 启动失败（不做静默回退——必须先配置端点后才能运行）
             _llmRuntime = new DeepSeekLlmRuntime(apiConfigStore, Guid.Empty, llmConfig);
@@ -336,12 +364,55 @@ namespace CH4
             string sessionRunId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             string runDir = Path.Combine(dataRoot, "Data", "runs", sessionRunId);
             LogStore.ConfigureRuns(runDir);
-            FrameStore.Configure(Path.Combine(runDir, "frame.txt"));
+            // A260 观测落点降级——runs 目录不可写时换早期 sink 落点重试（仍失败则仅内存运行 + 登记）
+            if (LogStore.LastConfigureError.Length > 0)
+            {
+                string obsError = LogStore.LastConfigureError;
+                string fallbackRunDir = "";
+                if (BootLog.SinkDir.Length > 0 && !string.Equals(BootLog.SinkDir, runDir, StringComparison.OrdinalIgnoreCase))
+                {
+                    fallbackRunDir = BootLog.SinkDir;
+                }
+                if (fallbackRunDir.Length > 0)
+                {
+                    LogStore.ConfigureRuns(fallbackRunDir);
+                }
+                if (LogStore.LastConfigureError.Length > 0)
+                {
+                    StartupDegradation.Report("OBS_UNWRITABLE", StartupDegradation.KindEnv, "观测日志",
+                        StartupDegradation.StateEmpty, "运行目录不可写：" + runDir + "（" + obsError + "）",
+                        "检查数据根权限或改用可写位置（CH4_DATA_ROOT）", "S3");
+                }
+                else
+                {
+                    StartupDegradation.Report("OBS_FALLBACK", StartupDegradation.KindEnv, "观测日志",
+                        StartupDegradation.StateFallback, "运行目录不可写，已回落：" + fallbackRunDir,
+                        "检查数据根权限或改用可写位置（CH4_DATA_ROOT）", "S3");
+                    runDir = fallbackRunDir;
+                }
+            }
+            // A260 帧流落点容错——写不了帧流不影响宿主（观测降级为仅 log/oa/err）
+            try
+            {
+                FrameStore.Configure(Path.Combine(runDir, "frame.txt"));
+            }
+            catch (Exception ex)
+            {
+                StartupDegradation.Report("FRAME_STORE_FAILED", StartupDegradation.KindEnv, "观测帧流",
+                    StartupDegradation.StateEmpty, "帧流文件不可写：" + Path.Combine(runDir, "frame.txt") + " | " + ex.Message,
+                    "检查运行目录权限后重启", "S3");
+            }
             // [段3a] Console 订阅——Log 同构行输出窗口（O4：过程行不再直打——统一观测）
             LogStore.ConsoleSink = delegate (string line)
             {
                 Console.WriteLine(line);
             };
+            // A260 早期诊断回灌——sink 条目按序并入观测时间线（来源标注 BOOT；sink 内存缓冲随即清空）
+            string[] bootLines = BootLog.Drain();
+            for (int i = 0; i < bootLines.Length; i = i + 1)
+            {
+                LogStore.Add("CatHome4", 1, bootLines[i], "BOOT");
+            }
             // [段3b] 配置面启动审计补记——schema 同步与段注册结论 + 受控根对账（启动期仅 Console 输出，此处落盘可回溯）
             LogStore.Add("CatHome4", 1, "config.boot | " + schemaSyncNote + " | " + segmentNote, "CONFIG");
             // A153 受控根对账落盘——同 path 多根走 L2（WARN）出声
@@ -364,7 +435,33 @@ namespace CH4
             // 路由表数据化 + 工具定义数据化：加载后经 IFlow.GetMetaJson/GetToolsJson 读自曝 → 统一工具池（design-ch4-tools-pool §六）
             // 工具组来源（组名 + Flow——A107：定义自曝失败时必须报得出是哪一组）
             List<ToolGroupSource> poolGroups = new List<ToolGroupSource>();
-            string[] flowDlls = Directory.GetFiles(dllDir, "FL_*.dll");
+            // A260 语料目录容错——目录缺失 / 扫描失败 / 零 dll 一律降级为「工具面不可用」，宿主照常启动
+            string[] flowDlls = new string[0];
+            if (!Directory.Exists(dllDir))
+            {
+                StartupDegradation.Report("FLOWS_DIR_MISSING", StartupDegradation.KindEnv, "工具面（全部 Flow）",
+                    StartupDegradation.StateEmpty, "语料 dll 目录不存在：" + dllDir,
+                    "运行 mau-setup（prepare）重建产物，或用 -dll 指定正确目录", "S4");
+            }
+            else
+            {
+                try
+                {
+                    flowDlls = Directory.GetFiles(dllDir, "FL_*.dll");
+                }
+                catch (Exception ex)
+                {
+                    StartupDegradation.Report("FLOWS_SCAN_FAILED", StartupDegradation.KindEnv, "工具面（全部 Flow）",
+                        StartupDegradation.StateEmpty, "扫描语料目录失败：" + dllDir + " | " + ex.Message,
+                        "检查目录权限后重启，或重新 prepare", "S4");
+                }
+                if (flowDlls.Length == 0)
+                {
+                    StartupDegradation.Report("FLOWS_EMPTY", StartupDegradation.KindEnv, "工具面（全部 Flow）",
+                        StartupDegradation.StateEmpty, "语料目录内无 FL_*.dll：" + dllDir,
+                        "运行 mau-setup（prepare）重建全部 Flow", "S4");
+                }
+            }
             Array.Sort(flowDlls, StringComparer.OrdinalIgnoreCase);
             for (int f = 0; f < flowDlls.Length; f = f + 1)
             {
@@ -433,7 +530,17 @@ namespace CH4
                 {
                     return _chatBridge.PostSystemMessage(downloadCatKey, "systemauto", downloadText) == "OK";
                 });
-            webFetchSvc.Start();
+            // A260 下载器启动容错——任务表损坏 / 目录不可用时通道降级，不阻断宿主
+            try
+            {
+                webFetchSvc.Start();
+            }
+            catch (Exception ex)
+            {
+                StartupDegradation.Report("WEBFETCH_START_FAILED", StartupDegradation.KindExternal, "网页下载器",
+                    StartupDegradation.StateUnavailable, "下载器启动失败：" + ex.Message,
+                    "检查 Data/runtime 权限后重启（在途任务需重新登记）", "S7");
+            }
             // py 服务自启——follow=true 的服务随宿主启动拉起（design-ch4-pytools §5.2；接线 2026-10-15）
             {
                 IPyService pyAutostart;
@@ -453,6 +560,9 @@ namespace CH4
             AdminService.NotifyBalloon = Program.NotifyBalloon;
             // S5 Observe 域接线——依赖注入（观测面迁入 CatHome4.Observe）
             ObserveService.Configure(_oa, _chatBridge, _toolFlowHandles, _toolFlowIds, _runner, null);
+            // A260 启动健康段提供者——快照 boot 段与日志 / 报告 / 弹窗同源
+            ObserveService.BootSinkProvider = delegate () { return BootLog.SinkDir; };
+            ObserveService.BootReportPathProvider = delegate () { return StartupReportPath; };
             SessionStore chatStore = new SessionStore(Path.Combine(dataRoot, "Data", "sessions", "majordomo", "majordomo.jsonl"));
             LlmMessage[] restored;
             // M1 默认猫——API 配置身份从 sessions/majordomo/cat.cfg 读取；缺省 Guid.Empty=默认端点语义（每次调用实时解析）
@@ -561,6 +671,12 @@ namespace CH4
             _chatBridge.DefaultSession.LoadMeta();
             // LLM 注入探测——默认端点解析（无默认端点 = 未注入；启动失败语义由语料面消费时暴露）
             CH_LlmApiConfig llmProbeConfig = apiConfigStore.ResolveDefault();
+            if (apiConfigStore.LastLoadError.Length > 0)
+            {
+                StartupDegradation.Report("CFG_CORRUPT", StartupDegradation.KindData, "LLM 端点池",
+                    StartupDegradation.StateEmpty, "llm-api.json 读取失败：" + apiConfigStore.LastLoadError,
+                    "管理面板 → LLM 端点池 → 重建端点（坏档已备份 .broken-<ts>）", "S5");
+            }
             string llmKeyProbe = "";
             if (llmProbeConfig != null)
             {
@@ -622,9 +738,17 @@ namespace CH4
             if (headless)
             {
                 Console.WriteLine("[CMD] 非交互模式——外观层与常驻附属未启动（端口零占用）");
+                StartupDegradeEntry[] headlessEntries = StartupDegradation.Snapshot();
+                for (int i = 0; i < headlessEntries.Length; i = i + 1)
+                {
+                    LogStore.Add("CatHome4", 2, "boot.degrade | " + headlessEntries[i].Code + " | "
+                        + headlessEntries[i].Ability + " | " + headlessEntries[i].Detail, "BOOT");
+                }
+                Console.WriteLine("[CMD] 启动降级 " + StartupDegradation.Count.ToString() + " 项——详见 startup_report.json");
+                WriteStartupReport("non-interactive");
                 return;
             }
-            _httpHost = HttpHost.Start(new HttpHostOptions
+            HttpHostOptions mainHostOptions = new HttpHostOptions
             {
                 Port = ResolveHttpPort(llmConfig),
                 FrontendTestPort = _portBand.FrontendTestPort,
@@ -640,12 +764,22 @@ namespace CH4
                 DepsRefresh = DependencyProbe.Refresh,
                 LlmProbe = LlmEndpointProbe.ProbeAsync,
                 HtmlRootProvider = new HtmlRootProvider()
-            });
+            };
+            // A260 端口回退——首选端口被占时在端口段内回退；段内全占 = 无外观层（宿主继续运行）
+            int mainPort = 0;
+            _httpHost = StartMainHostWithFallback(mainHostOptions, mainHostOptions.Port, out mainPort);
             // F2.2 majordomo 特殊会话——独立端口 serve chat.html + 强制自启（DefaultSession 事件推送绑独立端口 host）
             AdminService.StartMajorHost();
             // [段6b] 启动扫描——sessions/*/cat.cfg 中 running 猫拉起（主 HTTP 就位后——每猫 HttpHost 独立实例）
             AdminService.LoadCatsOnBoot();
-            Console.WriteLine("[CMD] HTTP 外观层就绪: http://127.0.0.1:" + _httpHost.Port + " | Majordomo 对话: http://127.0.0.1:" + AdminService.MajorPort);
+            if (_httpHost != null)
+            {
+                Console.WriteLine("[CMD] HTTP 外观层就绪: http://127.0.0.1:" + _httpHost.Port.ToString() + " | Majordomo 对话: http://127.0.0.1:" + AdminService.MajorPort.ToString());
+            }
+            else
+            {
+                Console.WriteLine("[CMD] HTTP 外观层未启动（端口段耗尽）——宿主以无外观层形态运行");
+            }
             // [段6c] 前端测试服务拉起——开发流程（改前端 → 跑测试 → 刷新生效）；未监听则启动 node server.js
             EnsureFrontendTestService();
             // R2.3 QQ 管理器启动——扫描 Bot 池建立全部连接（附属功能组件；Bot 池空 = 零连接静默）
@@ -653,6 +787,34 @@ namespace CH4
             QQBotService.SetCollector(new QqTargetCollector());
             QQBotService.SetFileCacheRoot(Path.Combine(dataRoot, "Data", "qqbot-files"));
             QQBotService.Start();
+            // A260 启动健康面收口——报告落盘 + 独立提示窗（有降级才弹；关窗不改运行态）
+            // 配置池读取校验：QQ / 外观池在启动期未必被消费，此处主动读一次，让损坏在启动面可见
+            if (qqBotStore.LastLoadError.Length > 0)
+            {
+                StartupDegradation.Report("CFG_CORRUPT", StartupDegradation.KindData, "QQ 通道（Bot 配置）",
+                    StartupDegradation.StateEmpty, "qqbot.json 读取失败：" + qqBotStore.LastLoadError,
+                    "管理面板 → QQ Bot → 重建配置（坏档已备份 .broken-<ts>）", "S7");
+            }
+            appearanceStore.GetAll();
+            if (appearanceStore.LastLoadError.Length > 0)
+            {
+                StartupDegradation.Report("CFG_CORRUPT", StartupDegradation.KindData, "外观配置池",
+                    StartupDegradation.StateEmpty, "appearance.json 读取失败：" + appearanceStore.LastLoadError,
+                    "管理面板 → 外观 → 重建配置（坏档已备份 .broken-<ts>）", "S7");
+            }
+            WriteStartupReport("interactive");
+            if (StartupDegradation.HasAny)
+            {
+                // 逐条降级出声（err 面第一入口）+ 摘要行——启动健康面的日志出口
+                StartupDegradeEntry[] bootEntries = StartupDegradation.Snapshot();
+                for (int i = 0; i < bootEntries.Length; i = i + 1)
+                {
+                    LogStore.Add("CatHome4", 2, "boot.degrade | " + bootEntries[i].Code + " | "
+                        + bootEntries[i].Ability + " | " + bootEntries[i].Detail, "BOOT");
+                }
+                LogStore.Add("CatHome4", 2, "boot.summary | " + StartupDegradation.BuildSummaryLine(), "BOOT");
+                ShowStartupDegradeWindow();
+            }
         }
         /// <summary>
         /// 环境信息——运行版本 + LLM 端点类型 + 当前时间（info 内置工具数据源；R0.2 拍板：不显示工具组清单——工具注册是前文初始化一次性）

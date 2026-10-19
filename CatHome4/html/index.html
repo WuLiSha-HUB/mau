@@ -16,6 +16,7 @@
             <button data-tab="log">日志</button>
             <button data-tab="deps">依赖</button>
             <button data-tab="res">资源</button>
+            <button data-tab="boot">启动</button>
             <button data-tab="raw">原始</button>
             <!-- 前端版本标记——每次改动前端递增；刷新后数字变化 = 拿到新版（人眼 cache-busting） -->
             <div style="margin-top:auto;color:var(--ch-fg-faint);font-size:var(--ch-fs-tag);writing-mode:vertical-rl" data-version>UI v?</div>
@@ -99,6 +100,17 @@
                     <div id="resPy"></div>
                     <h2>GPU 显存</h2>
                     <div id="resGpu"></div>
+                </div>
+            </section>
+            <!-- A260 启动健康区——快照 boot 段渲染（降级清单 / 诊断落点 / 报告路径） -->
+            <section id="tab-boot" class="tab">
+                <div id="bootbar">
+                    <span id="bootInfo" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">启动健康——配置或环境异常的降级清单</span>
+                </div>
+                <div id="bootScroll">
+                    <div id="bootList"></div>
+                    <div id="bootReport" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag);padding:8px 12px"></div>
+                    <div id="bootSink" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag);padding:0 12px 12px 12px"></div>
                 </div>
             </section>
             <!-- 配置区 -->
@@ -329,5 +341,6 @@
     <script src="js/panel-packs.js?v=__V__"></script>
     <script src="js/panel-deps.js?v=__V__"></script>
     <script src="js/panel-res.js?v=__V__"></script>
+    <script src="js/panel-boot.js?v=__V__"></script>
 </body>
 </html>

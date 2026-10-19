@@ -2089,26 +2089,43 @@ namespace CatHome4.Admin
             if (port < 0)
             {
                 LogStore.Add("CatHome4", 2, "majordomo 独立端口启动失败：端口段 " + PortBand.FamilyFrom.ToString() + "-" + PortBand.FamilyTo.ToString() + " 全占用", "CHAT");
+                StartupDegradation.Report("MAJOR_PORT_EXHAUSTED", StartupDegradation.KindEnv, "默认猫对话页",
+                    StartupDegradation.StateUnavailable,
+                    "端口段 " + PortBand.FamilyFrom.ToString() + "-" + PortBand.FamilyTo.ToString() + " 全占用",
+                    "关闭占用端口的进程后重启", "S6");
                 return false;
             }
-            HttpHost host = HttpHost.Start(new HttpHostOptions
+            HttpHost host;
+            try
             {
-                Port = port,
-                FrontendTestPort = PortBand.FrontendTestPort,
-                SessionId = _chatBridge.DefaultSession.Id,
-                SnapshotBuilder = BuildSnapshotJson,
-                Dispatcher = (string line) => DispatchCommandForMajor(line),
-                EnvelopeBuilder = MakeChatEnvelopeBuilder(_chatBridge.DefaultSession),
-                FrameBuilder = null,
-                CatsBuilder = null,
-                PatchBuilder = null,
-                ViewFullBuilder = () => _chatBridge.DefaultSession.BuildViewFullJson(),
-                ViewFrameBuilder = () => _chatBridge.DefaultSession.TakeViewFrameJson(),
-                ServeChatPage = true,
-                RouteRegistrar = RegisterChatPageRoutes,
-                HtmlRootProvider = HtmlRoot,
-                DisplayName = _chatBridge.DefaultSession.DisplayName
-            });
+                host = HttpHost.Start(new HttpHostOptions
+                {
+                    Port = port,
+                    FrontendTestPort = PortBand.FrontendTestPort,
+                    SessionId = _chatBridge.DefaultSession.Id,
+                    SnapshotBuilder = BuildSnapshotJson,
+                    Dispatcher = (string line) => DispatchCommandForMajor(line),
+                    EnvelopeBuilder = MakeChatEnvelopeBuilder(_chatBridge.DefaultSession),
+                    FrameBuilder = null,
+                    CatsBuilder = null,
+                    PatchBuilder = null,
+                    ViewFullBuilder = () => _chatBridge.DefaultSession.BuildViewFullJson(),
+                    ViewFrameBuilder = () => _chatBridge.DefaultSession.TakeViewFrameJson(),
+                    ServeChatPage = true,
+                    RouteRegistrar = RegisterChatPageRoutes,
+                    HtmlRootProvider = HtmlRoot,
+                    DisplayName = _chatBridge.DefaultSession.DisplayName
+                });
+            }
+            catch (System.Exception ex)
+            {
+                // A260：默认猫对话页不可用不得阻断宿主启动（管理面板仍可用）
+                LogStore.Add("CatHome4", 2, "majordomo 独立对话端口启动失败：" + ex.Message, "CHAT");
+                StartupDegradation.Report("MAJOR_HOST_FAILED", StartupDegradation.KindEnv, "默认猫对话页",
+                    StartupDegradation.StateUnavailable, "独立端口 " + port.ToString() + " 启动失败：" + ex.Message,
+                    "关闭占用端口的进程后重启", "S6");
+                return false;
+            }
             _majorHost = host;
             _majorPort = port;
             // 会话事件推送改绑 majordomo 独立对话端口（主端口 index.html 管理面板不再消费 chat 事件——F2.1）

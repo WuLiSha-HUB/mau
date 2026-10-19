@@ -126,6 +126,7 @@ function applySnapshot(s) {
     renderBoxes(s.boxes || []);
     if (typeof renderDeps === 'function') { renderDeps(s.deps || []); }
     if (typeof renderRes === 'function') { renderRes(s.res || null); }
+    if (typeof renderBoot === 'function') { renderBoot(s.boot || null); }
     if (!rawPaused) {
         rawJsonEl.textContent = JSON.stringify(s, null, 2);
         rawInfoEl.textContent = 'frame=' + s.frame + ' · ' + s.cats.length + ' cats · ' + (s.boxes ? s.boxes.length : 0) + ' boxes';

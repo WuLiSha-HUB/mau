@@ -7,8 +7,9 @@ namespace Mau.Runtime
 {
     /// <summary>
     /// 工作区配置——workspace.json 解析（受控根 + 注入清单）。design-ch4-workspace §三/§五——Mau 基座标准能力。
-    /// 语义：工作区文件缺失 / roots 为空 = 默认单根 runtime 兜底（全局白名单语义——空=未配置白名单）；文件存在但 JSON 损坏 → 显式失败；
-    /// 根不可达分级：常驻根（workspace/runtime）硬失败，其余根跳过 + LoadWarnings 告警（宿主可启动改配置，工具面按缺失根出声）。
+    /// 语义：文件缺失 / roots 为空 = 默认单根兜底（全局白名单语义——空=未配置白名单）；JSON 损坏 / 读取失败 → 备份坏档 + 默认单根 + LoadDegrades；
+    /// 根不可达分级：常驻根（workspace/runtime）先重建目录、失败回落数据根；其余根跳过 + LoadWarnings 告警。
+    /// 🔴 A260 起本类永不抛——降级事实经 LoadDegrades 交给宿主登记（配置 / 环境异常不得阻断启动）。
     /// </summary>
     public sealed class WorkspaceConfig
     {
@@ -78,10 +79,16 @@ namespace Mau.Runtime
         /// 加载告警——不可达的非常驻根（跳过不注册；宿主启动后落 WORKSPACE 审计，不静默）
         /// </summary>
         public List<string> LoadWarnings = new List<string>();
+        /// <summary>
+        /// 加载降级——已在加载期自动处理的配置 / 环境问题（格式 code|state|detail）。
+        /// 与 LoadWarnings 的分工：Warnings 是「跳过的非常驻根」（无需处理）；Degrades 是「触发过兜底动作」（须登记进启动健康面）。
+        /// </summary>
+        public List<string> LoadDegrades = new List<string>();
 
         // [段1] 加载
         /// <summary>
-        /// 从 workspace.json 加载——文件缺失或 roots 为空返回默认配置（单根 defaultRoot 可写 + 空注入）；存在则解析，损坏/根不存在抛异常
+        /// 从 workspace.json 加载——文件缺失或 roots 为空返回默认配置（单根 defaultRoot 可写 + 空注入）。
+        /// 🔴 永不抛：读取失败 / JSON 损坏 → 备份坏档 + 默认单根；根问题逐项降级，事实记入 LoadDegrades / LoadWarnings。
         /// </summary>
         /// <param name="path">workspace.json 路径</param>
         /// <param name="defaultRoot">缺文件时的兜底根（数据根，可写）</param>
@@ -89,21 +96,54 @@ namespace Mau.Runtime
         public static WorkspaceConfig Load(string path, string defaultRoot)
         {
             WorkspaceConfig cfg = new WorkspaceConfig();
+            // [段0] 文件缺失 / 路径为空 = 未配置白名单 → 默认单根（既有语义）
             if (path == null || path.Length == 0 || !File.Exists(path))
             {
-                cfg.Roots = new RootEntry[] { new RootEntry() { Id = "workspace", Path = NormalizeRoot(defaultRoot), Writable = true } };
+                cfg.Roots = SingleRoot(defaultRoot);
                 cfg.Inject = new InjectEntry[0];
                 return cfg;
             }
-            using (JsonDocument doc = JsonUtil.ParseStrict(File.ReadAllText(path)))
+            // [段0b] 读取失败（权限 / 占用）→ 降级为默认单根（不阻断启动）
+            string text;
+            try
+            {
+                text = File.ReadAllText(path);
+            }
+            catch (Exception ex)
+            {
+                cfg.Roots = SingleRoot(defaultRoot);
+                cfg.Inject = new InjectEntry[0];
+                cfg.LoadDegrades.Add("CFG_UNREADABLE|fallback|" + path + " | " + ex.Message);
+                return cfg;
+            }
+            // [段0c] JSON 损坏 → 备份坏档 + 默认单根（不阻断启动）
+            JsonDocument doc;
+            try
+            {
+                doc = JsonUtil.ParseStrict(text);
+            }
+            catch (Exception ex)
+            {
+                string backup = ConfigFileGuard.BackupCorrupt(path);
+                cfg.Roots = SingleRoot(defaultRoot);
+                cfg.Inject = new InjectEntry[0];
+                string backupNote = "";
+                if (backup.Length > 0)
+                {
+                    backupNote = "（坏档备份 " + backup + "）";
+                }
+                cfg.LoadDegrades.Add("CFG_CORRUPT|fallback|" + path + backupNote + " | " + ex.Message);
+                return cfg;
+            }
+            using (doc)
             {
                 JsonElement root = doc.RootElement;
-                // [段1a] roots 解析
+                // [段1a] roots 解析——逐项容错：非法项跳过；常驻根不可达先重建、再回落数据根
                 List<RootEntry> roots = new List<RootEntry>();
                 JsonElement rootsEl;
                 if (root.TryGetProperty("roots", out rootsEl) && rootsEl.ValueKind == JsonValueKind.Array)
                 {
-                    for (int i = 0; i < rootsEl.GetArrayLength(); i++)
+                    for (int i = 0; i < rootsEl.GetArrayLength(); i = i + 1)
                     {
                         JsonElement item = rootsEl[i];
                         string id = GetProp(item, "id");
@@ -116,19 +156,69 @@ namespace Mau.Runtime
                         }
                         if (id.Length == 0 || raw.Length == 0)
                         {
-                            throw new InvalidDataException("workspace.roots[" + i.ToString() + "] 缺 id/path");
+                            cfg.LoadDegrades.Add("ROOT_ITEM_INVALID|empty|roots[" + i.ToString() + "] 缺 id/path");
+                            continue;
                         }
-                        string norm = NormalizeRoot(raw);
+                        string norm;
+                        try
+                        {
+                            norm = NormalizeRoot(raw);
+                        }
+                        catch (Exception ex)
+                        {
+                            cfg.LoadDegrades.Add("ROOT_ITEM_INVALID|empty|roots[" + i.ToString() + "] 路径非法：" + raw + " | " + ex.Message);
+                            continue;
+                        }
                         if (!Directory.Exists(norm))
                         {
-                            // 分级容错：常驻根（workspace / 旧 runtime）不可达 → 硬失败（数据面不可用，启动无意义）；
-                            // 其余根不可达 → 跳过 + 告警（宿主照常启动，管理员可进面板修正路径——工具面按 ROOT_UNKNOWN 出声，不静默）
-                            if (string.Equals(id, "workspace", StringComparison.OrdinalIgnoreCase) || string.Equals(id, "runtime", StringComparison.OrdinalIgnoreCase))
+                            bool resident = string.Equals(id, "workspace", StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(id, "runtime", StringComparison.OrdinalIgnoreCase);
+                            if (resident)
                             {
-                                throw new InvalidDataException("workspace root 不存在: " + norm);
+                                // 常驻根：先尝试重建目录（换机 / 误删的常见形态）
+                                bool rebuilt = false;
+                                try
+                                {
+                                    Directory.CreateDirectory(norm);
+                                    rebuilt = true;
+                                }
+                                catch (Exception)
+                                {
+                                    rebuilt = false;
+                                }
+                                if (rebuilt)
+                                {
+                                    cfg.LoadDegrades.Add("ROOT_REBUILT|rebuilt|常驻根不存在已重建：" + id + " → " + norm);
+                                }
+                                else
+                                {
+                                    // 重建失败 → 回落数据根（可写兜底）；数据根也不可用则保留原值（工具面按缺失根出声）
+                                    string fallback = "";
+                                    try
+                                    {
+                                        fallback = NormalizeRoot(defaultRoot);
+                                    }
+                                    catch (Exception)
+                                    {
+                                        fallback = "";
+                                    }
+                                    if (fallback.Length > 0)
+                                    {
+                                        cfg.LoadDegrades.Add("ROOT_UNREACHABLE|fallback|常驻根不可达（" + id + " → " + norm + "），已回落 " + fallback);
+                                        norm = fallback;
+                                    }
+                                    else
+                                    {
+                                        cfg.LoadDegrades.Add("ROOT_UNREACHABLE|unavailable|常驻根不可达且无可写回落：" + id + " → " + norm);
+                                    }
+                                }
                             }
-                            cfg.LoadWarnings.Add("根不可达已跳过: " + id + " → " + norm);
-                            continue;
+                            else
+                            {
+                                // 分级容错：非常驻根不可达 → 跳过 + 告警（宿主照常启动，管理员可进面板修正路径）
+                                cfg.LoadWarnings.Add("根不可达已跳过: " + id + " → " + norm);
+                                continue;
+                            }
                         }
                         string note = GetProp(item, "note");
                         roots.Add(new RootEntry() { Id = id, Path = norm, Writable = writable, Note = TruncateNote(note) });
@@ -137,7 +227,7 @@ namespace Mau.Runtime
                 if (roots.Count == 0)
                 {
                     // 空 roots = 未配置白名单——默认单根 workspace 兜底（同文件缺失语义；FileSystemService 需至少一个根）
-                    cfg.Roots = new RootEntry[] { new RootEntry() { Id = "workspace", Path = NormalizeRoot(defaultRoot), Writable = true } };
+                    cfg.Roots = SingleRoot(defaultRoot);
                     cfg.Inject = new InjectEntry[0];
                     return cfg;
                 }
@@ -147,7 +237,7 @@ namespace Mau.Runtime
                 JsonElement injectEl;
                 if (root.TryGetProperty("inject", out injectEl) && injectEl.ValueKind == JsonValueKind.Array)
                 {
-                    for (int i = 0; i < injectEl.GetArrayLength(); i++)
+                    for (int i = 0; i < injectEl.GetArrayLength(); i = i + 1)
                     {
                         JsonElement item = injectEl[i];
                         string file = GetProp(item, "file");
@@ -168,6 +258,32 @@ namespace Mau.Runtime
                 cfg.Inject = inject.ToArray();
             }
             return cfg;
+        }
+        /// <summary>
+        /// 构造默认单根配置——文件缺失 / 配置损坏 / roots 全空时的统一兜底（workspace 根 = 数据根，可写）。
+        /// </summary>
+        /// <param name="defaultRoot">兜底根（数据根；不可规范化时原样使用）</param>
+        /// <returns>单根数组</returns>
+        private static RootEntry[] SingleRoot(string defaultRoot)
+        {
+            RootEntry entry = new RootEntry();
+            entry.Id = "workspace";
+            entry.Writable = true;
+            string norm = "";
+            try
+            {
+                norm = NormalizeRoot(defaultRoot);
+            }
+            catch (Exception)
+            {
+                if (defaultRoot != null)
+                {
+                    norm = defaultRoot;
+                }
+            }
+            entry.Path = norm;
+            RootEntry[] roots = new RootEntry[] { entry };
+            return roots;
         }
 
         // [段2] 解析辅助

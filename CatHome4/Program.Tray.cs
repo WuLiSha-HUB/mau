@@ -4,6 +4,7 @@ using System.Threading;
 using System.Windows.Forms;
 using Microsoft.Win32;
 using CatHome4.Admin;
+using CatHome4.Contracts;
 using Mau.Runtime;
 
 namespace CH4
@@ -203,7 +204,17 @@ namespace CH4
                     trayVersion = "?";
                 }
                 icon.Icon = LoadAppIcon();
-                icon.Text = "CatHome4 " + trayVersion + "（" + trayArea + "）";
+                string trayText = "CatHome4 " + trayVersion + "（" + trayArea + "）";
+                // A260 降级角标——常驻可见面（ToolTip 上限 63 字符，超出截断）
+                if (StartupDegradation.HasAny)
+                {
+                    trayText = trayText + " ⚠ 降级 " + StartupDegradation.Count.ToString() + " 项";
+                }
+                if (trayText.Length > 63)
+                {
+                    trayText = trayText.Substring(0, 63);
+                }
+                icon.Text = trayText;
                 icon.Visible = true;
                 // Q 通知消费——托盘线程 Timer 轮询队列（BalloonTip 仅 STA 线程安全；任意线程入队不越界）
                 System.Windows.Forms.Timer balloonTimer = new System.Windows.Forms.Timer();

@@ -6,6 +6,7 @@ using System.Threading;
 using Mau.Runtime;
 using Mau.Providers;
 using CatHome4.Contracts;
+using CatHome4.Core;
 
 namespace CH4
 {
@@ -49,11 +50,19 @@ namespace CH4
         /// <returns>数据根目录</returns>
         private static string ResolveDataRoot()
         {
-            // [段1] 显式覆盖——CH4_DATA_ROOT 环境变量（行业标准逃逸口）
+            // [段1] 显式覆盖——CH4_DATA_ROOT 环境变量（行业标准逃逸口）；不可用时降级到下一级锚点
             string envRoot = Environment.GetEnvironmentVariable("CH4_DATA_ROOT");
             if (envRoot != null && envRoot.Length > 0)
             {
-                return envRoot;
+                if (EnsureDataRoot(envRoot))
+                {
+                    return envRoot;
+                }
+                StartupDegradation.Report("DATA_ROOT_UNUSABLE", StartupDegradation.KindEnv,
+                    "数据根（配置 / 会话 / 观测）", StartupDegradation.StateFallback,
+                    "CH4_DATA_ROOT 不可用：" + envRoot,
+                    "修正或清除 CH4_DATA_ROOT 环境变量后重启", "S0");
+                BootLog.Add("S0", "CH4_DATA_ROOT 不可用，已回落下一级锚点：" + envRoot);
             }
             // [段2] 测试区隔离——仓库根（Data 挂仓库根，可自由清）
             string root = FindRepoRoot(AppContext.BaseDirectory);
@@ -63,6 +72,27 @@ namespace CH4
             }
             // [段3] 机器级默认——部署实例持久数据
             return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CatHome4");
+        }
+        /// <summary>
+        /// 数据根可用性探测——建 Data 子目录判定可写（成功即视为可用；失败不抛）。
+        /// </summary>
+        /// <param name="root">候选数据根（Data 的上级目录）</param>
+        /// <returns>可用返回 true</returns>
+        private static bool EnsureDataRoot(string root)
+        {
+            if (root == null || root.Trim().Length == 0)
+            {
+                return false;
+            }
+            try
+            {
+                Directory.CreateDirectory(Path.Combine(root, "Data"));
+                return true;
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         /// <summary>端口段——Bootstrap 段0 解析（机器级端口空间按区划分：开发区向下 / 部署区向上——A74）</summary>

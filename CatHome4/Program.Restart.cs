@@ -37,6 +37,15 @@ namespace CH4
             nonInteractive = false;
             bool hasPush = false;
             bool hasNonInteractive = false;
+            // 预扫描——先定非交互形态：出错提前返回时也要能分派「脚本必须拿到退出码」（A260 R2）
+            for (int i = 0; i < args.Length; i = i + 1)
+            {
+                if (args[i] == "--run" || args[i] == "--script" || args[i] == "--selfcheck" || args[i] == "--tool-check" || args[i] == "--probe-llm")
+                {
+                    nonInteractive = true;
+                    break;
+                }
+            }
             for (int i = 0; i < args.Length; i = i + 1)
             {
                 string arg = args[i];
