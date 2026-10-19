@@ -169,3 +169,49 @@ test('截断载荷还原——\\b \\f 支持 + 未识别序列原样保留', () 
   expect(r.truncated).toBe(true);
   expect(r.command).toBe('echo "a" A \b\f \\q');
 });
+
+// ── 补充规则（2026-10-19 收集表核销：外部工具链 / 解释器家族 / 通用兜底）──
+test('媒体工具——ffmpeg 版本与转码、ffprobe 时长与版本', () => {
+  expect(cmdDecodeTool(args('ffmpeg -version')).brief).toBe('ffmpeg · 查看 ffmpeg 版本');
+  expect(cmdDecodeTool(args('C:\\Tools\\ffmpeg\\bin\\ffmpeg.exe -y -v error -i C:\\a\\白云.mp4 -t 5 -c:v libx264 -an C:\\out\\短片.mp4')).brief)
+    .toBe('ffmpeg · 处理媒体 「C:\\a\\白云.mp4」 → 「C:\\out\\短片.mp4」');
+  expect(cmdDecodeTool(args('ffprobe -v error -show_entries format=duration -of csv=p=0 夕阳.mp4')).brief)
+    .toBe('ffprobe · 读取媒体时长 「夕阳.mp4」');
+  expect(cmdDecodeTool(args('ffprobe -version')).brief).toBe('ffprobe · 查看 ffprobe 版本');
+});
+
+test('包管理与校验——winget / certutil / electron', () => {
+  expect(cmdDecodeTool(args('winget search Microsoft.DotNet.SDK.10')).brief).toBe('winget · 搜索软件包 「Microsoft.DotNet.SDK.10」');
+  expect(cmdDecodeTool(args('winget install --id Microsoft.DotNet.SDK.10 --exact --accept-package-agreements')).brief)
+    .toBe('winget · 安装软件包 「Microsoft.DotNet.SDK.10」');
+  expect(cmdDecodeTool(args('certutil -hashfile C:\\Temp\\a.zip SHA256')).brief).toBe('certutil · 计算文件哈希 「C:\\Temp\\a.zip」');
+  expect(cmdDecodeTool(args('electron.exe --version')).brief).toBe('electron · 查看 Electron 版本');
+});
+
+test('解释器家族——pwsh -File / -Command 与 powershell 兼容', () => {
+  expect(cmdDecodeTool(args('pwsh -NoProfile -File C:\\Work\\wt3\\tools\\run-acceptance.ps1')).brief)
+    .toBe('pwsh · 执行 PowerShell 脚本 「C:\\Work\\wt3\\tools\\run-acceptance.ps1」');
+  expect(cmdDecodeTool(args('pwsh -NoProfile -Command $PSVersionTable.PSVersion.ToString()')).brief)
+    .toBe('pwsh · 嵌套执行「$PSVersionTable.PSVersion.ToString()」');
+  expect(cmdDecodeTool(args('powershell -Command "where.exe godot_console"')).brief)
+    .toBe('powershell · 嵌套执行「where.exe godot_console」');
+  expect(cmdDecodeTool(args('powershell.exe -NoProfile -File C:\\a\\b.ps1')).brief)
+    .toBe('powershell · 执行 PowerShell 脚本 「C:\\a\\b.ps1」');
+});
+
+test('通用兜底——可执行 / 程序集 / 脚本（不再落「未识别命令」）', () => {
+  expect(cmdDecodeTool(args('C:\\Work\\WorldTree3\\_build\\WT3Play.exe --headless --pack C:\\Work\\WT3\\夏令营.assets.pack --decode-probe')).brief)
+    .toBe('wt3play · 运行可执行文件 「WT3Play.exe」 「C:\\Work\\WT3\\夏令营.assets.pack」');
+  expect(cmdDecodeTool(args('.\\Akasha-public\\Akasha.exe index-status')).brief)
+    .toBe('akasha · 运行可执行文件 「Akasha.exe」 「index-status」');
+  expect(cmdDecodeTool(args('"C:\\Work\\Gitee\\mau\\Mau\\Mau.Development.Tests\\bin\\Debug\\net10.0\\Mau.Development.Tests.dll" -method Mau.Development.Tests.FormatTests'))
+    .brief).toBe('mau.development.tests.dll · 运行 .NET 程序集 「Mau.Development.Tests.dll」');
+  expect(cmdDecodeTool(args('C:\\Work\\WT3\\release.cmd --no-pause')).brief)
+    .toBe('release.cmd · 执行脚本 「release.cmd」');
+});
+
+test('DOS find 与 Resolve-Path', () => {
+  expect(cmdDecodeTool(args('find /c /v "" "C:\\Work\\Gitee\\mau\\public\\src\\BrowserCat\\FL_BrowserCat.cs"')).brief)
+    .toBe('find · 统计文件行数 「C:\\Work\\Gitee\\mau\\public\\src\\BrowserCat\\FL_BrowserCat.cs」');
+  expect(cmdDecodeTool(args('Resolve-Path C:\\Work\\Gitee\\mau')).brief).toBe('Resolve-Path · 解析路径 「C:\\Work\\Gitee\\mau」');
+});

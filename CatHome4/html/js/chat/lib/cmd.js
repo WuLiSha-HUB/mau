@@ -333,6 +333,12 @@ var CMD_RULES = [
     { re: /^["']?(?:[^"'\s]*[\/\\])?mau(?:\.exe)?["']?\s+(\S+)/i, fmt: cmdFmtMauCli, tag: cmdTagMau },
     // ── Godot 工具链（控制台可执行——headless 跑测 / 导入）──
     { re: /^["']?(?:[^"'\s]*[\/\\])?godot[^\s"']*_console(?:\.exe)?["']?\s*(.*)$/i, fmt: cmdFmtGodot, tag: cmdTagGodot },
+    // ── 外部工具链（媒体 / 包管理 / 校验 / Electron）──
+    { re: /^["']?(?:[^"'\s]*[\/\\])?ffprobe(?:\.exe)?["']?\s*(.*)$/i, fmt: cmdFmtFfprobe, tag: 'ffprobe' },
+    { re: /^["']?(?:[^"'\s]*[\/\\])?ffmpeg(?:\.exe)?["']?\s*(.*)$/i, fmt: cmdFmtFfmpeg, tag: 'ffmpeg' },
+    { re: /^winget(?:\.exe)?\b\s*(.*)$/i, fmt: cmdFmtWinget, tag: 'winget' },
+    { re: /^certutil(?:\.exe)?\b\s*(.*)$/i, fmt: cmdFmtCertutil, tag: 'certutil' },
+    { re: /^["']?(?:[^"'\s]*[\/\\])?electron(?:\.exe)?["']?\s*(.*)$/i, fmt: cmdFmtElectron, tag: 'electron' },
     // ── 编译链 / 版本控制 / Node ──
     { re: /^dotnet\s+(build|test|publish|run|restore|clean|pack)\b\s*(.*)$/i, fmt: cmdFmtDotnet, tag: cmdTagDotnet },
     // dotnet 形态兜底——dll 直跑（测试程序集）/ 开关查询（子命令之外的常用形态）
@@ -341,7 +347,7 @@ var CMD_RULES = [
     { re: /^(npm|npx|node)\b\s*(.*)$/i, fmt: cmdVerb('运行 Node 工具链') },
     // ── 嵌套解释器（cmd /c 与 powershell -Command 的内联命令）──
     { re: /^cmd(?:\.exe)?\s+\/c\s+(.*)$/i, fmt: cmdFmtNested, tag: 'cmd' },
-    { re: /^powershell(?:\.exe)?\s+(?:-command|-c)\s+(.*)$/i, fmt: cmdFmtNested, tag: 'powershell' },
+    { re: /^(?:powershell|pwsh)(?:\.exe)?\s+(.*)$/i, fmt: cmdFmtShell, tag: cmdTagShell },
     // ── 文件系统 cmdlet（含常用别名）──
     { re: /^(Get-ChildItem|gci|ls|dir)\b\s*(.*)$/i, fmt: cmdVerb('列出目录') },
     { re: /^(Get-Content|gc|cat|type)\b\s*(.*)$/i, fmt: cmdVerb('读取文件内容') },
@@ -355,6 +361,8 @@ var CMD_RULES = [
     { re: /^(Get-CimInstance)\b\s*(.*)$/i, fmt: cmdVerb('查询系统信息') },
     { re: /^(Expand-Archive)\b\s*(.*)$/i, fmt: cmdVerb('解压归档文件') },
     { re: /^fc(?:\.exe)?\b\s*(.*)$/i, fmt: cmdVerbOnly('比较文件差异') },
+    { re: /^find(?:\.exe)?\b\s*(.*)$/i, fmt: cmdFmtFind },
+    { re: /^Resolve-Path\b\s*(.*)$/i, fmt: cmdVerb('解析路径') },
     { re: /^Test-NetConnection\b\s*(.*)$/i, fmt: cmdVerb('测试网络连通性') },
     { re: /^(Get-Item|Get-ItemProperty)\b\s*(.*)$/i, fmt: cmdVerb('查看项属性') },
     { re: /^(Get-Process|gps)\b\s*(.*)$/i, fmt: cmdVerb('查看进程') },
@@ -377,7 +385,11 @@ var CMD_RULES = [
     { re: /^(netstat|Get-NetTCPConnection)\b\s*(.*)$/i, fmt: cmdVerb('查看网络连接') },
     { re: /^(Start-Sleep|sleep)\b\s*(.*)$/i, fmt: cmdVerb('等待') },
     { re: /^Get-Date\b\s*(.*)$/i, fmt: cmdVerb('获取当前时间') },
-    { re: /^(Set-Location|cd|chdir)\b\s*(.*)$/i, fmt: cmdVerb('切换目录') }
+    { re: /^(Set-Location|cd|chdir)\b\s*(.*)$/i, fmt: cmdVerb('切换目录') },
+    // ── 通用兜底（收集表核销——专用规则在前，此处只保「不静默未识别」）──
+    { re: /^["']?(?:[^"'\s]*[\/\\])?([^"'\s\/\\]+\.(?:cmd|bat|ps1))["']?\s*(.*)$/i, fmt: cmdFmtScript, tag: cmdTagLower },
+    { re: /^["']?(?:[^"'\s]*[\/\\])?([^"'\s\/\\]+\.dll)["']?\s*(.*)$/i, fmt: cmdFmtDll, tag: cmdTagLower },
+    { re: /^["']?(?:[^"'\s]*[\/\\])?([^"'\s\/\\]+\.exe)["']?\s*(.*)$/i, fmt: cmdFmtExeGeneric, tag: cmdTagLower }
 ];
 
 // ═══════════════════════════════════════════
@@ -526,14 +538,171 @@ function cmdFmtGodot(seg, m) {
     return (/--headless\b/i.test(rest) ? 'headless 运行 Godot 项目' : '运行 Godot') + target;
 }
 
+/** 剥成对的外层引号——内层命令自带的收尾引号保留（判例：cmd /c dir "…" 曾被误剥） */
+function cmdStripPairQuote(text) {
+    var t = cmdTrim(text || '');
+    var q = t.charAt(0);
+    if ((q === '"' || q === '\'') && t.charAt(t.length - 1) === q) {
+        return cmdTrim(t.substring(1, t.length - 1));
+    }
+    return t;
+}
+
+/** 原始分词（保留开关值顺序——媒体类取末位输出路径用） */
+function cmdTokens(rest) {
+    var out = [];
+    var re = /"([^"]*)"|'([^']*)'|(\S+)/g;
+    var m;
+    while ((m = re.exec(rest || '')) !== null) {
+        var v = (m[1] !== undefined) ? m[1] : ((m[2] !== undefined) ? m[2] : m[3]);
+        if (v.length > 0) {
+            out.push(v);
+        }
+    }
+    return out;
+}
+
+/** 末位非开关 token（媒体输出目标取用；无则空串） */
+function cmdLastTarget(rest) {
+    var all = cmdTokens(rest);
+    for (var i = all.length - 1; i >= 0; i = i - 1) {
+        if (all[i].charAt(0) !== '-') {
+            return all[i];
+        }
+    }
+    return '';
+}
+
+/** ffmpeg —— 版本 / 媒体处理（输入 -i → 末位输出） */
+function cmdFmtFfmpeg(seg, m) {
+    var rest = m[1] || '';
+    if (/^\s*-version\b/i.test(rest)) {
+        return '查看 ffmpeg 版本';
+    }
+    var src = /(?:^|\s)-i\s+("[^"]*"|'[^']*'|[^\s]+)/i.exec(rest);
+    var input = src ? cmdStripPairQuote(src[1]) : '';
+    var output = cmdLastTarget(rest);
+    if (output === input) {
+        output = '';
+    }
+    if (input.length > 0 && output.length > 0) {
+        return '处理媒体 ' + cmdQuote(cmdTrunc(input, 60)) + ' → ' + cmdQuote(cmdTrunc(output, 60));
+    }
+    if (input.length > 0) {
+        return '处理媒体 ' + cmdQuote(cmdTrunc(input, 60));
+    }
+    return '调用 ffmpeg' + cmdTarget(rest);
+}
+
+/** ffprobe —— 版本 / 媒体属性读取（时长特判） */
+function cmdFmtFfprobe(seg, m) {
+    var rest = m[1] || '';
+    if (/^\s*-version\b/i.test(rest)) {
+        return '查看 ffprobe 版本';
+    }
+    var head = /(?:^|\s)-show_entries\s+\S*duration/i.test(rest) ? '读取媒体时长' : '读取媒体信息';
+    var tgt = cmdLastTarget(rest);
+    return (tgt.length > 0) ? (head + ' ' + cmdQuote(cmdTrunc(tgt, 60))) : head;
+}
+
+/** winget —— 子命令（search / install / upgrade / list…）+ 包名 */
+function cmdFmtWinget(seg, m) {
+    var all = cmdArgs(m[1] || '');
+    var act = (all[0] || '').toLowerCase();
+    var map = {
+        search: '搜索软件包',
+        install: '安装软件包',
+        uninstall: '卸载软件包',
+        upgrade: '升级软件包',
+        list: '列出已装软件',
+        show: '查看软件包信息',
+        source: '管理软件源'
+    };
+    var head = map[act] || ('winget' + (act.length > 0 ? ' ' + act : ''));
+    var tgt = (all.length > 1) ? (' ' + cmdQuote(cmdTrunc(all[1], 60))) : '';
+    return head + tgt;
+}
+
+/** certutil —— 哈希计算 / 编解码 / 其他 */
+function cmdFmtCertutil(seg, m) {
+    var rest = m[1] || '';
+    var h = /-hashfile\s+("[^"]*"|'[^']*'|[^\s]+)/i.exec(rest);
+    if (h) {
+        return '计算文件哈希 ' + cmdQuote(cmdTrunc(cmdStripPairQuote(h[1]), 60));
+    }
+    if (/(?:^|\s)-(?:decode|encode)\b/i.test(rest)) {
+        return '编解码证书文件';
+    }
+    return '调用证书工具（' + cmdTrunc(cmdTrim(rest), 50) + '）';
+}
+
+/** Electron —— 版本 / 运行 */
+function cmdFmtElectron(seg, m) {
+    var rest = cmdTrim(m[1] || '');
+    if (/^--version\b/i.test(rest)) {
+        return '查看 Electron 版本';
+    }
+    return '运行 Electron' + cmdTarget(rest);
+}
+
+/** DOS find —— /c 统计行数 / 其余查找文本（跳过 /c /v 类开关与引号空串） */
+function cmdFmtFind(seg, m) {
+    var rest = m[1] || '';
+    var head = /(?:^|\s)\/c(?:\s|$)/i.test(rest) ? '统计文件行数' : '在文件中查找文本';
+    var all = cmdTokens(rest);
+    var tgt = '';
+    for (var i = all.length - 1; i >= 0; i = i - 1) {
+        if (all[i].charAt(0) !== '-' && all[i].charAt(0) !== '/') {
+            tgt = all[i];
+            break;
+        }
+    }
+    return head + ((tgt.length > 0) ? (' ' + cmdQuote(cmdTrunc(tgt, 60))) : '');
+}
+
+/** 通用可执行 —— 「运行可执行文件 <名>」+ 首个目标参数 */
+function cmdFmtExeGeneric(seg, m) {
+    return '运行可执行文件 ' + cmdQuote(cmdTrunc(m[1] || '', 60)) + cmdTarget(m[2] || '');
+}
+
+/** 程序集直跑 —— 「运行 .NET 程序集 <名>」 */
+function cmdFmtDll(seg, m) {
+    return '运行 .NET 程序集 ' + cmdQuote(cmdTrunc(m[1] || '', 60));
+}
+
+/** 脚本执行（.cmd / .bat / .ps1） */
+function cmdFmtScript(seg, m) {
+    return '执行脚本 ' + cmdQuote(cmdTrunc(m[1] || '', 60));
+}
+
+/** PowerShell 家族 —— -Command 内联嵌套 / -File 脚本 / 其余原样带入 */
+function cmdFmtShell(seg, m) {
+    var rest = cmdTrim(m[1] || '');
+    var c = /(?:^|\s)(?:-command|-c)\s+(.*)$/i.exec(rest);
+    if (c) {
+        return '嵌套执行「' + cmdTrunc(cmdStripPairQuote(c[1]), 60) + '」';
+    }
+    var f = /(?:^|\s)-file\s+("[^"]*"|'[^']*'|[^\s]+)/i.exec(rest);
+    if (f) {
+        return '执行 PowerShell 脚本 ' + cmdQuote(cmdTrunc(cmdStripPairQuote(f[1]), 60));
+    }
+    return '调用 PowerShell（' + cmdTrunc(rest, 50) + '）';
+}
+
+/** PowerShell 家族指令类标识——powershell / pwsh */
+function cmdTagShell(seg, m) {
+    var w = cmdTagWord(seg);
+    return (/^pwsh/i.test(w)) ? 'pwsh' : 'powershell';
+}
+
+/** 通用兜底指令类标识——首词小写（与显式 tag 风格一致：ffmpeg / akasha） */
+function cmdTagLower(seg) {
+    return (cmdTagWord(seg) || '').toLowerCase();
+}
+
 /** 嵌套解释器 → 中文动作（cmd /c 与 powershell -Command 的内联命令原样带入） */
 function cmdFmtNested(seg, m) {
-    var inner = cmdTrim(m[1] || '');
-    // 只剥成对的外层引号——内层命令自带的收尾引号保留（判例：cmd /c dir "…" 曾被误剥）
-    var q = inner.charAt(0);
-    if ((q === '"' || q === '\'') && inner.charAt(inner.length - 1) === q) {
-        inner = cmdTrim(inner.substring(1, inner.length - 1));
-    }
+    var inner = cmdStripPairQuote(m[1] || '');
     return '嵌套执行「' + cmdTrunc(inner, 60) + '」';
 }
 
