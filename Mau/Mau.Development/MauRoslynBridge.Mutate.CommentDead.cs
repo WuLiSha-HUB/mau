@@ -12,7 +12,7 @@ namespace Mau.Development
 #pragma warning disable CS8600 // 环境 SDK 对 ConcurrentDictionary/Dictionary TryXXX(out TValue) 的 MaybeNullWhen 分析异常误报——out 实参非空变量也报警（最小复现验证）
     /// <summary>
     /// MauRoslynBridge 元数据面分部——cs.comment（XML 注释增改）+ cs.dead（零引用扫描，partial 分部）。
-    /// 写操作统一：编译验证 → 无新增错误才落盘；落盘后内存立即 = 磁盘（写后自刷新）。
+    /// 写操作统一：磁盘为准——恒落盘，编译诊断随回执返回（不阻断）；盘面校验 + 树差异落盘。
     /// </summary>
     public sealed partial class MauRoslynBridge
     {
@@ -220,27 +220,17 @@ namespace Mau.Development
                 SyntaxNode root = foundTree.GetRoot();
                 SyntaxNode newRoot = root.ReplaceNode(target, newNode);
                 SyntaxTree newTree = CreateTreeFromRoot(foundTree, newRoot);
-                // 编译验证——有新增错误回滚（与 member / patch 同规：写盘前一律过门禁，注释写坏同样不落盘）
-                List<string> newErrors;
+                // 写盘裁决——磁盘为准：编译诊断随回执可见，不再阻断（与 patch / member 同规）
                 CSharpCompilation trial = (CSharpCompilation)cache.Compilation.ReplaceSyntaxTree(foundTree, newTree);
-                if (!ValidateNoNewErrors(cache.Compilation, trial, out newErrors))
+                string commitError;
+                string writeNote;
+                List<string> newErrors;
+                if (!CommitTreeChange(cache, foundTree, newTree, trial, out commitError, out writeNote, out newErrors))
                 {
-                    StringBuilder fail = new StringBuilder();
-                    fail.Append("ROLLED_BACK|COMPILE_ERROR|新增编译错误 " + newErrors.Count + " 条——未落盘:");
-                    for (int i = 0; i < newErrors.Count; i = i + 1)
-                    {
-                        fail.Append(Environment.NewLine + "  " + newErrors[i]);
-                    }
-                    result = TrimResult(fail.ToString(), MaxResultChars);
+                    result = commitError;
                     return true;
                 }
                 string filePath = foundTree.FilePath;
-                string writeNote = WriteAtomicText(filePath, newRoot.ToFullString());
-                cache.Trees[filePath] = newTree;
-                cache.Compilation = trial;
-                cache.Stamps[filePath] = SnapshotOf(filePath);
-                SemanticModel removed = null!;
-                cache.Semantics.TryRemove(filePath, out removed);
                 // 统一口径（A210）：头（ok/tool/target/items + type）+ 摘要行
                 string commentTarget = member.Length > 0 ? className + "." + member : className;
                 Dictionary<string, object> cmMeta = new Dictionary<string, object>();
@@ -249,7 +239,8 @@ namespace Mau.Development
                 {
                     cmMeta["writeNote"] = writeNote;
                 }
-                result = MetaHead("cs-comment", true, commentTarget, -1, cmMeta) + Environment.NewLine + Echo(commentTarget, "改 " + type);
+                NoteCompileErrors(cmMeta, newErrors);
+                result = MetaHead("cs-comment", true, commentTarget, -1, cmMeta) + Environment.NewLine + Echo(commentTarget, "改 " + type) + CompileDiagBlock(newErrors);
                 return true;
             }
         }

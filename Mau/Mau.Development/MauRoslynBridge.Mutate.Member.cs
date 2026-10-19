@@ -12,7 +12,7 @@ namespace Mau.Development
 #pragma warning disable CS8600 // 环境 SDK 对 ConcurrentDictionary/Dictionary TryXXX(out TValue) 的 MaybeNullWhen 分析异常误报——out 实参非空变量也报警（最小复现验证）
     /// <summary>
     /// MauRoslynBridge 成员变更面分部——cs.member 三改法（insert/delete/rename，partial 分部）。
-    /// 写操作统一：编译验证 → 无新增错误才落盘（三态 OK/ROLLED_BACK/ERR）；落盘后内存立即 = 磁盘（写后自刷新）。
+    /// 写操作统一：磁盘为准——恒落盘，编译诊断随回执返回（不阻断）；逐文件盘面校验 + 树差异落盘。
     /// </summary>
     public sealed partial class MauRoslynBridge
     {
@@ -41,7 +41,7 @@ namespace Mau.Development
             return false;
         }
 
-        /// <summary>member insert——类中插入成员（position: end/before/after/after_fields；code 单成员 / codes 批量数组二选一——批量整批一次构树 + 一次编译预检，A92；单成员含多个声明即 BAD_ARGS 拒绝，不静默截断）</summary>
+        /// <summary>member insert——类中插入成员（position: end/before/after/after_fields；code 单成员 / codes 批量数组二选一——批量整批一次构树 + 一次落盘，A92；单成员含多个声明即 BAD_ARGS 拒绝，不静默截断）</summary>
         /// <param name="args">参数</param>
         /// <param name="result">结果</param>
         /// <returns>调用完成</returns>
@@ -111,7 +111,7 @@ namespace Mau.Development
                 }
                 else if (declared > 1)
                 {
-                    result = "ERR|BAD_ARGS|code 含 " + declared + " 个成员声明——单成员用 code；多成员请改用 codes 批量（整批一次编译预检）";
+                    result = "ERR|BAD_ARGS|code 含 " + declared + " 个成员声明——单成员用 code；多成员请改用 codes 批量（整批一次落盘）";
                     return true;
                 }
             }
@@ -233,31 +233,21 @@ namespace Mau.Development
                     newMembers.Add(EnsureMemberTrailingNewLine(formattedMember, memberNewline).WithAdditionalAnnotations(insertMark));
                     insertMarks.Add(insertMark);
                 }
-                // [段4] 整批一次构树 + 一次编译预检——互相引用的成组成员同批可见（A92 痛点：单成员预检必报缺名）
+                // [段4] 整批一次构树 + 一次落盘——互相引用的成组成员同批可见（A92：单成员落盘会报缺名诊断，随回执返回）
                 ClassDeclarationSyntax newClassNode = classNode.WithMembers(classNode.Members.InsertRange(insertIndex, newMembers));
                 SyntaxNode root = foundTree.GetRoot();
                 SyntaxNode newRoot = root.ReplaceNode(classNode, newClassNode);
                 SyntaxTree newTree = CreateTreeFromRoot(foundTree, newRoot);
-                List<string> newErrors;
                 CSharpCompilation trial = (CSharpCompilation)cache.Compilation.ReplaceSyntaxTree(foundTree, newTree);
-                if (!ValidateNoNewErrors(cache.Compilation, trial, out newErrors))
+                string commitError;
+                string writeNote;
+                List<string> newErrors;
+                if (!CommitTreeChange(cache, foundTree, newTree, trial, out commitError, out writeNote, out newErrors))
                 {
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("ROLLED_BACK|COMPILE_ERROR|新增编译错误 " + newErrors.Count + " 条——未落盘:");
-                    for (int i = 0; i < newErrors.Count; i = i + 1)
-                    {
-                        sb.Append(Environment.NewLine + "  " + newErrors[i]);
-                    }
-                    result = TrimResult(sb.ToString(), MaxResultChars);
+                    result = commitError;
                     return true;
                 }
                 string filePath = foundTree.FilePath;
-                string writeNote = WriteAtomicText(filePath, newRoot.ToFullString());
-                cache.Trees[filePath] = newTree;
-                cache.Compilation = trial;
-                cache.Stamps[filePath] = SnapshotOf(filePath);
-                SemanticModel removed = null!;
-                cache.Semantics.TryRemove(filePath, out removed);
                 // [段5] 统一口径（A210）：头（ok/tool/target/items + op/file/…）+ 摘要行——行号基准 = 完整文件树上的 attached 节点
                 string relFile = RelativeToProject(cache, filePath);
                 if (!batch)
@@ -278,7 +268,8 @@ namespace Mau.Development
                     {
                         miMeta["writeNote"] = writeNote;
                     }
-                    result = MetaHead("cs-member", true, className, 1, miMeta) + Environment.NewLine + Echo(className, "插入 1 成员");
+                    NoteCompileErrors(miMeta, newErrors);
+                    result = MetaHead("cs-member", true, className, 1, miMeta) + Environment.NewLine + Echo(className, "插入 1 成员") + CompileDiagBlock(newErrors);
                     return true;
                 }
                 List<Dictionary<string, object>> items = new List<Dictionary<string, object>>();
@@ -304,7 +295,8 @@ namespace Mau.Development
                 {
                     mbMeta["writeNote"] = writeNote;
                 }
-                result = MetaHead("cs-member", true, className, items.Count, mbMeta) + Environment.NewLine + Echo(className, "插入 " + items.Count + " 成员");
+                NoteCompileErrors(mbMeta, newErrors);
+                result = MetaHead("cs-member", true, className, items.Count, mbMeta) + Environment.NewLine + Echo(className, "插入 " + items.Count + " 成员") + CompileDiagBlock(newErrors);
                 return true;
             }
         }
@@ -350,7 +342,7 @@ namespace Mau.Development
         }
 
         /// <summary>
-        /// member delete——删除成员（含注释）；编译验证回滚保护
+        /// member delete——删除成员（含注释）；编译诊断随回执（不阻断落盘）
         /// </summary>
         /// <param name="args">参数</param>
         /// <param name="result">结果</param>
@@ -408,25 +400,15 @@ namespace Mau.Development
                 }
                 SyntaxTree newTree = CreateTreeFromRoot(foundTree, newRoot);
                 CSharpCompilation trial = (CSharpCompilation)cache.Compilation.ReplaceSyntaxTree(foundTree, newTree);
+                string commitError;
+                string writeNote;
                 List<string> newErrors;
-                if (!ValidateNoNewErrors(cache.Compilation, trial, out newErrors))
+                if (!CommitTreeChange(cache, foundTree, newTree, trial, out commitError, out writeNote, out newErrors))
                 {
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("ROLLED_BACK|COMPILE_ERROR|删除引入 " + newErrors.Count + " 处新增错误——未落盘（成员仍被引用）:");
-                    for (int i = 0; i < newErrors.Count; i = i + 1)
-                    {
-                        sb.Append(Environment.NewLine + "  " + newErrors[i]);
-                    }
-                    result = TrimResult(sb.ToString(), MaxResultChars);
+                    result = commitError;
                     return true;
                 }
                 string filePath = foundTree.FilePath;
-                string writeNote = WriteAtomicText(filePath, newRoot.ToFullString());
-                cache.Trees[filePath] = newTree;
-                cache.Compilation = trial;
-                cache.Stamps[filePath] = SnapshotOf(filePath);
-                SemanticModel removed = null!;
-                cache.Semantics.TryRemove(filePath, out removed);
                 // 统一口径（A210）：头（ok/tool/target/items + op/member/file）+ 摘要行
                 Dictionary<string, object> mdMeta = new Dictionary<string, object>();
                 mdMeta["op"] = "delete";
@@ -436,13 +418,14 @@ namespace Mau.Development
                 {
                     mdMeta["writeNote"] = writeNote;
                 }
-                result = MetaHead("cs-member", true, className, 1, mdMeta) + Environment.NewLine + Echo(className, "删除 " + member);
+                NoteCompileErrors(mdMeta, newErrors);
+                result = MetaHead("cs-member", true, className, 1, mdMeta) + Environment.NewLine + Echo(className, "删除 " + member) + CompileDiagBlock(newErrors);
                 return true;
             }
         }
 
         /// <summary>
-        /// member rename——全项目引用同步（语义验证每处替换；编译验证回滚保护；多文件原子落盘）
+        /// member rename——全项目引用同步（语义验证每处替换；逐文件盘面校验 + 独立落盘——中途失败不回滚已写文件，回执给失败文件与原因）
         /// </summary>
         /// <param name="args">参数</param>
         /// <param name="result">结果</param>
@@ -521,32 +504,23 @@ namespace Mau.Development
                 {
                     trial = (CSharpCompilation)trial.ReplaceSyntaxTree(changedOldTrees[i], changedTrees[i]);
                 }
-                List<string> newErrors;
-                if (!ValidateNoNewErrors(cache.Compilation, trial, out newErrors))
-                {
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("ROLLED_BACK|COMPILE_ERROR|重命名引入 " + newErrors.Count + " 处新增错误——全部未落盘:");
-                    for (int i = 0; i < newErrors.Count; i = i + 1)
-                    {
-                        sb.Append(Environment.NewLine + "  " + newErrors[i]);
-                    }
-                    result = TrimResult(sb.ToString(), MaxResultChars);
-                    return true;
-                }
+                List<string> newErrors = CollectNewErrors(cache.Compilation, trial);
                 List<string> writeNotes = new List<string>();
                 for (int i = 0; i < changedFiles.Count; i = i + 1)
                 {
                     string filePath = changedFiles[i];
                     SyntaxTree newTree = changedTrees[i];
-                    string writeNote = WriteAtomicText(filePath, newTree.GetRoot().ToFullString());
+                    string commitError;
+                    string writeNote;
+                    if (!CommitTreeWrite(cache, changedOldTrees[i], newTree, out commitError, out writeNote))
+                    {
+                        result = commitError;
+                        return true;
+                    }
                     if (writeNote.Length > 0)
                     {
                         writeNotes.Add(Path.GetFileName(filePath) + ": " + writeNote);
                     }
-                    cache.Trees[filePath] = newTree;
-                    cache.Stamps[filePath] = SnapshotOf(filePath);
-                    SemanticModel removed = null!;
-                    cache.Semantics.TryRemove(filePath, out removed);
                 }
                 cache.Compilation = trial;
                 // 统一口径（A210）：头（ok/tool/target/items + op/oldName/newName）+ 摘要行
@@ -558,7 +532,8 @@ namespace Mau.Development
                 {
                     mrMeta["writeNote"] = string.Join(" | ", writeNotes);
                 }
-                result = MetaHead("cs-member", true, className, changedFiles.Count, mrMeta) + Environment.NewLine + Echo(className, "重命名 " + oldName + "→" + newName + " · " + changedFiles.Count + " 文件");
+                NoteCompileErrors(mrMeta, newErrors);
+                result = MetaHead("cs-member", true, className, changedFiles.Count, mrMeta) + Environment.NewLine + Echo(className, "重命名 " + oldName + "→" + newName + " · " + changedFiles.Count + " 文件") + CompileDiagBlock(newErrors);
                 return true;
             }
         }

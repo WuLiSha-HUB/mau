@@ -155,7 +155,7 @@ namespace Mau.Runtime.Tests
                 File.WriteAllText(path, "[[[", new UTF8Encoding(false));
                 ConfigSchema schema = ConfigSchema.Load(path);
                 Assert.NotNull(schema);
-                Assert.Equal(0, schema.All().Length);
+                Assert.Empty(schema.All());
                 Assert.Contains("CFG_CORRUPT", schema.LoadDegrade);
                 string[] backups = Directory.GetFiles(dir, "schema.json.bad-*");
                 Assert.True(backups.Length > 0);

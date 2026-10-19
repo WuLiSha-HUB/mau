@@ -148,17 +148,39 @@ namespace Mau.Development.Tests
         }
 
         /// <summary>
-        /// member insert（codes 批量）——整批仍缺名 ⇒ ROLLED_BACK 不落盘（预检覆盖整批）
+        /// member insert（codes 批量）——整批仍缺名 ⇒ 已落盘 + 回执携编译诊断（磁盘为准：错误可见不阻断）
         /// </summary>
         [Fact]
-        public void MemberInsertBatchRollsBackOnMissingName()
+        public void MemberInsertBatchPersistsWithCompileDiagnostics()
         {
             string before = File.ReadAllText(_target);
             string codeA = "public string Orphan()\\n{\\nreturn Absent();\\n}";
             string codeB = "public int Plain()\\n{\\nreturn 1;\\n}";
             string result = Call("member", "\"class\":\"A22Probe\",\"op\":\"insert\",\"position\":\"end\",\"codes\":[\"" + codeA + "\",\"" + codeB + "\"]");
-            Assert.StartsWith("ROLLED_BACK", result);
-            Assert.Equal(before, File.ReadAllText(_target));
+            Assert.StartsWith("{\"ok\":true", result);
+            Assert.Contains("\"compileErrors\":", result);
+            Assert.Contains("CS0103", result);
+            string after = File.ReadAllText(_target);
+            Assert.NotEqual(before, after);
+            Assert.Contains("public string Orphan()", after);
+            // 收尾——同工程后续用例继续跑，恢复文件（下一次调用按内容对账自动重解析）
+            File.WriteAllText(_target, before);
+        }
+
+        /// <summary>
+        /// 外部文本改动——内存树按内容对账自动重解析；随后的写操作照常成功且不吞外部改动
+        /// </summary>
+        [Fact]
+        public void ExternalTextEditIsPickedUpBeforeWrite()
+        {
+            string marker = "// EXTERNAL-EDIT";
+            string original = File.ReadAllText(_target);
+            File.WriteAllText(_target, original + Environment.NewLine + marker + Environment.NewLine, new UTF8Encoding(true));
+            string patch = Call("patch", "\"class\":\"A22Probe\",\"method\":\"Target\",\"body\":\"{\\n    return 2;\\n}\"");
+            Assert.StartsWith("{\"ok\":true", patch);
+            string after = File.ReadAllText(_target);
+            Assert.Contains(marker, after);
+            Assert.Contains("return 2;", after);
         }
 
         /// <summary>

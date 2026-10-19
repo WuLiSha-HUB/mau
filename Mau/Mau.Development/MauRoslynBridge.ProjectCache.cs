@@ -7,7 +7,8 @@ using Microsoft.CodeAnalysis.CSharp;
 namespace Mau.Development
 {
     /// <summary>
-    /// 文件快照——磁盘签名（mtime + size，NTFS 微秒级元数据调用，无 IO 读）
+    /// 文件快照——磁盘签名（mtime + size，NTFS 微秒级元数据调用，无 IO 读）。
+    /// 仅作判变快链：元数据全等时仍以内容比较为准（同秒同大小的外部改写必须被看见）。
     /// </summary>
     internal struct ProjectSnapshot
     {
