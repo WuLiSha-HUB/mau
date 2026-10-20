@@ -138,8 +138,9 @@ namespace CatHome4.Admin
         /// </summary>
         /// <param name="rootsIn">提交条目（Id 须已归一为小写）</param>
         /// <param name="existingPaths">现存根 path 映射（id → path；与提交值等值的存量根跳过存在性校验——目录离线/搬迁不构成改根死锁）</param>
+        /// <param name="dataRoot">数据根——路径锁定根（data / db）的系统值以此为基；空 = 不校验路径</param>
         /// <returns>错误文案（空 = 通过）</returns>
-        private static string ValidateRootsInput(List<WorkspaceRootInput> rootsIn, Dictionary<string, string> existingPaths)
+        internal static string ValidateRootsInput(List<WorkspaceRootInput> rootsIn, Dictionary<string, string> existingPaths, string dataRoot)
         {
             List<string> ids = new List<string>();
             for (int i = 0; i < rootsIn.Count; i = i + 1)
@@ -199,6 +200,16 @@ namespace CatHome4.Admin
                     // 固定列系统权威——note / writable 取定义值（不以提交值为准）；存量配置缺 note、直调 API 传错值一律归一，不构成保存死锁
                     input.Note = def.Note;
                     input.Writable = def.Writable;
+                    // A273 路径锁定——data / db 的 path 由系统计算，提交值不同即拒绝（不做静默覆盖：改了要让人知道改不成）
+                    string lockedPath = ResolveFixedRootPath(def.Id, dataRoot);
+                    if (lockedPath.Length > 0)
+                    {
+                        if (!string.Equals(Mau.Runtime.WorkspaceConfig.NormalizeRoot(input.Path), Mau.Runtime.WorkspaceConfig.NormalizeRoot(lockedPath), StringComparison.OrdinalIgnoreCase))
+                        {
+                            return "系统根 " + def.Id + " 的路径固定为 " + Mau.Runtime.WorkspaceConfig.NormalizeRoot(lockedPath) + "，不可修改";
+                        }
+                        input.Path = lockedPath;
+                    }
                 }
             }
             for (int f = 0; f < FixedRoots.Length; f = f + 1)
@@ -294,7 +305,7 @@ namespace CatHome4.Admin
             workspace.Roots = entries.ToArray();
             // 落盘面——以磁盘原文为基并入 db（加载会跳过不可达根，全量回写会静默丢根）
             string wsPath = Path.Combine(dataRoot, "Data", "config", "workspace.json");
-            string writeErr = MergeDbRootIntoWorkspace(wsPath, dbEntry);
+            string writeErr = MergeFixedRootIntoWorkspace(wsPath, dbEntry, "db");
             if (writeErr.Length > 0)
             {
                 return "db 根已补入内存，但 workspace.json 写回失败：" + writeErr;
@@ -302,13 +313,14 @@ namespace CatHome4.Admin
             return "db 根已补建：" + dbNorm + "（只读）";
         }
         /// <summary>
-        /// 把 db 根并入 workspace.json 磁盘原文——其余根条目与 inject 段原样保留，原子写。
+        /// 把固定根并入 workspace.json 磁盘原文——其余根条目与 inject 段原样保留，原子写。
         /// 不以加载后的内存 roots 为基：加载会跳过不可达根，全量回写会静默丢根。
         /// </summary>
         /// <param name="wsPath">workspace.json 绝对路径</param>
-        /// <param name="dbEntry">待并入的 db 根条目</param>
+        /// <param name="dbEntry">待并入的固定根条目</param>
+        /// <param name="rootId">固定根标识（同 id 旧条目被剔除后追加新条目）</param>
         /// <returns>错误文案（空 = 成功）</returns>
-        private static string MergeDbRootIntoWorkspace(string wsPath, WorkspaceConfig.RootEntry dbEntry)
+        private static string MergeFixedRootIntoWorkspace(string wsPath, WorkspaceConfig.RootEntry dbEntry, string rootId)
         {
             List<string> rootItems = new List<string>();
             string injectJson = "[]";
@@ -335,7 +347,7 @@ namespace CatHome4.Admin
                                 {
                                     id = idEl.GetString();
                                 }
-                                if (string.Equals(NormalizeRootId(id), "db", StringComparison.OrdinalIgnoreCase))
+                                if (string.Equals(NormalizeRootId(id), rootId, StringComparison.OrdinalIgnoreCase))
                                 {
                                     continue;
                                 }
@@ -360,6 +372,133 @@ namespace CatHome4.Admin
                 return "落盘失败: " + ex.Message;
             }
             return "";
+        }
+
+        // [段3b] 路径锁定的固定根（A273）——data / db 的 path 由系统计算，配置、前端、API 均不可改（莎 2026-10-20 定）
+        /// <summary>
+        /// 固定根系统路径——data = 数据根下的 Data 目录；db = 数据根下的 Data/db；其余根返回空串（不锁路径）。
+        /// </summary>
+        /// <param name="id">根标识（任意大小写）</param>
+        /// <param name="dataRoot">数据根绝对路径</param>
+        /// <returns>系统路径；未锁定根或数据根缺失返回空串</returns>
+        internal static string ResolveFixedRootPath(string id, string dataRoot)
+        {
+            if (dataRoot == null || dataRoot.Length == 0)
+            {
+                return "";
+            }
+            string norm = NormalizeRootId(id);
+            if (string.Equals(norm, "data", StringComparison.Ordinal))
+            {
+                return Path.Combine(dataRoot, "Data");
+            }
+            if (string.Equals(norm, "db", StringComparison.Ordinal))
+            {
+                return Path.Combine(dataRoot, "Data", "db");
+            }
+            return "";
+        }
+
+        /// <summary>
+        /// 路径锁定根全量校准（A273）——data 与 db 两条路径逐条归到系统值：缺则补、偏差则校准，内存与磁盘一并就位。
+        /// 失败具名返回（不静默）；多条动作以「；」分隔。
+        /// </summary>
+        /// <param name="workspace">已加载的受控根配置（就地更新 Roots 数组）</param>
+        /// <param name="dataRoot">数据根（三级锚定）</param>
+        /// <returns>动作说明（空 = 无需动作；非空 = 已发生的动作或失败原因）</returns>
+        internal static string EnsureFixedRoots(WorkspaceConfig workspace, string dataRoot)
+        {
+            string dbNote = EnsureDbRoot(workspace, dataRoot);
+            string dataNote = EnsureDataRoot(workspace, dataRoot);
+            if (dbNote.Length == 0)
+            {
+                return dataNote;
+            }
+            if (dataNote.Length == 0)
+            {
+                return dbNote;
+            }
+            return dbNote + "；" + dataNote;
+        }
+
+        /// <summary>
+        /// data 根校准——固定为数据根本身（与 db 根同规：缺则补、偏差则写回系统值）。
+        /// </summary>
+        /// <param name="workspace">已加载的受控根配置（就地更新 Roots 数组）</param>
+        /// <param name="dataRoot">数据根</param>
+        /// <returns>动作说明（空 = 无需动作）</returns>
+        private static string EnsureDataRoot(WorkspaceConfig workspace, string dataRoot)
+        {
+            if (workspace == null)
+            {
+                return "";
+            }
+            FixedRootDef def = FindFixedRoot("data");
+            if (def == null)
+            {
+                return "data 根校准跳过：固定根表未登记 data（实现缺陷）";
+            }
+            string wantNorm = "";
+            try
+            {
+                wantNorm = WorkspaceConfig.NormalizeRoot(ResolveFixedRootPath("data", dataRoot));
+            }
+            catch (Exception ex)
+            {
+                return "data 根校准跳过：数据根路径非法 | " + ex.Message;
+            }
+            if (wantNorm.Length == 0)
+            {
+                return "data 根校准跳过：数据根未解析";
+            }
+            int existing = -1;
+            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
+            {
+                if (string.Equals(workspace.Roots[i].Id, "data", StringComparison.OrdinalIgnoreCase))
+                {
+                    existing = i;
+                    break;
+                }
+            }
+            if (existing >= 0)
+            {
+                string oldNorm = "";
+                try
+                {
+                    oldNorm = WorkspaceConfig.NormalizeRoot(workspace.Roots[existing].Path);
+                }
+                catch (Exception)
+                {
+                    oldNorm = "";
+                }
+                if (string.Equals(oldNorm, wantNorm, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "";
+                }
+            }
+            List<WorkspaceConfig.RootEntry> entries = new List<WorkspaceConfig.RootEntry>();
+            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
+            {
+                if (string.Equals(workspace.Roots[i].Id, "data", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                entries.Add(workspace.Roots[i]);
+            }
+            WorkspaceConfig.RootEntry entry = new WorkspaceConfig.RootEntry();
+            entry.Id = def.Id;
+            entry.Path = wantNorm;
+            entry.Writable = def.Writable;
+            entry.Note = def.Note;
+            entries.Add(entry);
+            workspace.Roots = entries.ToArray();
+            string wsPath = Path.Combine(dataRoot, "Data", "config", "workspace.json");
+            string writeErr = MergeFixedRootIntoWorkspace(wsPath, entry, "data");
+            if (writeErr.Length > 0)
+            {
+                return "data 根已校准到内存，但 workspace.json 写回失败：" + writeErr;
+            }
+            return "data 根已校准：" + wantNorm + "（只读）";
         }
 
         /// <summary>
@@ -395,7 +534,9 @@ namespace CatHome4.Admin
             for (int i = 0; i < rootsIn.Count; i++)
             {
                 WorkspaceRootInput input = rootsIn[i];
-                string norm = WorkspaceConfig.NormalizeRoot(input.Path);
+                // 路径锁定根兜底——即便绕过校验入口，落盘值仍取系统路径（真相源 = ResolveFixedRootPath）
+                string lockedPath = ResolveFixedRootPath(input.Id, _dataRoot);
+                string norm = WorkspaceConfig.NormalizeRoot(lockedPath.Length > 0 ? lockedPath : input.Path);
                 if (input.Note.Length > 0)
                 {
                     rootItems.Add(JsonUtil.Object(("id", input.Id), ("path", norm.Replace('\\', '/')), ("writable", input.Writable), ("note", input.Note)));

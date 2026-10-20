@@ -214,11 +214,11 @@ namespace CH4
             ctx.DataRoot = dataRoot;
             ctx.ConfigDir = Path.Combine(dataRoot, "Data", "config");
             WorkspaceConfig workspace = WorkspaceConfig.Load(Path.Combine(dataRoot, "Data", "config", "workspace.json"), dataRoot);
-            // A266 db 受控根自愈——库工具寻路依赖 db 根（缺则补建 + 归一写回；失败出声不阻断启动）
-            string dbRootNote = AdminService.EnsureDbRoot(workspace, dataRoot);
+            // A266/A273 固定根校准——data / db 路径由系统计算（路径锁定），缺则补、偏差则写回；失败出声不阻断启动
+            string dbRootNote = AdminService.EnsureFixedRoots(workspace, dataRoot);
             if (dbRootNote.Length > 0)
             {
-                BootLog.Add("S2", "db 根 | " + dbRootNote);
+                BootLog.Add("S2", "固定根 | " + dbRootNote);
             }
             ctx.Workspace = workspace;
             // 受控根配置绑定——file.* 积木 / Admin 工作区页签 / 根寻址服务的唯一数据源

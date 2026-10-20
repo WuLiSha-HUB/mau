@@ -120,6 +120,11 @@ namespace CatHome4.Admin
             sink.MapGet("/api/v1/cache-image/{**file}", (Delegate)HandleCacheImageGet);
             // A265 音频资产——轮末总结拼接音频取回（单独资产入口；与图片面分离）
             sink.MapGet("/api/v1/audio/{**file}", (Delegate)HandleAudioGet);
+            // A269 数据库（Smriti）——库清单 / 新建库 / 条目查询 / 条目全文（写入走 db-* 工具面）
+            sink.MapGet("/api/v1/db/libs", (Delegate)HandleDbLibsGet);
+            sink.MapPost("/api/v1/db/libs", (Delegate)HandleDbLibsPost);
+            sink.MapGet("/api/v1/db/libs/{lib}/entries", (Delegate)HandleDbEntriesGet);
+            sink.MapGet("/api/v1/db/libs/{lib}/entries/{entryId}", (Delegate)HandleDbEntryGet);
         }
 
         /// <summary>
@@ -1162,7 +1167,7 @@ namespace CatHome4.Admin
         }
 
         /// <summary>受控根写入输入条目——POST /api/v1/workspace body 解析形态</summary>
-        private sealed class WorkspaceRootInput
+        internal sealed class WorkspaceRootInput
         {
             /// <summary>根标识</summary>
             public string Id;
@@ -1468,7 +1473,7 @@ namespace CatHome4.Admin
             // [段2a] 现存根 path 映射——存量容留判定（不可达根可原样提交以移除或改路径，不构成改根死锁）
             Dictionary<string, string> existingPaths = LoadExistingRootPaths();
             // [段2] 校验——字符集（小写字母数字）+ 重名（忽略大小写）+ path 绝对且存在（存量容留）+ 固定命名根齐备
-            string rootErr = ValidateRootsInput(rootsIn, existingPaths);
+            string rootErr = ValidateRootsInput(rootsIn, existingPaths, _dataRoot);
             if (rootErr.Length > 0)
             {
                 return Results.Json(new { ok = false, error = rootErr });

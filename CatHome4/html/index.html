@@ -17,6 +17,7 @@
             <button data-tab="deps">依赖</button>
             <button data-tab="res">资源</button>
             <button data-tab="boot">启动</button>
+            <button data-tab="db">数据</button>
             <button data-tab="raw">原始</button>
             <!-- 前端版本标记——每次改动前端递增；刷新后数字变化 = 拿到新版（人眼 cache-busting） -->
             <div style="margin-top:auto;color:var(--ch-fg-faint);font-size:var(--ch-fs-tag);writing-mode:vertical-rl" data-version>UI v?</div>
@@ -111,6 +112,27 @@
                     <div id="bootList"></div>
                     <div id="bootReport" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag);padding:8px 12px"></div>
                     <div id="bootSink" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag);padding:0 12px 12px 12px"></div>
+                </div>
+            </section>
+            <!-- A269 数据库（Smriti）浏览区——库下拉 / 新建库 / 条目查询 / 正文预览（写入一律走 db-* 工具面） -->
+            <section id="tab-db" class="tab">
+                <div id="dbbar" style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--ch-line-faint);align-items:center;flex-wrap:wrap">
+                    <span style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">条目库（Smriti）——只读浏览；增 / 改 / 删走 db-* 工具面</span>
+                    <span style="flex:1"></span>
+                    <select id="dbLibSelect" style="background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag)"></select>
+                    <button id="dbLibRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
+                    <input id="dbLibNew" placeholder="新库名（2–32 位）" style="background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag);min-width:170px">
+                    <button id="dbLibNewBtn" style="background:var(--ch-bg-raised);border:1px solid var(--ch-bg-accent);color:var(--ch-ok);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">新建库</button>
+                </div>
+                <div id="dbquerybar" style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--ch-line-faint);align-items:center;flex-wrap:wrap">
+                    <input id="dbKeyword" placeholder="标题关键词（空 = 全部）" style="flex:1;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                    <input id="dbLimit" placeholder="条数（≤200）" style="width:110px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                    <button id="dbQueryBtn" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">查询</button>
+                    <span id="dbInfo" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">载入库清单…</span>
+                </div>
+                <div id="dbScroll" style="flex:1;overflow-y:auto">
+                    <div id="dbList"></div>
+                    <div id="dbPreview" style="padding:10px 12px;border-top:1px solid var(--ch-line)"></div>
                 </div>
             </section>
             <!-- 配置区 -->
@@ -243,7 +265,7 @@
                     <!-- 重启生效区——受控根（workspace roots；安全边界管理员面） -->
                     <h2 style="margin:16px 0 8px;color:var(--ch-err)">🔁 重启生效</h2>
                     <div style="border:1px solid var(--ch-line-strong);border-radius:6px;padding:10px;background:var(--ch-bg-raised)">
-                        <div style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-bottom:6px">受控根（workspace roots——安全边界；保存后重启宿主生效；LLM 工具面保持只读）｜系统根 workspace / mau / mauout / data 的 id 与注释固定，仅可改路径</div>
+                        <div style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-bottom:6px">受控根（workspace roots——安全边界；保存后重启宿主生效；LLM 工具面保持只读）｜系统根 workspace / mau / mauout / data / db 的 id、注释与权限固定；data（数据根/Data）与 db（数据根/Data/db）的路径由系统固定不可修改，其余根可改路径</div>
                         <table class="box-table" id="rootsTable"><thead><tr><th style="width:12%">id</th><th style="width:42%">路径</th><th style="width:20%">注释（≤20 字·给 LLM 认路）</th><th style="width:10%">权限</th><th style="width:16%">操作</th></tr></thead><tbody></tbody></table>
                         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap">
                             <input id="rootNewId" placeholder="id（小写字母/数字）" style="width:150px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
@@ -342,5 +364,6 @@
     <script src="js/panel-deps.js?v=__V__"></script>
     <script src="js/panel-res.js?v=__V__"></script>
     <script src="js/panel-boot.js?v=__V__"></script>
+    <script src="js/panel-db.js?v=__V__"></script>
 </body>
 </html>

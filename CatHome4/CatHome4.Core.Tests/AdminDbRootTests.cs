@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
 using CatHome4.Admin;
 using Mau.Runtime;
@@ -132,6 +133,75 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
+        /// 固定根校准（A273）——配置里 data 指向别处时校准回数据根，db 一并就位；二次调用幂等。
+        /// </summary>
+        [Fact]
+        public void EnsureFixedRoots_DataRootDrift_CalibratesBack()
+        {
+            string tempRoot = NewTempRoot();
+            try
+            {
+                string otherData = Path.Combine(tempRoot, "other_data");
+                Directory.CreateDirectory(otherData);
+                WorkspaceConfig ws = new WorkspaceConfig();
+                ws.Roots = new WorkspaceConfig.RootEntry[] { MakeRoot("workspace", tempRoot), MakeRoot("data", otherData) };
+                string note = AdminService.EnsureFixedRoots(ws, tempRoot);
+                Assert.NotEqual("", note);
+                WorkspaceConfig.RootEntry data = FindRoot(ws, "data");
+                Assert.NotNull(data);
+                Assert.Equal(WorkspaceConfig.NormalizeRoot(Path.Combine(tempRoot, "Data")), data.Path);
+                Assert.NotNull(FindRoot(ws, "db"));
+                // 幂等——二次调用不再动作
+                Assert.Equal("", AdminService.EnsureFixedRoots(ws, tempRoot));
+            }
+            finally
+            {
+                SafeDelete(tempRoot);
+            }
+        }
+
+        /// <summary>
+        /// 写面校验（A273）——data / db 的 path 提交系统值以外一律拒绝（不静默覆盖）。
+        /// </summary>
+        [Fact]
+        public void ValidateRootsInput_LockedRootPathDiffers_Rejected()
+        {
+            string tempRoot = NewTempRoot();
+            try
+            {
+                List<AdminService.WorkspaceRootInput> roots = MakeFixedRoots(tempRoot, Path.Combine(tempRoot, "other_db"));
+                Directory.CreateDirectory(Path.Combine(tempRoot, "other_db"));
+                string err = AdminService.ValidateRootsInput(roots, null, tempRoot);
+                Assert.Contains("不可修改", err);
+            }
+            finally
+            {
+                SafeDelete(tempRoot);
+            }
+        }
+
+        /// <summary>
+        /// 写面校验（A273）——data / db 提交系统值时通过（正常保存不被锁死）。
+        /// </summary>
+        [Fact]
+        public void ValidateRootsInput_LockedRootPathSame_Passes()
+        {
+            string tempRoot = NewTempRoot();
+            try
+            {
+                string dbPath = Path.Combine(tempRoot, "Data", "db");
+                Directory.CreateDirectory(dbPath);
+                List<AdminService.WorkspaceRootInput> roots = MakeFixedRoots(tempRoot, dbPath);
+                string err = AdminService.ValidateRootsInput(roots, null, tempRoot);
+                Assert.Equal("", err);
+            }
+            finally
+            {
+                SafeDelete(tempRoot);
+            }
+        }
+
+        /// <summary>
         /// 临时数据根——每次测试独立目录（避免共享状态）。
         /// </summary>
         /// <returns>临时目录绝对路径（含 Data/config 子目录）</returns>
@@ -156,6 +226,43 @@ namespace CatHome4.Core.Tests
             entry.Writable = true;
             entry.Note = "";
             return entry;
+        }
+
+        /// <summary>
+        /// 构造 5 个固定根的提交输入（A273 校验用例）——db 路径由调用方给定，其余目录在临时根内真实创建。
+        /// </summary>
+        /// <param name="tempRoot">临时数据根</param>
+        /// <param name="dbPath">db 根提交路径</param>
+        /// <returns>固定根输入列表</returns>
+        private static List<AdminService.WorkspaceRootInput> MakeFixedRoots(string tempRoot, string dbPath)
+        {
+            string mauDir = Path.Combine(tempRoot, "mau");
+            string outDir = Path.Combine(tempRoot, "mauout");
+            Directory.CreateDirectory(mauDir);
+            Directory.CreateDirectory(outDir);
+            List<AdminService.WorkspaceRootInput> roots = new List<AdminService.WorkspaceRootInput>();
+            roots.Add(MakeInput("workspace", tempRoot));
+            roots.Add(MakeInput("mau", mauDir));
+            roots.Add(MakeInput("mauout", outDir));
+            roots.Add(MakeInput("data", Path.Combine(tempRoot, "Data")));
+            roots.Add(MakeInput("db", dbPath));
+            return roots;
+        }
+
+        /// <summary>
+        /// 构造受控根提交输入。
+        /// </summary>
+        /// <param name="id">根标识</param>
+        /// <param name="path">根路径</param>
+        /// <returns>输入条目</returns>
+        private static AdminService.WorkspaceRootInput MakeInput(string id, string path)
+        {
+            AdminService.WorkspaceRootInput input = new AdminService.WorkspaceRootInput();
+            input.Id = id;
+            input.Path = path;
+            input.Writable = true;
+            input.Note = "";
+            return input;
         }
 
         /// <summary>

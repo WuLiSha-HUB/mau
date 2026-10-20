@@ -54,6 +54,7 @@ namespace CH4
             "browser-open", "browser-read", "browser-shot",
             "majordomo-catinfo",
             "py-list",
+            "db-query", "db-get",
             "host-flows", "info", "time", "random", "pack", "Note"
         };
 
@@ -66,7 +67,8 @@ namespace CH4
             "image-inject",
             "browser-eval", "browser-tabs",
             "web-fetch", "web-fetch-jobs",
-            "audio-play"
+            "audio-play",
+            "db-put", "db-update", "db-delete"
         };
 
         /// <summary>

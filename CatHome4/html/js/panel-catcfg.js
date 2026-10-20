@@ -649,9 +649,20 @@ function renderRoots() {
             var editBtn = document.createElement('button');
             editBtn.textContent = '编辑';
             editBtn.className = 'btn-mini tight info';
-            editBtn.onclick = function () {
-                enterEditRoot(idx);
-            };
+            var lockedRootId = (rootsList[idx].id || '').toLowerCase();
+            if (lockedRootId === 'db' || lockedRootId === 'data') {
+                // 路径锁定根（A273）——data = 应用数据根 / db = 数据根/Data/db：路径由系统计算，后端同校验拒绝
+                editBtn.disabled = true;
+                if (lockedRootId === 'db') {
+                    editBtn.title = '数据库根固定为 数据根/Data/db——不可修改';
+                } else {
+                    editBtn.title = '数据根固定为应用数据目录——不可修改';
+                }
+            } else {
+                editBtn.onclick = function () {
+                    enterEditRoot(idx);
+                };
+            }
             tdOp.appendChild(editBtn);
             var rm = document.createElement('button');
             rm.textContent = '移除';
@@ -701,6 +712,12 @@ function enterEditRoot(idx) {
                 pathIn.value = rootsList[rowIdx].path;
                 pathIn.className = 'input-mini';
                 pathIn.style.width = '96%';
+                var isLockedRow = isFixedRow && ((rootsList[rowIdx].id || '').toLowerCase() === 'db' || (rootsList[rowIdx].id || '').toLowerCase() === 'data');
+                if (isLockedRow) {
+                    // 路径锁定根（data / db）——只读展示，确定时忽略路径改动
+                    pathIn.disabled = true;
+                    pathIn.title = '路径由系统固定——不可修改';
+                }
                 tdPath.appendChild(pathIn);
                 tr.appendChild(tdPath);
                 var tdNote = document.createElement('td');
@@ -741,6 +758,10 @@ function enterEditRoot(idx) {
                 okBtn.onclick = function () {
                     var nid = idIn.value.trim().toLowerCase();
                     var npath = pathIn.value.trim();
+                    if (isLockedRow) {
+                        // 路径锁定根——以原值落回（防程序性改动绕过只读）
+                        npath = rootsList[rowIdx].path;
+                    }
                     var nw = wSel.value === 'true';
                     if (nid.length === 0 || npath.length === 0) {
                         document.getElementById('rootsMsg').textContent = 'id 和路径不能为空';
