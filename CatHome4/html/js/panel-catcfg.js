@@ -395,10 +395,21 @@ function saveCatCfg() {
         .then(function (r) { return r.json(); })
         .then(function (d) {
             if (d.ok) {
-                // A132 剔除出声——被剔池外工具名显式告知（不静默；明细同时进宿主日志）
-                var removed = d.removedToolNames;
-                if (removed && removed.length > 0) {
-                    document.getElementById('catCfgMsg').textContent = '已保存——⚠️ 已剔除池外工具名 ' + removed.length + ' 个：' + removed.join('、') + '（请重开配置确认名单）';
+                // A132 / A261 剔除出声——池外工具名与池外根 id 显式告知（不静默；明细同时进宿主日志）
+                var warns = [];
+                var removedTools = d.removedToolNames;
+                if (removedTools && removedTools.length > 0) {
+                    warns.push('已剔除池外工具名 ' + removedTools.length + ' 个：' + removedTools.join('、'));
+                }
+                var removedRoots = d.removedEnabledRoots;
+                if (removedRoots && removedRoots.length > 0) {
+                    warns.push('已剔除池外根 id ' + removedRoots.length + ' 个：' + removedRoots.join('、'));
+                }
+                if (d.rootsPoolUnavailable) {
+                    warns.push('全局根池不可用——白名单已按空处理（仅常驻根可用）');
+                }
+                if (warns.length > 0) {
+                    document.getElementById('catCfgMsg').textContent = '已保存——⚠️ ' + warns.join('；') + '（请重开配置确认名单）';
                 } else {
                     document.getElementById('catCfgMsg').textContent = '已保存——API 即时生效；人设/工具/前文 List/显示名 新会话生效';
                 }

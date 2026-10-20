@@ -25,6 +25,102 @@ namespace CH4
 
         /// <summary>启动回执注入串——<c>--majordomopush</c> 值（主循环首帧投递一次后清空）</summary>
         private static string _majordomoPush = "";
+        /// <summary>重启闸门等待上限毫秒——判据持续不满足即撤销重启态（停机态无上限 = 无限期拒收输入，A262）</summary>
+        private const int GateWaitMs = 30000;
+        /// <summary>闸门卡点出声节流毫秒——等待期每满一次记一条 WARN（失败必须可见，A262）</summary>
+        private const int GateWarnIntervalMs = 5000;
+        /// <summary>闸门等待起点（TickCount64；0 = 未开始等待）</summary>
+        private static long _gateWaitStartMs;
+        /// <summary>闸门上一次卡点出声时刻（TickCount64）</summary>
+        private static long _gateWarnAtMs;
+        /// <summary>
+        /// 重启闸门卡点明细——空串 = 全部就绪（可执行接力）；否则逐项列出未就绪判据（会话相位 / 工具组 Flow / OA 在途 / 视图待推）。
+        /// 判据单一出口：AllIdle 同源委托，避免「闸门判定」与「空闲判定」两套实现漂移（A262）。
+        /// </summary>
+        /// <returns>卡点描述（空串 = 无阻碍）</returns>
+        private static string DescribeGateBlocker()
+        {
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < _chatBridge.Sessions.Count; i = i + 1)
+            {
+                ChatSession session = _chatBridge.Sessions[i];
+                if (!session.IsIdle)
+                {
+                    AppendGateBlocker(sb, "会话「" + session.DisplayName + "」非 Idle（相位 " + session.Phase.ToString() + "）");
+                }
+            }
+            foreach (System.Collections.Generic.KeyValuePair<string, FlowHandle> kv in _toolFlowHandles)
+            {
+                if (IsFlowIdle(kv.Value))
+                {
+                    continue;
+                }
+                AppendGateBlocker(sb, "Flow「" + kv.Key + "」非 Idle（" + FlowBusyLines(kv.Value) + "）");
+            }
+            OAView oaView = _oa.GetSnapshot();
+            if (oaView.OpenCount > 0 || oaView.WorkCount > 0)
+            {
+                AppendGateBlocker(sb, "OA 在途（待认领 " + oaView.OpenCount.ToString() + " / 执行中 " + oaView.WorkCount.ToString() + "）");
+            }
+            if (AdminService.AnyViewPending())
+            {
+                AppendGateBlocker(sb, "视图推送仍有待推内容");
+            }
+            return sb.ToString();
+        }
+        /// <summary>
+        /// 卡点条目追加——多条以分号分隔（闸门明细可读性）。
+        /// </summary>
+        /// <param name="sb">目标缓冲</param>
+        /// <param name="text">单条卡点描述</param>
+        private static void AppendGateBlocker(System.Text.StringBuilder sb, string text)
+        {
+            if (sb.Length > 0)
+            {
+                sb.Append("；");
+            }
+            sb.Append(text);
+        }
+        /// <summary>
+        /// Flow 非 Idle 状态行拼接——只列非 =Idle 的行（卡点定位用）；取不到状态行时如实标注。
+        /// </summary>
+        /// <param name="handle">Flow 句柄</param>
+        /// <returns>非空闲状态行（空格分隔）</returns>
+        private static string FlowBusyLines(FlowHandle handle)
+        {
+            if (handle == null || handle.Flow == null)
+            {
+                return "句柄不可用";
+            }
+            FlowStatusV3 status = handle.Flow.GetStatus();
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < status.StateLines.Length; i = i + 1)
+            {
+                string line = status.StateLines[i];
+                if (line.EndsWith("=Idle", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                if (sb.Length > 0)
+                {
+                    sb.Append(" ");
+                }
+                sb.Append(line);
+            }
+            if (sb.Length == 0)
+            {
+                sb.Append("无状态行");
+            }
+            return sb.ToString();
+        }
+        /// <summary>
+        /// 复位闸门等待态——退出重启态 / 放行接力 / 撤销后调用（下一次重启重新起算）。
+        /// </summary>
+        private static void ResetGateWait()
+        {
+            _gateWaitStartMs = 0;
+            _gateWarnAtMs = 0;
+        }
 
         /// <summary>
         /// 宿主参数面校验——零容忍：未知参数 / 缺值 / 与非常驻模式互斥一律报错（design-ch4-host-restart §五）。
@@ -156,32 +252,49 @@ namespace CH4
         }
 
         /// <summary>
-        /// 重启闸门泵——主循环每帧调用：停机态 + 全局 Idle → 执行接力（起 SetUp 后退出）。
+        /// 重启闸门泵——主循环每帧调用：停机态 + 全局就绪 → 执行接力（起 SetUp 后退出）。
         /// 在途轮次由停机态自然收尾；闸门等的是在途，不是等人（design-ch4-host-restart §三 T3）。
+        /// A262——闸门有上限（GateWaitMs）与卡点出声（GateWarnIntervalMs）：判据持续不满足即撤销重启态并出声，禁止无限期停机。
         /// </summary>
         private static void PumpHostRestart()
         {
             if (!IsRestarting())
             {
+                ResetGateWait();
                 return;
             }
-            // incr 握手等待态——接力者已起，等 ready 哨兵（此态下不看全局 Idle：宿主已在停机态，等的是信号）
+            // incr 握手等待态——接力者已起，等 ready 哨兵（此态下不看闸门：宿主已在停机态，等的是信号）
             if (_relayWaiting)
             {
                 PumpRelayWait();
                 return;
             }
-            if (!AllIdle())
+            if (_gateWaitStartMs == 0)
             {
+                _gateWaitStartMs = Environment.TickCount64;
+            }
+            // 判据单一出口——卡点明细同时承担「能否执行」与「为什么不能」两个答案（A262）
+            string blocker = DescribeGateBlocker();
+            if (blocker.Length == 0)
+            {
+                ResetGateWait();
+                ExecuteRestart();
                 return;
             }
-            // A206——推送面闸门：业务 Idle ≠ 视图面已清空（在途帧会被退出路径丢弃——判例 2026-10-06：
-            // full 重启时最后一帧未送达，前端停在半句）
-            if (AdminService.AnyViewPending())
+            long waitedMs = Environment.TickCount64 - _gateWaitStartMs;
+            // A262——闸门上限：停机态不设上限 = 无限期拒收输入（判例 2026-10-20 restart-incr 卡死，用户只能手动停宿主）
+            if (waitedMs >= GateWaitMs)
             {
+                AbortRestart("重启闸门等待超时（" + (waitedMs / 1000).ToString() + " s，上限 " + (GateWaitMs / 1000).ToString() + " s）——卡点：" + blocker);
+                ResetGateWait();
                 return;
             }
-            ExecuteRestart();
+            // A262——卡点出声：节流 WARN（看不见卡在哪 = 只能事后翻 frame.txt 反推，违反失败必须可见）
+            if (Environment.TickCount64 - _gateWarnAtMs >= GateWarnIntervalMs)
+            {
+                _gateWarnAtMs = Environment.TickCount64;
+                LogStore.Add("CatHome4", 2, "重启闸门等待中（" + (waitedMs / 1000).ToString() + " s / 上限 " + (GateWaitMs / 1000).ToString() + " s）——卡点：" + blocker, "RESTART");
+            }
         }
 
         /// <summary>

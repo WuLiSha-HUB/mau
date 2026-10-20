@@ -353,30 +353,13 @@ namespace CH4
         }
 
         /// <summary>
-        /// 三 Cat 全部 Idle 判定——状态行全部 =Idle（编排者双状态机都 Idle 才算空闲）
+        /// 全局空闲判定——委托闸门卡点探测（单一出口：会话相位 / 工具组 Flow / OA 在途 / 视图待推）。
+        /// A262：与重启闸门同源，避免「空闲判定」与「闸门判定」两套实现漂移。
         /// </summary>
         /// <returns>true=全部空闲</returns>
         private static bool AllIdle()
         {
-            // P9.1 会话判定——全部会话 Idle（原三 Cat 语料判定保留）
-            for (int i = 0; i < _chatBridge.Sessions.Count; i = i + 1)
-            {
-                if (!_chatBridge.Sessions[i].IsIdle)
-                {
-                    return false;
-                }
-            }
-            // 工具组 Flow 全部 Idle 判定——遍历句柄表（TextCat/MauCat/CsCat/ConfigCat）
-            foreach (KeyValuePair<string, FlowHandle> kv in _toolFlowHandles)
-            {
-                if (!IsFlowIdle(kv.Value))
-                {
-                    return false;
-                }
-            }
-            // OA 无未完成工单——Flow Idle 但工单 Open = 接单窗口期（探测壳 1 帧延迟），不得判空闲提前退出
-            OAView view = _oa.GetSnapshot();
-            return view.OpenCount == 0 && view.WorkCount == 0;
+            return DescribeGateBlocker().Length == 0;
         }
 
         /// <summary>

@@ -761,9 +761,20 @@ namespace CatHome4.Admin
             }
             else if (field == "enabledRoots")
             {
-                string[] roots = ValidateEnabledRoots(SplitList(value));
+                string[] removedRoots;
+                bool poolUnavailable;
+                string[] roots = ValidateEnabledRoots(SplitList(value), out removedRoots, out poolUnavailable);
                 cfg.EnabledRoots = roots;
                 applied = "enabledRoots=" + JoinArray(roots);
+                // A261 剔除出声——被剔根 id 随回执带回（调用方可见；明细已记日志，不静默）
+                if (removedRoots.Length > 0)
+                {
+                    applied = applied + "｜⚠️ 已剔除池外根 id " + removedRoots.Length.ToString() + " 个：" + JoinArray(removedRoots);
+                }
+                if (poolUnavailable)
+                {
+                    applied = applied + "｜⚠️ 全局根池不可用——白名单按空处理（仅常驻根可用）";
+                }
             }
             else
             {

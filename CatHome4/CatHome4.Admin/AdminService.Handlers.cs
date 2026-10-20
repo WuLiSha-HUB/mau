@@ -861,6 +861,9 @@ namespace CatHome4.Admin
             // M2c 写时校验——池外工具名过滤（持久化面只落合法名）；A132 被剔名字随响应带回（调用方可见，不静默）
             string[] removedToolNames;
             string validToolNames = ValidateToolNames(toolNames, out removedToolNames);
+            // A261 启用根剔除出声——池外根 id 随响应带回（与工具名单同源，不静默）
+            string[] removedEnabledRoots = new string[0];
+            bool rootsPoolUnavailable = false;
             // 落盘——读旧配置保留 id/displayName/running/port；apiConfigId 空=保留旧值
             CatCfgData cfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", catKey, "cat.cfg"));
             if (cfg == null)
@@ -976,8 +979,8 @@ namespace CatHome4.Admin
             }
             if (enabledRootsPresent)
             {
-                // 启用根校验——workspace 强制 + 全局池子集；非法 id 剔除
-                cfg.EnabledRoots = ValidateEnabledRoots(enabledRoots.ToArray());
+                // 启用根校验——workspace 强制 + 全局池子集；池外 id 剔除并出声（A261）
+                cfg.EnabledRoots = ValidateEnabledRoots(enabledRoots.ToArray(), out removedEnabledRoots, out rootsPoolUnavailable);
             }
             SaveCatCfgData(catKey, cfg);
             // 运行时生效——入队主线程泵（注册表/会话面仅主线程触碰）
@@ -985,7 +988,7 @@ namespace CatHome4.Admin
             LogStore.Add("CatHome4", 1, "猫配置已受理：" + catKey + "（工具面 " + cfg.ToolNames + "）", "CONFIG");
             // A132 剔除出声——被剔名字随响应带回（调用方可见；明细已记日志，不静默）
             // 字段级合并写——回执取落盘实况（cfg.ToolNames），不取本次提交值（字段缺省时二者不同）
-            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames });
+            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames, enabledRoots = cfg.EnabledRoots, removedEnabledRoots = removedEnabledRoots, rootsPoolUnavailable = rootsPoolUnavailable });
         }
 
         /// <summary>
@@ -1210,8 +1213,12 @@ namespace CatHome4.Admin
         /// </summary>
         /// <param name="ids">前端提交的启用根 id 数组（空=仅常驻根）</param>
         /// <returns>合法启用根 id 数组（至少含常驻根；池不可用时为空）</returns>
-        internal static string[] ValidateEnabledRoots(string[] ids)
+        /// <param name="removed">被剔除的池外根 id 清单（根池中不存在；空 = 无剔除）</param>
+        /// <param name="poolUnavailable">全局根池不可用（此时整份白名单按空处理——调用方须出声）</param>
+        internal static string[] ValidateEnabledRoots(string[] ids, out string[] removed, out bool poolUnavailable)
         {
+            removed = new string[0];
+            poolUnavailable = false;
             // 空白名单（未配置/全不勾）= 仅常驻根——物化落盘，消除"未配置"二义（前端已如实渲染）
             if (ids == null || ids.Length == 0)
             {
@@ -1226,9 +1233,13 @@ namespace CatHome4.Admin
             DataBox.TryResolve<WorkspaceConfig>(out ws);
             if (ws == null || ws.Roots == null || ws.Roots.Length == 0)
             {
+                // A261 降级出声——池不可用时整份白名单会被置空，绝不静默回落（失败必须可见）
+                poolUnavailable = true;
+                LogStore.Add("CatHome4", 3, "猫配置：全局根池不可用，启用根白名单按空处理（该猫仅常驻根可用）", "CONFIG");
                 return new string[0];
             }
             List<string> result = new List<string>();
+            List<string> dropped = new List<string>();
             // 全局池合法 id 集合
             List<string> pool = new List<string>();
             for (int i = 0; i < ws.Roots.Length; i++)
@@ -1265,7 +1276,7 @@ namespace CatHome4.Admin
             {
                 result.Add(wsId);
             }
-            // 用户选择子集——只保留全局池内 id，去重
+            // 用户选择子集——只保留全局池内 id，去重；池外 id 剔除并收集（A261 出声不静默）
             for (int i = 0; i < ids.Length; i++)
             {
                 string id = ids[i];
@@ -1295,10 +1306,19 @@ namespace CatHome4.Admin
                         break;
                     }
                 }
-                if (inPool && !already)
+                if (!inPool)
+                {
+                    dropped.Add(id);
+                }
+                else if (!already)
                 {
                     result.Add(id);
                 }
+            }
+            if (dropped.Count > 0)
+            {
+                removed = dropped.ToArray();
+                LogStore.Add("CatHome4", 2, "启用根写时剔除 " + dropped.Count.ToString() + " 个池外根 id：" + string.Join(",", dropped.ToArray()) + "（根池中不存在——名单以根池为准）", "CONFIG");
             }
             return result.ToArray();
         }
