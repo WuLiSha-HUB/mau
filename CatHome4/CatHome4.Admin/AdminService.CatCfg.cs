@@ -69,6 +69,9 @@ namespace CatHome4.Admin
             /// <summary>加载包挂载清单——cat.cfg 持久化（R4；空=未挂载任何包）</summary>
             public string[] Packs;
 
+            /// <summary>库白名单——cat.cfg 持久化（A266；空=未授权任何库；工具面校验后置）</summary>
+            public string[] DbLibs;
+
             /// <summary>qqbot 配置身份——cat.cfg 持久化（R2.3；Guid.Empty=未绑定）</summary>
             public Guid QqBotId;
 
@@ -146,6 +149,9 @@ namespace CatHome4.Admin
 
             /// <summary>加载包挂载清单——packs.json 池内 key 子集（空=未挂载任何包；pack 工具按此授权）</summary>
             public string[] Packs { get; set; }
+
+            /// <summary>库白名单——库 ID 清单（A266：首版只落字段与勾选面，工具面校验后置）</summary>
+            public string[] DbLibs { get; set; }
         }
 
         /// <summary>
@@ -305,6 +311,7 @@ namespace CatHome4.Admin
                     data.QqBotEnable = GetBoolProp(root, "qqbotEnable");
                     data.EnabledRoots = GetStringArrayProp(root, "enabledRoots");
                     data.Packs = GetStringArrayProp(root, "packs");
+                    data.DbLibs = GetStringArrayProp(root, "dbLibs");
                     data.UserInjectIdleOnly = GetBoolProp(root, "userInjectIdleOnly");
                     data.ReasoningEffort = GetStringProp(root, "reasoningEffort");
                     data.AppearanceId = GetStringProp(root, "appearanceId");
@@ -333,6 +340,7 @@ namespace CatHome4.Admin
             data.ToolNames = cat.ToolNames;
             data.InjectList = cat.InjectList;
             data.Packs = cat.Packs;
+            data.DbLibs = cat.DbLibs;
             data.QqBotId = cat.QqBotId.ToString("D");
             data.QqBotEnable = cat.QqBotEnable;
             data.UserInjectIdleOnly = cat.UserInjectIdleOnly;

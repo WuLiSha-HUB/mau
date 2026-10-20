@@ -17,6 +17,11 @@
 | BRIK-BROWSER-006 | browser.headful | BROWSER | BROWSER/BRIK-BROWSER-006_browser.headful.cs | 无 | active |  |
 | BRIK-DATA-001 | data.box_set_str | DATA | DATA/BRIK-DATA-001_data.box_set_str.cs | 无 | active |  |
 | BRIK-DATA-002 | data.box_get_str | DATA | DATA/BRIK-DATA-002_data.box_get_str.cs | 无 | active |  |
+| BRIK-DB-002 | db.put | DB | DB/BRIK-DB-002_db.put.cs | 无 | active |  |
+| BRIK-DB-003 | db.query | DB | DB/BRIK-DB-003_db.query.cs | 无 | active |  |
+| BRIK-DB-004 | db.get | DB | DB/BRIK-DB-004_db.get.cs | 无 | active |  |
+| BRIK-DB-005 | db.update | DB | DB/BRIK-DB-005_db.update.cs | 无 | active |  |
+| BRIK-DB-006 | db.delete | DB | DB/BRIK-DB-006_db.delete.cs | 无 | active |  |
 | BRIK-FILE-001 | file.tree | FILE | FILE/BRIK-FILE-001_file.tree.cs | 无 | active |  |
 | BRIK-FILE-002 | file.find | FILE | FILE/BRIK-FILE-002_file.find.cs | 无 | active |  |
 | BRIK-FILE-003 | file.move | FILE | FILE/BRIK-FILE-003_file.move.cs | 无 | active |  |
@@ -83,6 +88,7 @@
 | BRIK-TOOLS-014 | tools.llmsimplerequest | TOOLS | TOOLS/BRIK-TOOLS-014_tools.llmsimplerequest.cs | 无 | active |  |
 | BRIK-TOOLS-015 | tools.audiocat | TOOLS | TOOLS/BRIK-TOOLS-015_tools.audiocat.cs | 无 | active |  |
 | BRIK-TOOLS-016 | tools.pycat | TOOLS | TOOLS/BRIK-TOOLS-016_tools.pycat.cs | 无 | active |  |
+| BRIK-TOOLS-017 | tools.dbcat | TOOLS | TOOLS/BRIK-TOOLS-017_tools.dbcat.cs | 无 | active |  |
 | BRIK-VISION-001 | vision.analyze | VISION | VISION/BRIK-VISION-001_vision.analyze.cs | 无 | active |  |
 | BRIK-VISION-002 | image.inject | VISION | VISION/BRIK-VISION-002_image.inject.cs | 无 | active |  |
 | BRIK-WEB-001 | web.search | WEB | WEB/BRIK-WEB-001_web.search.cs | 无 | active |  |

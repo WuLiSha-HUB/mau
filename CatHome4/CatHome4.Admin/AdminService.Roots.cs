@@ -1,12 +1,14 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text.Json;
+using Mau.Runtime;
 
 namespace CatHome4.Admin
 {
     /// <summary>
     /// Program 管理端点面分部——受控根固定命名表与写入校验（design-ch4-workspace §三 / design-ch4-cat-admin §十）。
-    /// 固定命名根（4 个）：id + note + writable 由系统固定，管理员面只能改 path；其余根自由增删改。
+    /// 固定命名根（5 个）：id + note + writable 由系统固定，管理员面只能改 path；其余根自由增删改。
     /// 判定三处同源——服务读面 fixed 标记 / 写入校验 / 前端渲染。
     /// </summary>
     internal static partial class AdminService
@@ -34,7 +36,8 @@ namespace CatHome4.Admin
             new FixedRootDef() { Id = "workspace", Note = "系统工作区（必选）", Writable = true },
             new FixedRootDef() { Id = "mau", Note = "Mau 仓库（工具组仓库根）", Writable = true },
             new FixedRootDef() { Id = "mauout", Note = "运行实例部署区（重启目标）", Writable = true },
-            new FixedRootDef() { Id = "data", Note = "CH4 应用数据（appdata）", Writable = false }
+            new FixedRootDef() { Id = "data", Note = "CH4 应用数据（appdata）", Writable = false },
+            new FixedRootDef() { Id = "db", Note = "数据库（Smriti 条目库）", Writable = false }
         };
 
         // [段1] 归一与判定
@@ -213,6 +216,203 @@ namespace CatHome4.Admin
                 {
                     return "缺少系统根 " + FixedRoots[f].Id + "（固定命名根不可移除）";
                 }
+            }
+            return "";
+        }
+
+        // [段3] db 根自愈与落盘出口
+        /// <summary>
+        /// db 受控根自愈（A266）——配置缺 db 根或目录不可达时补建，内存与 workspace.json 一并就位。
+        /// 语义：幂等——已就位返回空串；库根固定为 &lt;数据根&gt;/Data/db（只读，仅供库工具寻路）。
+        /// 🔴 失败具名返回（不静默）：目录建不出来整个动作中止；落盘失败时内存已就位，返回值说明分叉。
+        /// </summary>
+        /// <param name="workspace">已加载的受控根配置（就地更新 Roots 数组）</param>
+        /// <param name="dataRoot">数据根（三级锚定的父级）</param>
+        /// <returns>动作说明（空 = 无需动作；非空 = 已发生的动作或失败原因）</returns>
+        internal static string EnsureDbRoot(WorkspaceConfig workspace, string dataRoot)
+        {
+            if (workspace == null)
+            {
+                return "db 根自愈跳过：受控根配置未加载";
+            }
+            FixedRootDef def = FindFixedRoot("db");
+            if (def == null)
+            {
+                return "db 根自愈跳过：固定根表未登记 db（实现缺陷）";
+            }
+            string dbPath = Path.Combine(dataRoot, "Data", "db");
+            try
+            {
+                Directory.CreateDirectory(dbPath);
+            }
+            catch (Exception ex)
+            {
+                return "db 根目录创建失败：" + dbPath + " | " + ex.Message;
+            }
+            string dbNorm = WorkspaceConfig.NormalizeRoot(dbPath);
+            int existing = -1;
+            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
+            {
+                if (string.Equals(workspace.Roots[i].Id, "db", StringComparison.OrdinalIgnoreCase))
+                {
+                    existing = i;
+                    break;
+                }
+            }
+            if (existing >= 0)
+            {
+                string oldNorm = "";
+                try
+                {
+                    oldNorm = WorkspaceConfig.NormalizeRoot(workspace.Roots[existing].Path);
+                }
+                catch (Exception)
+                {
+                    oldNorm = "";
+                }
+                if (string.Equals(oldNorm, dbNorm, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "";
+                }
+            }
+            // 内存面先就位——工具寻路不因落盘失败而不可用（分叉在返回值里出声）
+            List<WorkspaceConfig.RootEntry> entries = new List<WorkspaceConfig.RootEntry>();
+            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
+            {
+                if (string.Equals(workspace.Roots[i].Id, "db", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                entries.Add(workspace.Roots[i]);
+            }
+            WorkspaceConfig.RootEntry dbEntry = new WorkspaceConfig.RootEntry();
+            dbEntry.Id = def.Id;
+            dbEntry.Path = dbNorm;
+            dbEntry.Writable = def.Writable;
+            dbEntry.Note = def.Note;
+            entries.Add(dbEntry);
+            workspace.Roots = entries.ToArray();
+            // 落盘面——以磁盘原文为基并入 db（加载会跳过不可达根，全量回写会静默丢根）
+            string wsPath = Path.Combine(dataRoot, "Data", "config", "workspace.json");
+            string writeErr = MergeDbRootIntoWorkspace(wsPath, dbEntry);
+            if (writeErr.Length > 0)
+            {
+                return "db 根已补入内存，但 workspace.json 写回失败：" + writeErr;
+            }
+            return "db 根已补建：" + dbNorm + "（只读）";
+        }
+        /// <summary>
+        /// 把 db 根并入 workspace.json 磁盘原文——其余根条目与 inject 段原样保留，原子写。
+        /// 不以加载后的内存 roots 为基：加载会跳过不可达根，全量回写会静默丢根。
+        /// </summary>
+        /// <param name="wsPath">workspace.json 绝对路径</param>
+        /// <param name="dbEntry">待并入的 db 根条目</param>
+        /// <returns>错误文案（空 = 成功）</returns>
+        private static string MergeDbRootIntoWorkspace(string wsPath, WorkspaceConfig.RootEntry dbEntry)
+        {
+            List<string> rootItems = new List<string>();
+            string injectJson = "[]";
+            if (File.Exists(wsPath))
+            {
+                try
+                {
+                    using (JsonDocument old = JsonUtil.ParseStrict(File.ReadAllText(wsPath)))
+                    {
+                        JsonElement injectEl;
+                        if (old.RootElement.TryGetProperty("inject", out injectEl))
+                        {
+                            injectJson = injectEl.GetRawText();
+                        }
+                        JsonElement rootsEl;
+                        if (old.RootElement.TryGetProperty("roots", out rootsEl) && rootsEl.ValueKind == JsonValueKind.Array)
+                        {
+                            for (int i = 0; i < rootsEl.GetArrayLength(); i = i + 1)
+                            {
+                                JsonElement item = rootsEl[i];
+                                string id = "";
+                                JsonElement idEl;
+                                if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("id", out idEl) && idEl.ValueKind == JsonValueKind.String)
+                                {
+                                    id = idEl.GetString();
+                                }
+                                if (string.Equals(NormalizeRootId(id), "db", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    continue;
+                                }
+                                rootItems.Add(item.GetRawText());
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return "workspace.json 读取失败（拒绝覆盖）: " + ex.Message;
+                }
+            }
+            rootItems.Add(JsonUtil.Object(("id", dbEntry.Id), ("path", dbEntry.Path.Replace('\\', '/')), ("writable", dbEntry.Writable), ("note", dbEntry.Note)));
+            string wsJson = JsonUtil.Object(("roots", JsonUtil.RawArray(rootItems.ToArray())), ("inject", JsonUtil.Raw(injectJson)));
+            try
+            {
+                ConfigStore.AtomicWrite(wsPath, wsJson);
+            }
+            catch (Exception ex)
+            {
+                return "落盘失败: " + ex.Message;
+            }
+            return "";
+        }
+
+        /// <summary>
+        /// 受控根落盘——roots 全量写回 workspace.json（保留 inject 段；原子写）。
+        /// 单一写出口：管理端点保存与 db 根自愈共用（避免两套写路径分叉）。
+        /// </summary>
+        /// <param name="wsPath">workspace.json 绝对路径</param>
+        /// <param name="rootsIn">待写入根条目（Id 已归一）</param>
+        /// <returns>错误文案（空 = 成功）</returns>
+        private static string WriteWorkspaceRoots(string wsPath, List<WorkspaceRootInput> rootsIn)
+        {
+            string injectJson = "[]";
+            if (File.Exists(wsPath))
+            {
+                try
+                {
+                    using (JsonDocument old = JsonUtil.ParseStrict(File.ReadAllText(wsPath)))
+                    {
+                        JsonElement injectEl;
+                        if (old.RootElement.TryGetProperty("inject", out injectEl))
+                        {
+                            injectJson = injectEl.GetRawText();
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 读不出旧 inject 即拒绝覆盖——覆盖会静默丢掉注入清单
+                    return "注入清单读取失败（拒绝覆盖，避免丢 inject）: " + ex.Message;
+                }
+            }
+            System.Collections.Generic.List<string> rootItems = new System.Collections.Generic.List<string>();
+            for (int i = 0; i < rootsIn.Count; i++)
+            {
+                WorkspaceRootInput input = rootsIn[i];
+                string norm = WorkspaceConfig.NormalizeRoot(input.Path);
+                if (input.Note.Length > 0)
+                {
+                    rootItems.Add(JsonUtil.Object(("id", input.Id), ("path", norm.Replace('\\', '/')), ("writable", input.Writable), ("note", input.Note)));
+                }
+                else
+                {
+                    rootItems.Add(JsonUtil.Object(("id", input.Id), ("path", norm.Replace('\\', '/')), ("writable", input.Writable)));
+                }
+            }
+            string wsJson = JsonUtil.Object(("roots", JsonUtil.RawArray(rootItems.ToArray())), ("inject", JsonUtil.Raw(injectJson)));
+            try
+            {
+                ConfigStore.AtomicWrite(wsPath, wsJson);
+            }
+            catch (Exception ex)
+            {
+                return "落盘失败: " + ex.Message;
             }
             return "";
         }

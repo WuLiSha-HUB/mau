@@ -659,6 +659,7 @@ namespace CatHome4.Admin
                 toolNames = cfg.ToolNames,
                 injectList = cfg.InjectList,
                 packs = cfg.Packs,
+                dbLibs = cfg.DbLibs,
                 allPacks = BuildAllPacks(),
                 qqbotId = cfg.QqBotId,
                 qqbotEnable = cfg.QqBotEnable,
@@ -733,6 +734,7 @@ namespace CatHome4.Admin
             bool qqbotEnablePresent = false;
             bool injectListPresent = false;
             bool packsPresent = false;
+            bool dbLibsPresent = false;
             bool enabledRootsPresent = false;
             bool userInjectIdleOnlyPresent = false;
             bool reasoningEffortPresent = false;
@@ -749,6 +751,7 @@ namespace CatHome4.Admin
             List<string> injectList = new List<string>();
             List<string> enabledRoots = new List<string>();
             List<string> packs = new List<string>();
+            List<string> dbLibs = new List<string>();
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -767,6 +770,7 @@ namespace CatHome4.Admin
                     reasoningEffortPresent = root.TryGetProperty("reasoningEffort", out probeEl);
                     appearanceIdPresent = root.TryGetProperty("appearanceId", out probeEl);
                     packsPresent = root.TryGetProperty("packs", out probeEl);
+                    dbLibsPresent = root.TryGetProperty("dbLibs", out probeEl);
                     injectListPresent = root.TryGetProperty("injectList", out probeEl);
                     JsonElement apiConfigIdEl;
                     if (root.TryGetProperty("apiConfigId", out apiConfigIdEl))
@@ -812,6 +816,23 @@ namespace CatHome4.Admin
                                 {
                                     // 挂载清单——池内 key；未挂载/池外项在 pack 调用期校验（此处只做去空白归一）
                                     packs.Add(got.Trim());
+                                }
+                            }
+                        }
+                    }
+                    JsonElement dbLibsEl;
+                    if (root.TryGetProperty("dbLibs", out dbLibsEl) && dbLibsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        for (int i = 0; i < dbLibsEl.GetArrayLength(); i = i + 1)
+                        {
+                            JsonElement item = dbLibsEl[i];
+                            if (item.ValueKind == JsonValueKind.String)
+                            {
+                                string got = item.GetString();
+                                if (got != null && got.Length > 0)
+                                {
+                                    // 库白名单——库 ID 清单；库存在性与授权校验后置（A266 首版只落字段）
+                                    dbLibs.Add(got.Trim());
                                 }
                             }
                         }
@@ -979,6 +1000,10 @@ namespace CatHome4.Admin
             {
                 cfg.Packs = packs.ToArray();
             }
+            if (dbLibsPresent)
+            {
+                cfg.DbLibs = dbLibs.ToArray();
+            }
             if (enabledRootsPresent)
             {
                 // 启用根校验——workspace 强制 + 全局池子集；池外 id 剔除并出声（A261）
@@ -990,7 +1015,7 @@ namespace CatHome4.Admin
             LogStore.Add("CatHome4", 1, "猫配置已受理：" + catKey + "（工具面 " + cfg.ToolNames + "）", "CONFIG");
             // A132 剔除出声——被剔名字随响应带回（调用方可见；明细已记日志，不静默）
             // 字段级合并写——回执取落盘实况（cfg.ToolNames），不取本次提交值（字段缺省时二者不同）
-            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames, enabledRoots = cfg.EnabledRoots, removedEnabledRoots = removedEnabledRoots, rootsPoolUnavailable = rootsPoolUnavailable });
+            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames, dbLibs = cfg.DbLibs, enabledRoots = cfg.EnabledRoots, removedEnabledRoots = removedEnabledRoots, rootsPoolUnavailable = rootsPoolUnavailable });
         }
 
         /// <summary>
@@ -1448,50 +1473,12 @@ namespace CatHome4.Admin
             {
                 return Results.Json(new { ok = false, error = rootErr });
             }
-            // [段3] 落盘——保留 inject 字段（读旧文件；M2 后宿主不消费但结构保留）
+            // [段3] 落盘——统一出口 WriteWorkspaceRoots（保留 inject 段；与 db 根自愈同源）
             string wsPath = Path.Combine(_dataRoot, "Data", "config", "workspace.json");
-            string injectJson = "[]";
-            if (File.Exists(wsPath))
+            string writeErr = WriteWorkspaceRoots(wsPath, rootsIn);
+            if (writeErr.Length > 0)
             {
-                try
-                {
-                    using (JsonDocument old = JsonUtil.ParseStrict(File.ReadAllText(wsPath)))
-                    {
-                        JsonElement injectEl;
-                        if (old.RootElement.TryGetProperty("inject", out injectEl))
-                        {
-                            injectJson = injectEl.GetRawText();
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogStore.Add("CatHome4", 2, "注入清单读取失败（按空清单）: " + ex.Message, "CONFIG");
-                    injectJson = "[]";
-                }
-            }
-            System.Collections.Generic.List<string> rootItems = new System.Collections.Generic.List<string>();
-            for (int i = 0; i < rootsIn.Count; i++)
-            {
-                WorkspaceRootInput input = rootsIn[i];
-                string norm = WorkspaceConfig.NormalizeRoot(input.Path);
-                if (input.Note.Length > 0)
-                {
-                    rootItems.Add(JsonUtil.Object(("id", input.Id), ("path", norm.Replace('\\', '/')), ("writable", input.Writable), ("note", input.Note)));
-                }
-                else
-                {
-                    rootItems.Add(JsonUtil.Object(("id", input.Id), ("path", norm.Replace('\\', '/')), ("writable", input.Writable)));
-                }
-            }
-            string wsJson = JsonUtil.Object(("roots", JsonUtil.RawArray(rootItems.ToArray())), ("inject", JsonUtil.Raw(injectJson)));
-            try
-            {
-                ConfigStore.AtomicWrite(wsPath, wsJson);
-            }
-            catch (Exception ex)
-            {
-                return Results.Json(new { ok = false, error = "落盘失败: " + ex.Message });
+                return Results.Json(new { ok = false, error = writeErr });
             }
             LogStore.Add("CatHome4", 1, "工作区已保存：" + rootsIn.Count.ToString() + " 个根（重启生效）", "CONFIG");
             return Results.Json(new { ok = true, roots = rootsIn.Count });
@@ -1661,6 +1648,7 @@ namespace CatHome4.Admin
                 qqbotEnable = data.QqBotEnable,
                 enabledRoots = data.EnabledRoots,
                 packs = data.Packs,
+                dbLibs = data.DbLibs,
                 userInjectIdleOnly = data.UserInjectIdleOnly,
                 appearanceId = data.AppearanceId,
                 reasoningEffort = data.ReasoningEffort

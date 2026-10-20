@@ -214,6 +214,12 @@ namespace CH4
             ctx.DataRoot = dataRoot;
             ctx.ConfigDir = Path.Combine(dataRoot, "Data", "config");
             WorkspaceConfig workspace = WorkspaceConfig.Load(Path.Combine(dataRoot, "Data", "config", "workspace.json"), dataRoot);
+            // A266 db 受控根自愈——库工具寻路依赖 db 根（缺则补建 + 归一写回；失败出声不阻断启动）
+            string dbRootNote = AdminService.EnsureDbRoot(workspace, dataRoot);
+            if (dbRootNote.Length > 0)
+            {
+                BootLog.Add("S2", "db 根 | " + dbRootNote);
+            }
             ctx.Workspace = workspace;
             // 受控根配置绑定——file.* 积木 / Admin 工作区页签 / 根寻址服务的唯一数据源
             DataBox.Bind<WorkspaceConfig>(workspace);
@@ -249,6 +255,24 @@ namespace CH4
                 }
             }
             DataBox.Bind<FileSystemService>(new FileSystemService(fallbackRoots.ToArray(), Path.Combine(WorkspaceRecycleRoot(workspace, dataRoot), "CatTemp", "fs_recycle")));
+            // A267 条目库服务——库根取受控根 db（A266 启动自愈保证存在）；DbCat 积木经 DataBox 取用
+            string dbRoot = "";
+            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
+            {
+                if (string.Equals(workspace.Roots[i].Id, "db", StringComparison.OrdinalIgnoreCase))
+                {
+                    dbRoot = workspace.Roots[i].Path;
+                    break;
+                }
+            }
+            if (dbRoot.Length > 0)
+            {
+                DataBox.Bind<DbService>(new DbService(dbRoot));
+            }
+            else
+            {
+                BootLog.Add("S2", "db 服务 | 未绑定：受控根 db 缺失");
+            }
             ctx.WorkspaceReady = true;
         }
 

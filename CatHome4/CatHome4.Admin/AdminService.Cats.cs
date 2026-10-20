@@ -476,7 +476,8 @@ namespace CatHome4.Admin
             sb.AppendLine("  packs=" + JoinArray(cfg.Packs));
             sb.AppendLine("  qqbotId=" + cfg.QqBotId);
             sb.AppendLine("  qqbotEnable=" + (cfg.QqBotEnable ? "true" : "false"));
-            sb.Append("  enabledRoots=" + JoinArray(cfg.EnabledRoots));
+            sb.AppendLine("  enabledRoots=" + JoinArray(cfg.EnabledRoots));
+            sb.Append("  dbLibs=" + JoinArray(cfg.DbLibs));
             return sb.ToString();
         }
         /// <summary>
@@ -663,6 +664,13 @@ namespace CatHome4.Admin
                 cfg.Packs = packKeys;
                 applied = "packs=" + JoinArray(packKeys);
             }
+            else if (field == "dbLibs")
+            {
+                // A266——库白名单（库 ID 清单；空=清空授权；库存在性校验后置到工具面）
+                string[] libIds = SplitList(value);
+                cfg.DbLibs = libIds;
+                applied = "dbLibs=" + JoinArray(libIds);
+            }
             else if (field == "qqbotId")
             {
                 if (value.Length == 0)
@@ -778,7 +786,7 @@ namespace CatHome4.Admin
             }
             else
             {
-                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/qqbotId/qqbotEnable/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId）";
+                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/qqbotId/qqbotEnable/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId）";
             }
             // [段2] 全量写回 + 生效入队（与端点同源：写后 catcfg.apply 主线程泵消费）
             SaveCatCfgData(id, cfg);
