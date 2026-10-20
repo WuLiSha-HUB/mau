@@ -653,6 +653,8 @@ namespace CatHome4.Admin
                     });
                 }
             }
+            bool dbLibsAvailable = false;
+            List<object> allDbLibs = BuildAllDbLibs(out dbLibsAvailable);
             var resp = new
             {
                 ok = true,
@@ -665,6 +667,8 @@ namespace CatHome4.Admin
                 injectList = cfg.InjectList,
                 packs = cfg.Packs,
                 dbLibs = cfg.DbLibs,
+                allLibs = allDbLibs,
+                dbLibsAvailable = dbLibsAvailable,
                 allPacks = BuildAllPacks(),
                 qqbotId = cfg.QqBotId,
                 qqbotEnable = cfg.QqBotEnable,

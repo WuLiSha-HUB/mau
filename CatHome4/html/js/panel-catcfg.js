@@ -10,6 +10,8 @@ var catCfgInjectList = [];
 var catCfgAllPacks = [];
 // A107——工具组定义缺陷（后端 defectGroups——不可用组不进勾选面 + 弹层提示）
 var catCfgDefectGroups = [];
+// A275——库权限池可取性（false = 清单不可取，保存时不提交 dbLibs，避免静默清空）
+var catCfgDbLibsAvailable = false;
 
 function openCatCfg(catId, name) {
     catCfgTarget = catId;
@@ -41,6 +43,9 @@ function openCatCfg(catId, name) {
             renderPackChecks(catCfgAllPacks, d.packs || []);
             // M4e 猫级白名单——启用根勾选（workspace 强制常驻不可取消）
             renderRootChecks(d.allRoots || [], d.enabledRoots || []);
+            // A275 库权限——库池 = 注册表登记的库（不可取时如实告警，不当成「无库」）
+            catCfgDbLibsAvailable = d.dbLibsAvailable === true;
+            renderDbLibChecks(d.allLibs || [], d.dbLibs || [], catCfgDbLibsAvailable);
             catCfgModal.style.display = 'flex';
         })
         .catch(function () {
@@ -387,6 +392,10 @@ function saveCatCfg() {
         reasoningEffort: document.getElementById('catCfgEffort').value,
         enabledRoots: collectRootChecks()
     };
+    // A275——库清单不可取时不提交 dbLibs（字段级合并：缺省保留磁盘现值，避免静默清空）
+    if (catCfgDbLibsAvailable) {
+        payload.dbLibs = collectDbLibChecks();
+    }
     fetch('/api/v1/cat-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -500,6 +509,82 @@ function collectRootChecks() {
     var boxes = document.querySelectorAll('#catCfgRoots input[type=checkbox].root-cb');
     for (var i = 0; i < boxes.length; i++) {
         if (boxes[i].checked) { ids.push(boxes[i].getAttribute('data-root')); }
+    }
+    return ids;
+}
+
+// A275 库权限勾选面——dbLibs（本猫可用库白名单；池 = 注册表登记的库）
+// available=false：数据库服务未绑定 / 宿主版本过旧——如实告警，不把「不可取」渲染成「无库」
+function renderDbLibChecks(allLibs, dbLibs, available) {
+    var box = document.getElementById('catCfgDbLibs');
+    box.textContent = '';
+    if (!available) {
+        var tip = document.createElement('div');
+        tip.style.cssText = 'width:100%;font-size:var(--ch-fs-tag);color:var(--ch-err)';
+        tip.textContent = '⚠ 库清单不可取——数据库服务未绑定或宿主版本过旧；保存不改动 dbLibs';
+        box.appendChild(tip);
+        return;
+    }
+    var checked = {};
+    var configured = [];
+    if (dbLibs && dbLibs.length > 0) {
+        for (var i = 0; i < dbLibs.length; i = i + 1) {
+            if (dbLibs[i] && dbLibs[i].length > 0) {
+                checked[dbLibs[i]] = true;
+                configured.push(dbLibs[i]);
+            }
+        }
+    }
+    var pool = allLibs || [];
+    if (pool.length === 0 && configured.length === 0) {
+        box.textContent = '（尚无库——控制台「数据」页签可新建）';
+        return;
+    }
+    var inPool = {};
+    for (var j = 0; j < pool.length; j = j + 1) {
+        var id = pool[j].id || '';
+        if (id.length === 0) { continue; }
+        inPool[id] = true;
+        box.appendChild(makeDbLibChip(id, pool[j].entries, pool[j].broken === true, checked[id] === true, false));
+    }
+    // 已配置但池内不存在——如实列出（不静默丢弃；取消勾选即清）
+    for (var k = 0; k < configured.length; k = k + 1) {
+        if (inPool[configured[k]] === true) { continue; }
+        box.appendChild(makeDbLibChip(configured[k], -1, false, true, true));
+    }
+}
+
+function makeDbLibChip(id, entries, broken, isChecked, stale) {
+    var label = document.createElement('label');
+    label.style.cssText = 'display:flex;align-items:center;gap:4px;background:var(--ch-bg-chip);border:1px solid var(--ch-line);border-radius:4px;padding:3px 8px;font-size:var(--ch-fs-tag);color:var(--ch-fg);cursor:pointer';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'db-lib-cb';
+    cb.setAttribute('data-lib', id);
+    cb.checked = isChecked;
+    label.appendChild(cb);
+    var txt = document.createElement('span');
+    var text = id;
+    if (entries >= 0) { text = text + ' · ' + entries + ' 条'; }
+    if (stale) {
+        text = text + '（未登记）';
+        label.style.color = 'var(--ch-warn)';
+        label.title = '注册表无此库——勾选保留，取消勾选即清';
+    }
+    if (broken) {
+        text = text + ' ⚠ 坏库';
+        label.style.color = 'var(--ch-err)';
+    }
+    txt.textContent = text;
+    label.appendChild(txt);
+    return label;
+}
+
+function collectDbLibChecks() {
+    var ids = [];
+    var boxes = document.querySelectorAll('#catCfgDbLibs input[type=checkbox].db-lib-cb');
+    for (var i = 0; i < boxes.length; i = i + 1) {
+        if (boxes[i].checked) { ids.push(boxes[i].getAttribute('data-lib')); }
     }
     return ids;
 }

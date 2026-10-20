@@ -3,7 +3,7 @@
 //
 // 覆盖：
 //   ① 声明面 ↔ 落位面不漂移——`TOOL_DECL`（各件自注册）与 `TOOL_SKELETONS`（落位表）键集必须一致，
-//      且同为运行态工具池 72 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
+//      且同为运行态工具池 78 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
 //   ② 骨架分派——登记工具走对应骨架；未登记工具走形态探测回落（禁止空白）
 //   ③ 专属骨架——`info`（分类摊平）/ `catinfo`（每猫一行）
 //   ④ 折叠行四级——前缀（图标 / 批次 / 失败）· 声明层 headline · 骨架兜底 · 规模后缀
@@ -42,6 +42,8 @@ const POOL = [
     'web-search', 'web-ds-search', 'web-fetch', 'web-fetch-jobs', 'image-analyze', 'image-inject',
     // AudioCat 2 · PyCat 3
     'audio-play', 'audio-speak', 'py-run', 'py-list', 'py-service',
+    // DbCat 5（A274）
+    'db-put', 'db-query', 'db-get', 'db-update', 'db-delete',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -65,9 +67,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 73 件', () => {
+    it('落位表 = 工具池 78 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(73);
+        expect(POOL.length).toBe(78);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -288,5 +290,70 @@ describe('流式工具计时（A263）', () => {
         const timed = window.buildToolBlock(card('text-read', { path: 'x' }, 'OK|done', { durMs: 1200 }), 'toolcard');
         expect(timed.querySelector('.chat-dur')).not.toBeNull();
         expect(timed.querySelector('.chat-dur-live')).toBeNull();
+    });
+});
+
+describe('DbCat——库名与条目摘要（A274）', () => {
+    /** 成功回执三段：结构化头 + 摘要行 + JSON 载荷 */
+    function dbResult(tool, lib, summary, payload) {
+        return '{"ok":true,"tool":"' + tool + '","target":"' + lib + '"}\n' + summary + '\n' + payload;
+    }
+
+    it('db-query——三数进折叠行，条目逐条列出（ID / 标题 / 更新时间）', () => {
+        const res = dbResult('db-query', 'smriti', '命中 2 / 活跃 5',
+            '{"total":5,"matched":2,"shown":2,"items":[{"id":7,"title":"甲","updatedAt":"2026-10-20 22:10:00"},{"id":3,"title":"乙","updatedAt":"2026-10-19 09:00:00"}]}');
+        const node = window.buildToolBlock(card('db-query', { lib: 'smriti', keyword: '甲' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('查询 smriti · 「甲」');
+        expect(text).toContain('查询库 smriti · 关键词 甲');
+        expect(text).toContain('命中 2 / 活跃 5');
+        expect(text).toContain('#7 · 甲 · 2026-10-20 22:10:00');
+        expect(text).toContain('#3 · 乙');
+    });
+
+    it('db-query——无命中显式占位，截断时标「仅列前 N 条」', () => {
+        const empty = dbResult('db-query', 'smriti', '命中 0 / 活跃 5', '{"total":5,"matched":0,"shown":0,"items":[]}');
+        expect(window.buildToolBlock(card('db-query', { lib: 'smriti' }, empty), 'toolcard').textContent).toContain('（无命中条目）');
+        const cut = dbResult('db-query', 'smriti', '命中 9 / 活跃 20',
+            '{"total":20,"matched":9,"shown":1,"items":[{"id":1,"title":"甲","updatedAt":"2026-10-20 22:10:00"}]}');
+        expect(window.buildToolBlock(card('db-query', { lib: 'smriti' }, cut), 'toolcard').textContent).toContain('仅列前 1 条（命中 9）');
+    });
+
+    it('db-get——版本时间行 + 正文段', () => {
+        const res = dbResult('db-get', 'smriti', '条目 #7',
+            '{"id":7,"title":"甲","body":"单行正文","v":2,"createdAt":"2026-10-18 10:00:00","updatedAt":"2026-10-20 22:10:00"}');
+        const node = window.buildToolBlock(card('db-get', { lib: 'smriti', key: '甲' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('读取 smriti · 标题 甲 · #7 v2');
+        expect(text).toContain('#7 · v2');
+        expect(text).toContain('更新 2026-10-20 22:10:00');
+        expect(text).toContain('正文 · 1 行');
+        expect(text).toContain('单行正文');
+    });
+
+    it('db-get——按 ID 定位时折叠行标 ID 前缀', () => {
+        const res = dbResult('db-get', 'smriti', '条目 #7',
+            '{"id":7,"title":"甲","body":"单行正文","v":1,"createdAt":"2026-10-18 10:00:00","updatedAt":"2026-10-20 22:10:00"}');
+        const node = window.buildToolBlock(card('db-get', { lib: 'smriti', mode: 'id', key: '7' }, res), 'toolcard');
+        expect(node.textContent).toContain('读取 smriti · ID 7');
+    });
+
+    it('db-put / db-update / db-delete——摘要带库名与条目 ID', () => {
+        const put = window.buildToolBlock(card('db-put', { lib: 'smriti', title: '甲', body: 'x' },
+            dbResult('db-put', 'smriti', '条目已写入: #7', '{"id":7,"v":1}')), 'toolcard');
+        expect(put.textContent).toContain('库 smriti · 条目 #7（v1）已写入');
+        const upd = window.buildToolBlock(card('db-update', { lib: 'smriti', title: '甲', body: 'y' },
+            dbResult('db-update', 'smriti', '条目已更新: #7 v2', '{"id":7,"v":2}')), 'toolcard');
+        expect(upd.textContent).toContain('条目 #7 已更新至 v2');
+        const del = window.buildToolBlock(card('db-delete', { lib: 'smriti', title: '甲' },
+            dbResult('db-delete', 'smriti', '条目已删除（墓碑保留）: #7', '{"id":7}')), 'toolcard');
+        expect(del.textContent).toContain('条目 #7 已删除（墓碑保留，可审计）');
+    });
+
+    it('失败态——回落骨架原文，机器码可见', () => {
+        const node = window.buildToolBlock(card('db-put', { lib: 'smriti', title: '甲', body: 'x' },
+            'ERR|DB_TITLE_EXISTS|标题已存在: 甲'), 'toolcard');
+        expect(node.textContent).toContain('DB_TITLE_EXISTS');
+        expect(node.querySelector('.chat-tool').classList.contains('err')).toBe(true);
     });
 });

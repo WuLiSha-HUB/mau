@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -172,6 +173,73 @@ namespace CatHome4.Admin
                 data = payload,
                 badLines = result.BadLines
             });
+        }
+
+        // [段3] 猫配置面
+
+        /// <summary>
+        /// 库池清单——猫配置弹层「库权限」勾选面消费（A275：库 id + 活跃条目数 + 坏库标记）。
+        /// </summary>
+        /// <param name="available">输出：清单是否可取（服务未绑定 / 注册表不可读 → false——调用方须出声，不静默空列表）</param>
+        /// <returns>库项列表（不可取 → 空列表）</returns>
+        internal static List<object> BuildAllDbLibs(out bool available)
+        {
+            available = false;
+            List<object> list = new List<object>();
+            DbService service = ResolveDbService();
+            if (service == null)
+            {
+                return list;
+            }
+            DbResult result = service.ListLibs();
+            if (!result.Ok)
+            {
+                return list;
+            }
+            JsonElement payload;
+            if (!TryReadDbPayload(result.Data, out payload))
+            {
+                return list;
+            }
+            JsonElement libsEl;
+            if (!payload.TryGetProperty("libs", out libsEl) || libsEl.ValueKind != JsonValueKind.Array)
+            {
+                return list;
+            }
+            available = true;
+            for (int i = 0; i < libsEl.GetArrayLength(); i = i + 1)
+            {
+                JsonElement item = libsEl[i];
+                string id = "";
+                int entries = 0;
+                bool broken = false;
+                JsonElement idEl;
+                if (item.TryGetProperty("id", out idEl) && idEl.ValueKind == JsonValueKind.String)
+                {
+                    id = idEl.GetString();
+                }
+                if (id == null || id.Length == 0)
+                {
+                    continue;
+                }
+                JsonElement entriesEl;
+                if (item.TryGetProperty("entries", out entriesEl) && entriesEl.ValueKind == JsonValueKind.Number)
+                {
+                    entries = entriesEl.GetInt32();
+                }
+                JsonElement brokenEl;
+                if (item.TryGetProperty("broken", out brokenEl))
+                {
+                    broken = brokenEl.ValueKind == JsonValueKind.True;
+                }
+                list.Add(new
+                {
+                    id = id,
+                    entries = entries,
+                    broken = broken
+                });
+            }
+            return list;
         }
 
         // [段2] 辅助
