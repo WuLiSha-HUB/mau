@@ -263,3 +263,30 @@ describe('声明层覆盖——段内容生效', () => {
         expect(group.querySelector('img')).toBeTruthy();
     });
 });
+
+describe('流式工具计时（A263）', () => {
+    it('在途卡（结果未定稿）显示自增用时——锚随首现时刻记忆', () => {
+        const p = { name: 'text-read', arguments: '{"path":"ccbp:L1/Tree.md"}', toolIndex: 1, toolTotal: 2 };
+        const node = window.buildToolBlock(p, 'toolcard');
+        const live = node.querySelector('.chat-dur-live');
+        expect(live).not.toBeNull();
+        expect(live.getAttribute('data-since')).toMatch(/^\d+$/);
+        expect(live.textContent).toMatch(/^ · \d+\.\ds$/);
+    });
+
+    it('同一在途卡重复渲染——锚不变（live 帧每帧重建，读数不归零）', () => {
+        const p = { name: 'cs-build', arguments: '{"path":"x.csproj"}', toolIndex: 2, toolTotal: 3 };
+        const a = window.buildToolBlock(p, 'toolcard').querySelector('.chat-dur-live').getAttribute('data-since');
+        const b = window.buildToolBlock(p, 'toolcard').querySelector('.chat-dur-live').getAttribute('data-since');
+        expect(b).toBe(a);
+    });
+
+    it('定稿卡无 durMs 不显示用时；有 durMs 走既有口径', () => {
+        const done = window.buildToolBlock(card('text-read', { path: 'x' }, 'OK|done'), 'toolcard');
+        expect(done.querySelector('.chat-dur-live')).toBeNull();
+        expect(done.querySelector('.chat-dur')).toBeNull();
+        const timed = window.buildToolBlock(card('text-read', { path: 'x' }, 'OK|done', { durMs: 1200 }), 'toolcard');
+        expect(timed.querySelector('.chat-dur')).not.toBeNull();
+        expect(timed.querySelector('.chat-dur-live')).toBeNull();
+    });
+});

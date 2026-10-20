@@ -6,6 +6,8 @@
 //            payload:{ name, arguments, result, images? } }
 //   · name = 工具名；arguments = 参数 JSON 原文；result = 结果原文（可带结构化头）
 //   · 计数类字段（toolIndex / toolTotal / order / durMs）——字段面见契约 §12.5
+//   · 在途卡（live 面 `toolrun`，`result` 未定稿）无 durMs——由前端按首次出现时刻自增显示已用时（A263）；
+//     定稿后由后端 `durMs` 接管，同一位置、不同数据源，互不重叠
 //
 // 产出：.chat-row.assistant.tool > details.chat-tool[.err]
 //         └ summary.tn（图标 + 变体标签 + 折叠行文案） + 段数组（lib/tool-format 骨架）
@@ -54,6 +56,80 @@ function resultInfo(resultText) {
         // 非 JSON——无边界信息
     }
     return info;
+}
+
+// ── 流式工具计时（A263）─────────────────────────────────────────
+// 运行中工具卡（live 面 `toolrun`，结果未定稿）显示**已用时**，0.1 秒分度自增——
+//   与流式 think 的统计行同一观感口径（`fx/live-stats.js` 的 `time:` 行）。
+// 计时锚按 `名字|toolIndex|toolTotal` 记忆首次出现时刻：live 帧每帧重建面板，锚必须跨帧稳定，
+//   否则读数每帧归零。定稿后该工具从 live 面消失，锚随之失效（离开 toolrun 面整体清零）。
+
+/// 心跳节拍（毫秒）——与 `fx/live-stats.js` 同为 10 次/秒
+var TOOL_DUR_TICK_MS = 100;
+
+/// 在途计时心跳句柄（无在途卡即自停——不常驻计时器）
+var toolDurTimer = null;
+
+/// 计时锚表——键 → 首次出现时刻（ms）
+var toolRunAnchors = {};
+
+/// 锚键——同一轮内同名工具的多次调用靠 toolIndex / toolTotal 区分
+function toolRunAnchorKey(t) {
+    var name = (t && typeof t.name === 'string') ? t.name : '?';
+    var idx = (t && t.toolIndex !== undefined && t.toolIndex !== null) ? String(t.toolIndex) : '';
+    var total = (t && t.toolTotal !== undefined && t.toolTotal !== null) ? String(t.toolTotal) : '';
+    return name + '|' + idx + '|' + total;
+}
+
+/// 取锚（无则新建）——超限整体重置，防跨轮次残留累积
+function toolRunSince(t) {
+    var key = toolRunAnchorKey(t);
+    var now = Date.now();
+    var since = toolRunAnchors[key];
+    if (typeof since !== 'number' || !isFinite(since)) {
+        if (Object.keys(toolRunAnchors).length > 200) {
+            toolRunAnchors = {};
+        }
+        toolRunAnchors[key] = now;
+        return now;
+    }
+    return since;
+}
+
+/// 锚清零——live 面板离开 toolrun 面时调用：下一轮同名同序工具重新起算
+function toolRunForgetAll() {
+    toolRunAnchors = {};
+}
+
+/// 在途用时文案——0.1 秒分度（与统计行 `time:` 行同口径）
+function toolDurLiveText(sinceMs) {
+    return ' · ' + ((Date.now() - sinceMs) / 1000).toFixed(1) + 's';
+}
+
+/// 心跳——单一 100ms 驱动所有 `.chat-dur-live`；无在途卡即自停
+function toolDurTick() {
+    var nodes = document.querySelectorAll('.chat-dur-live');
+    if (nodes.length === 0) {
+        if (toolDurTimer !== null) {
+            clearInterval(toolDurTimer);
+            toolDurTimer = null;
+        }
+        return;
+    }
+    for (var i = 0; i < nodes.length; i++) {
+        var since = parseInt(nodes[i].getAttribute('data-since'), 10);
+        if (!isFinite(since)) {
+            continue;
+        }
+        nodes[i].textContent = toolDurLiveText(since);
+    }
+}
+
+/// 心跳保障——首个在途卡出现时启动
+function toolDurEnsureTick() {
+    if (toolDurTimer === null && typeof setInterval === 'function') {
+        toolDurTimer = setInterval(toolDurTick, TOOL_DUR_TICK_MS);
+    }
 }
 
 function buildToolCard(tool, open) {
@@ -108,6 +184,14 @@ function buildToolCard(tool, open) {
     var dur = (typeof t.durMs === 'number') ? t.durMs : -1;
     if (dur > 0 && typeof fmtMs === 'function') {
         sum.appendChild(elText('span', 'chat-dur', ' · ' + fmtMs(dur)));
+    }
+    // [段6b] 在途用时（A263）——结果未定稿即流式中：按首次出现时刻自增；定稿后归段6 的 durMs
+    if (t.result === undefined || t.result === null) {
+        var since = toolRunSince(t);
+        var liveDur = elText('span', 'chat-dur chat-dur-live', toolDurLiveText(since));
+        liveDur.setAttribute('data-since', String(since));
+        sum.appendChild(liveDur);
+        toolDurEnsureTick();
     }
     det.appendChild(sum);
     if (cmdIntent && typeof fxCmdIntentAttach === 'function') {

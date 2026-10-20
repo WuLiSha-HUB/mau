@@ -118,6 +118,8 @@ namespace CatHome4.Admin
             // A65 对话图片附件——上传 + 取图（主端口注册；每猫 / majordomo 对话页走 RegisterChatPageRoutes）
             sink.MapPost("/api/v1/chat-images", (Delegate)HandleChatImagesUpload);
             sink.MapGet("/api/v1/cache-image/{**file}", (Delegate)HandleCacheImageGet);
+            // A265 音频资产——轮末总结拼接音频取回（单独资产入口；与图片面分离）
+            sink.MapGet("/api/v1/audio/{**file}", (Delegate)HandleAudioGet);
         }
 
         /// <summary>

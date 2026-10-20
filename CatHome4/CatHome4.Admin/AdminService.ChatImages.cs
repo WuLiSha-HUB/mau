@@ -486,6 +486,7 @@ namespace CatHome4.Admin
         internal static void RegisterChatPageRoutes(IHttpRouteSink sink)
         {
             RegisterChatImageRoutes(sink);
+            RegisterChatAudioRoutes(sink);
         }
 
         /// <summary>

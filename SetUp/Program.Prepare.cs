@@ -28,6 +28,17 @@ namespace SetUp
 
             try
             {
+                // [段0a] 自举代际自检（A264）——运行中的 SetUp.exe 落后于 SetUp/ 源码即出声
+                // 不阻断：旧 exe 仍能自举；但必须可见（design-ch4-release §九：SetUp/ 源码与 SetUp.exe 同 commit）
+                long selfCheckMs = Environment.TickCount64;
+                string selfDetail = CheckSelfGeneration(repoRoot);
+                bool selfGenOk = selfDetail.Length == 0;
+                _steps.Add(new StepReport() { Step = 0, Name = "段0a SetUp 自举代际自检", Ok = selfGenOk, Ms = Environment.TickCount64 - selfCheckMs, Detail = selfDetail });
+                if (!selfGenOk)
+                {
+                    Console.WriteLine("[SetUp] ⚠ 自举代际告警：" + selfDetail);
+                }
+
                 // [段0] 版本自增——全量部署唯一自增点（design-ch4-release.md §6.1）：读单点 → 递增序号 +1 → 写回后编译
                 // 版本 ≡ full 代际——自增失败即中止（不变量优先），不留「同号双代际」；incr / host 重启链不经过本段
                 long verMs = Environment.TickCount64;
@@ -131,11 +142,26 @@ namespace SetUp
                     return Fail("步5 publish CatHome4 失败——宿主部署区未生成，中止。");
                 }
 
-                // [段5b] 音频资产复制——仓库 assets/ → public/app/assets/（随 incr 搬运进入运行区；缺失不阻断）
+                // [段5b] 音频资产复制——仓库 assets/ → public/app/assets/（随 incr 搬运进入运行区）
+                // 可见性（A264）：成功也落步明细（文件数 / 字节数）；源缺失记 Detail 出声——静默跳过正是提示音消失的根因形态
+                long assetsMs = Environment.TickCount64;
                 string assetsPublishSrc = Path.Combine(repoRoot, "assets");
+                string assetsPublishDst = Path.Combine(repoRoot, "public", "app", "assets");
+                bool assetsOk = true;
+                string assetsDetail = "";
                 if (Directory.Exists(assetsPublishSrc))
                 {
-                    CopyDirectory(assetsPublishSrc, Path.Combine(repoRoot, "public", "app", "assets"));
+                    assetsOk = CopyDirectory(assetsPublishSrc, assetsPublishDst);
+                    assetsDetail = assetsOk ? "复制完成：" + DescribeTree(assetsPublishDst) : "复制失败：" + DescribeTree(assetsPublishDst);
+                }
+                else
+                {
+                    assetsDetail = "源缺失：仓库根 assets/ 不存在——提示音等资产不会进入产物区";
+                }
+                _steps.Add(new StepReport() { Step = 5, Name = "段5b 音频资产复制 -> public/app/assets", Ok = assetsOk, Ms = Environment.TickCount64 - assetsMs, Detail = assetsDetail });
+                if (!assetsOk)
+                {
+                    Console.WriteLine("[SetUp] ⚠ 音频资产复制失败：" + assetsDetail);
                 }
 
                 // [段6] 步6：宿主自检——CLI 全链（主线程直执 + 进程自退；8080 单例——验证前确认无宿主占用）

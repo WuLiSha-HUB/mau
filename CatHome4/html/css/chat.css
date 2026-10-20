@@ -373,6 +373,18 @@ body { font-family: var(--ch-font-ui); background: var(--ch-bg-page); color: var
 /* 轮末总结（roundsummary）紧邻统计之后——统计行的轮次留白由总结行上提抵消（间隔改在总结之后）；
    不用嵌套 :has(+ )（实测该形态未生效），改用相邻兄弟 + 负上边距——兼容性稳 */
 .chat-row.roundsum + .chat-row.summary { margin-top: calc(-1 * var(--ch-round-gap)); margin-bottom: var(--ch-round-gap); }
+/* 总结音频播放按钮（A265）——朴素件：无底无描边，仅文字按钮；命中/播放态用状态色 */
+#chatMsgs .chat-bubble.roundsummary .rsm-audio { margin-top: 4px; }
+#chatMsgs .chat-bubble.roundsummary .rsm-audio-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    font: inherit;
+    color: var(--ch-ok-weak);
+    cursor: pointer;
+}
+#chatMsgs .chat-bubble.roundsummary .rsm-audio-btn:hover { text-decoration: underline; }
+#chatMsgs .chat-bubble.roundsummary .rsm-audio-btn:disabled { color: var(--ch-fg-muted); cursor: default; }
 #chatMsgs .chat-bubble.roundsum .rs-head { color: var(--ch-ok-weak); font-weight: bold; margin-bottom: 3px; }
 #chatMsgs .chat-bubble.roundsum .rs-tok { color: var(--ch-tok-completion); word-break: break-all; white-space: pre-wrap; }
 /* 四项行弱化（2026-10-06 · 莎定；同日微调——K·M 单位随整数原色，不再弱化）——括号 · 百分号 / 小数点统一走第三行同款灰（与 `.rs-times` 同值），

@@ -138,5 +138,56 @@ namespace SetUp
             }
             return true;
         }
+        /// <summary>
+        /// 自举代际自检（A264）——当前运行的 SetUp.exe 与 SetUp/ 源码最新修改时间比对；源码更新即返回告警文本。
+        /// 判据：exe 写盘时刻 ≥ 全部 SetUp/*.cs 的写盘时刻。不阻断（旧 exe 仍能自举），但必须出声——
+        /// 判例：段5b 资产复制随 1.8.154 进源码，根目录 SetUp.exe 仍是 10-02 旧二进制，提示音因此整段缺失而报告全绿。
+        /// 规范：design-ch4-release.md §九（SetUp/ 源码与 SetUp.exe 同 commit）。
+        /// </summary>
+        /// <param name="repoRoot">仓库根</param>
+        /// <returns>告警文本（空串=代际一致）</returns>
+        private static string CheckSelfGeneration(string repoRoot)
+        {
+            try
+            {
+                string exePath = Environment.ProcessPath;
+                if (exePath == null || exePath.Length == 0)
+                {
+                    return "";
+                }
+                string srcDir = Path.Combine(repoRoot, "SetUp");
+                if (!Directory.Exists(srcDir))
+                {
+                    return "";
+                }
+                DateTime exeTime = File.GetLastWriteTime(exePath);
+                string[] files = Directory.GetFiles(srcDir, "*.cs", SearchOption.AllDirectories);
+                DateTime newest = DateTime.MinValue;
+                string newestName = "";
+                for (int i = 0; i < files.Length; i = i + 1)
+                {
+                    DateTime t = File.GetLastWriteTime(files[i]);
+                    if (t > newest)
+                    {
+                        newest = t;
+                        newestName = Path.GetFileName(files[i]);
+                    }
+                }
+                if (newest == DateTime.MinValue)
+                {
+                    return "";
+                }
+                if (newest <= exeTime)
+                {
+                    return "";
+                }
+                return "SetUp.exe 落后于 SetUp/ 源码（exe " + exeTime.ToString("yyyy-MM-dd HH:mm:ss") + " < " + newestName + " " + newest.ToString("yyyy-MM-dd HH:mm:ss") + "）——请重发 exe（design-ch4-release §九）";
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[SetUp] 警告：自举代际自检异常——" + ex.Message);
+                return "";
+            }
+        }
     }
 }

@@ -399,13 +399,15 @@ namespace CH4
             return false;
         }
         /// <summary>
-        /// 总结播报执行体（后台线程）——先播播报名（全局默认音色），再播正文（该猫外观音色）；两段共用同一个播放串行键。
+        /// 总结播报执行体（后台线程）——三段（提示音 / 播报名 / 正文）合成后拼接成单文件再入队（A265）。
+        /// 单文件同时是前端可点播资产：块 payload 的 audio 名与本文件名同源（按轮次时间戳派生，块先落盘不回转写）。
         /// </summary>
         /// <param name="catKey">猫 key（日志定位用）</param>
         /// <param name="displayName">猫显示名（播报名 = displayName + 说）</param>
         /// <param name="voice">正文音色（外观池 ttsStyle；空=服务默认）</param>
         /// <param name="text">总结正文</param>
-        private static void RunSummarySpeak(string catKey, string displayName, string voice, string text)
+        /// <param name="audioName">拼接后单文件名（与块 payload 同源）</param>
+        private static void RunSummarySpeak(string catKey, string displayName, string voice, string text, string audioName)
         {
             IPyService py = null;
             if (!DataBox.TryResolve<IPyService>(out py) || py == null)
@@ -420,44 +422,114 @@ namespace CH4
                 return;
             }
             // [段0] 提示音——固定资产（钟声）；缺失由 ResolveChimePath 记 WARN 后跳过
+            List<string> segments = new List<string>();
+            List<string> temps = new List<string>();
             string chimePath = ResolveChimePath();
             if (chimePath.Length > 0)
             {
-                string chimeResult = audio.Enqueue(RoundSummaryAudioKey, chimePath, -1f);
-                if (chimeResult != null && chimeResult.Length > 0)
-                {
-                    LogStore.Add("CatHome4", 2, "轮末总结提示音入队失败: " + chimeResult, "CHAT");
-                }
+                segments.Add(chimePath);
             }
             // [段1] 播报名——全局默认音色（先告诉听众是谁在说）
             string intro = displayName == null || displayName.Length == 0 ? "" : displayName + "说";
             if (intro.Length > 0)
             {
-                SpeakOne(py, audio, intro, ResolveGlobalVoice(), catKey);
+                string introFile = SpeakOne(py, intro, ResolveGlobalVoice(), catKey);
+                if (introFile.Length > 0)
+                {
+                    segments.Add(introFile);
+                    temps.Add(introFile);
+                }
             }
             // [段2] 正文——该猫外观音色
-            SpeakOne(py, audio, text, voice, catKey);
-        }
-        /// <summary>
-        /// 单段合成并入队——失败记 Log 即返回（不影响后续段）；播放键固定 RoundSummaryAudioKey（跨猫全串行）。
-        /// </summary>
-        /// <param name="py">py 服务</param>
-        /// <param name="audio">音频服务</param>
-        /// <param name="text">待合成文本</param>
-        /// <param name="voice">音色（空=服务默认）</param>
-        /// <param name="catKey">猫 key（日志定位用）</param>
-        private static void SpeakOne(IPyService py, IAudioService audio, string text, string voice, string catKey)
-        {
-            if (text == null || text.Length == 0)
+            string bodyFile = SpeakOne(py, text, voice, catKey);
+            if (bodyFile.Length > 0)
             {
+                segments.Add(bodyFile);
+                temps.Add(bodyFile);
+            }
+            if (segments.Count == 0)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——无可播段", "CHAT");
                 return;
             }
-            string outPath = BuildSummaryAudioPath();
-            if (outPath.Length == 0)
+            // [段3] 拼接成单文件——块 payload 与前端点播共用此文件（A265）
+            string dir = ResolveSummaryAudioDir();
+            if (dir.Length == 0)
             {
                 LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录未配置（py.service.kokoro.out_dir）", "CHAT");
                 return;
             }
+            string joined = System.IO.Path.Combine(dir, audioName);
+            string joinErr = audio.Join(segments.ToArray(), joined);
+            if (joinErr.Length > 0)
+            {
+                // 拼接失败——回落逐段串行播放（可听性优先）；单文件资产此时不存在，前端点播 404 即如实不可用
+                LogStore.Add("CatHome4", 2, "轮末总结拼接失败，回落逐段播放: " + joinErr, "CHAT");
+                for (int i = 0; i < segments.Count; i = i + 1)
+                {
+                    audio.Enqueue(RoundSummaryAudioKey, segments[i], -1f);
+                }
+                return;
+            }
+            for (int i = 0; i < temps.Count; i = i + 1)
+            {
+                DeleteQuiet(temps[i]);
+            }
+            string enqueue = audio.Enqueue(RoundSummaryAudioKey, joined, -1f);
+            if (enqueue != null && enqueue.Length > 0)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结播放入队失败: " + enqueue, "CHAT");
+            }
+        }
+        /// <summary>
+        /// 静默删文件——中间段合成产物清理（失败只记日志，不影响已完成的拼接与播放）。
+        /// </summary>
+        /// <param name="path">待删路径</param>
+        private static void DeleteQuiet(string path)
+        {
+            try
+            {
+                if (path != null && path.Length > 0 && System.IO.File.Exists(path))
+                {
+                    System.IO.File.Delete(path);
+                }
+            }
+            catch (Exception ex)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结临时段清理失败: " + ex.Message + " | " + path, "CHAT");
+            }
+        }
+        /// <summary>
+        /// 单段合成产物路径——临时文件名（拼接成功后删除，不入资产面）。
+        /// </summary>
+        /// <param name="dir">产物目录</param>
+        /// <returns>WAV 全路径</returns>
+        private static string BuildSummarySegmentPath(string dir)
+        {
+            int seq = System.Threading.Interlocked.Increment(ref _summarySegmentSeq);
+            return System.IO.Path.Combine(dir, "tmp_summary_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + "_" + seq.ToString() + ".wav");
+        }
+        /// <summary>
+        /// 单段合成——失败记 Log 即返回空串（不影响后续段）；只产临时文件，播放与拼接归调用方。
+        /// </summary>
+        /// <param name="py">py 服务</param>
+        /// <param name="text">待合成文本</param>
+        /// <param name="voice">音色（空=服务默认）</param>
+        /// <param name="catKey">猫 key（日志定位用）</param>
+        /// <returns>合成产物路径；失败空串</returns>
+        private static string SpeakOne(IPyService py, string text, string voice, string catKey)
+        {
+            if (text == null || text.Length == 0)
+            {
+                return "";
+            }
+            string dir = ResolveSummaryAudioDir();
+            if (dir.Length == 0)
+            {
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录未配置（py.service.kokoro.out_dir）", "CHAT");
+                return "";
+            }
+            string outPath = BuildSummarySegmentPath(dir);
             Dictionary<string, object> payload = new Dictionary<string, object>();
             payload["id"] = "summary";
             payload["op"] = "speak";
@@ -473,14 +545,14 @@ namespace CH4
             if (reply == null || reply.Length == 0 || reply.StartsWith("ERR|", StringComparison.Ordinal))
             {
                 LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + (reply == null ? "(无回执)" : reply) + " | cat=" + catKey, "CHAT");
-                return;
+                return "";
             }
             string produced = outPath;
             JsonDocument doc = JsonUtil.Parse(reply, "summary-speak");
             if (doc == null)
             {
                 LogStore.Add("CatHome4", 2, "轮末总结合成回执不可解析: " + reply, "CHAT");
-                return;
+                return "";
             }
             try
             {
@@ -488,7 +560,7 @@ namespace CH4
                 if (!JsonUtil.GetBool(root, "ok", false))
                 {
                     LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + reply, "CHAT");
-                    return;
+                    return "";
                 }
                 produced = JsonUtil.GetStr(root, "out", outPath);
             }
@@ -496,11 +568,7 @@ namespace CH4
             {
                 doc.Dispose();
             }
-            string enqueue = audio.Enqueue(RoundSummaryAudioKey, produced, -1f);
-            if (enqueue != null && enqueue.Length > 0)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播放入队失败: " + enqueue, "CHAT");
-            }
+            return produced;
         }
         /// <summary>
         /// 全局默认音色——audio.voice 落盘值优先，未落盘回落 schema 默认；空=服务默认（zf_001）。

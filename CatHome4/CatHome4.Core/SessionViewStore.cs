@@ -470,10 +470,11 @@ namespace CH4
             EmitBlock(block);
         }
 
-        /// <summary>追加轮末总结条目——roundsummary（LLMSimpleRequest 产出一句话总结）。与 roundsum 同属轮末条目族（同容器承载、type 区分——复用车、落盘、合并、补差全链）；写入即落盘——宿主中断不丢。</summary>
+        /// <summary>追加轮末总结条目——roundsummary（LLMSimpleRequest 产出一句话总结）。与 roundsum 同属轮末条目族（同容器承载、type 区分——复用车、落盘、合并、补差全链）；写入即落盘——宿主中断不丢。音频字段（A265）为拼接后单文件名——仅供前端点播，无音频时缺省不写。</summary>
         /// <param name="text">总结文本（失败侧为 ERR| 文本——失败可见）</param>
         /// <param name="timestamp">创建时间戳（= roundsum ts + 1——固定插在轮末统计之后）</param>
-        public void AppendRoundSummaryNote(string text, long timestamp)
+        /// <param name="audioName">拼接后音频文件名（空=不写该字段）</param>
+        public void AppendRoundSummaryNote(string text, long timestamp, string audioName)
         {
             if (text == null || text.Length == 0)
             {
@@ -481,6 +482,10 @@ namespace CH4
             }
             Dictionary<string, object> payload = new Dictionary<string, object>();
             payload["text"] = text;
+            if (audioName != null && audioName.Length > 0)
+            {
+                payload["audio"] = audioName;
+            }
             ViewBlock block = NewBlock("roundsummary", JsonUtil.Serialize(payload), timestamp, -1);
             _roundSums.Add(block);
             AppendLine(BuildBlockLine(block));

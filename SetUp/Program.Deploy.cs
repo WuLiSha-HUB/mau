@@ -119,11 +119,26 @@ namespace SetUp
             {
                 CopyDirectory(configTpl, Path.Combine(targetNew, "config"));
             }
-            // [段3c] 音频资产复制——仓库 assets/ → 新目录 assets/（轮末总结提示音等随包分发；缺失不阻断）
+            // [段3c] 音频资产复制——仓库 assets/ → 新目录 assets/（轮末总结提示音等随包分发）
+            // 可见性（A264）：成功也落步明细；源缺失记 Detail 出声（旧形态静默跳过 → 提示音在运行区消失而无痕迹）
+            long assetsMs = Environment.TickCount64;
             string assetsSrc = Path.Combine(repoRoot, "assets");
+            string assetsDst = Path.Combine(targetNew, "assets");
+            bool assetsOk = true;
+            string assetsDetail = "";
             if (Directory.Exists(assetsSrc))
             {
-                CopyDirectory(assetsSrc, Path.Combine(targetNew, "assets"));
+                assetsOk = CopyDirectory(assetsSrc, assetsDst);
+                assetsDetail = assetsOk ? "复制完成：" + DescribeTree(assetsDst) : "复制失败：" + DescribeTree(assetsDst);
+            }
+            else
+            {
+                assetsDetail = "源缺失：仓库根 assets/ 不存在——提示音等资产不会进入运行区";
+            }
+            _steps.Add(new StepReport() { Step = 1, Name = "段3c 音频资产复制 -> <target>/assets", Ok = assetsOk, Ms = Environment.TickCount64 - assetsMs, Detail = assetsDetail });
+            if (!assetsOk)
+            {
+                Console.WriteLine("[SetUp] ⚠ 音频资产复制失败：" + assetsDetail);
             }
 
             // [段4] 版本落盘——version.txt（读取 Directory.Build.props 单点 Version；写新目录）
@@ -321,6 +336,33 @@ namespace SetUp
             {
                 Console.WriteLine("[SetUp] 复制异常: " + ex.Message);
                 return false;
+            }
+        }
+        /// <summary>
+        /// 目录内容摘要（A264）——文件数 / 总字节，用于资产复制步的步明细（数量类输出自证全集）。
+        /// </summary>
+        /// <param name="dir">目录绝对路径</param>
+        /// <returns>摘要文本</returns>
+        private static string DescribeTree(string dir)
+        {
+            try
+            {
+                if (!Directory.Exists(dir))
+                {
+                    return "目标目录未生成";
+                }
+                string[] files = Directory.GetFiles(dir, "*", SearchOption.AllDirectories);
+                long bytes = 0;
+                for (int i = 0; i < files.Length; i = i + 1)
+                {
+                    FileInfo info = new FileInfo(files[i]);
+                    bytes = bytes + info.Length;
+                }
+                return files.Length.ToString() + " 个文件 / " + bytes.ToString() + " 字节";
+            }
+            catch (Exception ex)
+            {
+                return "摘要失败：" + ex.Message;
             }
         }
     }

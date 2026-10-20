@@ -3128,11 +3128,16 @@ namespace CH4
                 result = "ERR|EMPTY|轮末总结无可读回执";
             }
             long ts = _roundSummaryPendingTs > 0 ? _roundSummaryPendingTs : ViewTimestamp();
-            _viewStore.AppendRoundSummaryNote(result, ts);
-            // A247——总结自动出声（外观配置启用时；失败记 Log、不影响轮次）
+            string audioName = "";
             if (!result.StartsWith("ERR|", StringComparison.Ordinal))
             {
-                SpeakRoundSummary(result);
+                audioName = BuildSummaryAudioName(_catKey, ts);
+            }
+            _viewStore.AppendRoundSummaryNote(result, ts, audioName);
+            // A247——总结自动出声（外观配置启用时；失败记 Log、不影响轮次）；A265——音频名与块 payload 同源
+            if (audioName.Length > 0)
+            {
+                SpeakRoundSummary(result, audioName);
             }
         }
 
@@ -3259,10 +3264,15 @@ namespace CH4
             return text.Substring(0, max) + "...";
         }
         /// <summary>
+        /// 中间段合成序号——避免同毫秒同名（临时文件，拼接成功后删除）。
+        /// </summary>
+        private static int _summarySegmentSeq;
+        /// <summary>
         /// RoundSummary——总结文本自动出声：外观配置启用时后台合成并播放（不阻塞主线程；失败记 Log、不影响轮次）。
         /// </summary>
         /// <param name="text">总结文本（非 ERR| 的正常总结）</param>
-        private void SpeakRoundSummary(string text)
+        /// <param name="audioName">拼接后单文件名（与块 payload 同源，A265）</param>
+        private void SpeakRoundSummary(string text, string audioName)
         {
             Func<string, string[]> provider = SummaryAudioProvider;
             if (provider == null || text.Length == 0)
@@ -3281,7 +3291,7 @@ namespace CH4
             {
                 try
                 {
-                    RunSummarySpeak(catKey, displayName, voice, text);
+                    RunSummarySpeak(catKey, displayName, voice, text, audioName);
                 }
                 catch (Exception ex)
                 {
@@ -3290,10 +3300,10 @@ namespace CH4
             });
         }
         /// <summary>
-        /// 总结播报产物路径——配置 py.service.kokoro.out_dir 下按时间戳命名（未配置返回空串，不猜目录）。
+        /// 总结音频产物目录——配置 py.service.kokoro.out_dir（未配置返回空串，不猜目录；缺失则创建）。
         /// </summary>
-        /// <returns>WAV 全路径；未配置空串</returns>
-        private static string BuildSummaryAudioPath()
+        /// <returns>目录全路径；未配置空串</returns>
+        private static string ResolveSummaryAudioDir()
         {
             ConfigStore cfg = null;
             string dir = "";
@@ -3316,7 +3326,44 @@ namespace CH4
             {
                 return "";
             }
-            return System.IO.Path.Combine(dir, "summary_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".wav");
+            return dir;
+        }
+        /// <summary>
+        /// 总结音频单文件名（A265）——按轮次时间戳 + 猫 key 派生：块先落盘、合成在后台，名字必须可预算（视图层条目不改写）。
+        /// </summary>
+        /// <param name="catKey">猫 key</param>
+        /// <param name="ts">轮末时间戳（毫秒）</param>
+        /// <returns>文件名（不含目录）</returns>
+        private static string BuildSummaryAudioName(string catKey, long ts)
+        {
+            string stamp = DateTimeOffset.FromUnixTimeMilliseconds(ts).LocalDateTime.ToString("yyyyMMdd_HHmmss_fff");
+            return "summary_" + stamp + "_" + SafeNameSegment(catKey) + ".wav";
+        }
+        /// <summary>
+        /// 文件名片段清洗——只留字母数字与下划线/连字符（猫 key 进文件名，禁路径分隔符与非法字符）。
+        /// </summary>
+        /// <param name="raw">原始片段</param>
+        /// <returns>安全片段（无可用字符 = "cat"）</returns>
+        private static string SafeNameSegment(string raw)
+        {
+            if (raw == null || raw.Length == 0)
+            {
+                return "cat";
+            }
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < raw.Length; i = i + 1)
+            {
+                char c = raw[i];
+                if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '-')
+                {
+                    sb.Append(c);
+                }
+            }
+            if (sb.Length == 0)
+            {
+                return "cat";
+            }
+            return sb.ToString();
         }
     }
 }
