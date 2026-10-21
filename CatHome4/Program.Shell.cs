@@ -588,7 +588,7 @@ namespace CH4
             /// <returns>地址或空串</returns>
             private static string ResolveMajorUrl()
             {
-                int port = AdminService.MajorPort;
+                int port = CatHostService.MajorPort;
                 if (port <= 0)
                 {
                     return "";

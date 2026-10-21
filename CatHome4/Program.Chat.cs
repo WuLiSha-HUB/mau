@@ -40,8 +40,8 @@ namespace CH4
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             List<InjectFileResult> fileResults = new List<InjectFileResult>();
             // [段0] 基础角色段——全局模板 baseRole（空=无基础角色行；模板缺失回退内置文案——行为不倒退）
-            AdminService.CatDefaultCfgData tpl = AdminService.LoadCatDefaultCfg();
-            string baseRole = AdminService.FallbackBaseRole;
+            CatHostService.CatDefaultCfgData tpl = CatHostService.LoadCatDefaultCfg();
+            string baseRole = CatHostService.FallbackBaseRole;
             if (tpl != null && tpl.BaseRole != null)
             {
                 baseRole = tpl.BaseRole.Trim();

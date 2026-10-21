@@ -62,7 +62,7 @@ namespace CH4
             {
                 AppendGateBlocker(sb, "OA 在途（待认领 " + oaView.OpenCount.ToString() + " / 执行中 " + oaView.WorkCount.ToString() + "）");
             }
-            if (AdminService.AnyViewPending())
+            if (CatHostService.AnyViewPending())
             {
                 AppendGateBlocker(sb, "视图推送仍有待推内容");
             }
@@ -412,7 +412,7 @@ namespace CH4
                     relayDead = true;
                     break;
                 }
-                AdminService.PumpAllHosts();
+                CatHostService.PumpAllHosts();
             }
             if (relayDead)
             {
@@ -707,7 +707,7 @@ namespace CH4
         {
             // A206——SSE 收尾：先推最后一帧，再等各连接队列排空（视图帧「入队 ≠ 写出」——
             // Environment.Exit 直接终止进程会丢弃在途帧，前端停在半句；判例 2026-10-06 重启现场）
-            AdminService.FlushAllHosts(800);
+            CatHostService.FlushAllHosts(800);
             // A33——转发态全量快照兜底（T4）：稳态虽已「变更即落盘」，此处再覆写一次（覆盖收尾窗口内尚未落盘的状态变更）
             CatHome4.QQ.QQBotService.SaveForwardState();
             // 观测收尾——四文件 flush（与 Main finally 同一路径）

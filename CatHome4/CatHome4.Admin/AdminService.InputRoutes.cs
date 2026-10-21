@@ -6,6 +6,8 @@ using CatHome4.Http;
 using Mau.Providers;
 using CH4;
 
+using static CatHome4.Admin.CatHostService;
+
 namespace CatHome4.Admin
 {
     /// <summary>
@@ -205,7 +207,7 @@ namespace CatHome4.Admin
         /// </summary>
         /// <param name="cat">猫实体</param>
         /// <returns>目标选择器</returns>
-        private static InputTarget CatInputTarget(CatEntry cat)
+        internal static InputTarget CatInputTarget(CatEntry cat)
         {
             InputTarget target = new InputTarget();
             target.Session = cat.Session;

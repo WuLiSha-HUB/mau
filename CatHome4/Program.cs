@@ -73,14 +73,14 @@ namespace CH4
             /// <returns>绑定目标列表（空=未绑定）</returns>
             public List<QqTarget> CollectByBot(Guid qqBotId)
             {
-                return AdminService.CollectQqTargets(qqBotId);
+                return CatHostService.CollectQqTargets(qqBotId);
             }
 
             /// <summary>收集所有绑定 qqbot 的猫——委托到 Program.CollectAllQqTargets</summary>
             /// <returns>全部绑定目标</returns>
             public List<QqTarget> CollectAll()
             {
-                return AdminService.CollectAllQqTargets();
+                return CatHostService.CollectAllQqTargets();
             }
         }
 
@@ -317,7 +317,7 @@ namespace CH4
             try
             {
                 bool followDefault = true;
-                CH_LlmApiConfig cfg = AdminService.ResolveEffectiveApiConfig(catKey, out followDefault);
+                CH_LlmApiConfig cfg = CatHostService.ResolveEffectiveApiConfig(catKey, out followDefault);
                 if (cfg != null)
                 {
                     // 端点摘要——主机（去协议与路径；端点非私密——key 在 secrets 面）
@@ -345,7 +345,7 @@ namespace CH4
             info["llm"] = llmBlock;
             // [段4] endpoint——本地端点位置（本猫对话页 + 主管理面板；端口未监听 = 空串）
             Dictionary<string, object> endpointBlock = new Dictionary<string, object>();
-            int chatPort = AdminService.ResolveCatPort(catKey);
+            int chatPort = CatHostService.ResolveCatPort(catKey);
             endpointBlock["chat"] = chatPort > 0 ? "http://127.0.0.1:" + chatPort.ToString() : "";
             int panelPort = 0;
             if (_httpHost != null)
@@ -358,7 +358,7 @@ namespace CH4
             List<Dictionary<string, object>> rootList = new List<Dictionary<string, object>>();
             if (catKey.Length > 0)
             {
-                WorkspaceConfig.RootEntry[] entries = AdminService.ResolveCatRootEntries(catKey);
+                WorkspaceConfig.RootEntry[] entries = CatHostService.ResolveCatRootEntries(catKey);
                 for (int i = 0; i < entries.Length; i = i + 1)
                 {
                     Dictionary<string, object> item = new Dictionary<string, object>();
@@ -380,7 +380,7 @@ namespace CH4
             }
             info["roots"] = rootList;
             // [段6] tokens——前文长度（请求级实时值优先，未发起请求则回落最近一轮轮末落盘值——「看别猫」场景 idle 猫也有可读值）+ 最近前文变动时刻（Unix 毫秒；展示层格式化）
-            ChatSession session = AdminService.FindCatSession(catKey);
+            ChatSession session = CatHostService.FindCatSession(catKey);
             long ctxLen = 0;
             long lastChangeAt = 0;
             if (session != null)
@@ -399,7 +399,7 @@ namespace CH4
                 info["packs"] = packList;
             }
             // [段8] qqbot——渠道说明（未接入 = 不输出该键）
-            string qqbotShow = AdminService.BuildCatQqBotInfo(catKey);
+            string qqbotShow = CatHostService.BuildCatQqBotInfo(catKey);
             if (qqbotShow.Length > 0)
             {
                 Dictionary<string, object> qqbotBlock = new Dictionary<string, object>();
@@ -460,7 +460,7 @@ namespace CH4
             if (session != null)
             {
                 string[] declaredNames = session.DeclaredToolNames;
-                string[] authorizedNames = AdminService.ResolveCatAuthorizedToolNames(catKey);
+                string[] authorizedNames = CatHostService.ResolveCatAuthorizedToolNames(catKey);
                 List<string> driftAdded = new List<string>();
                 List<string> driftRemoved = new List<string>();
                 for (int i = 0; i < authorizedNames.Length; i = i + 1)
@@ -534,7 +534,7 @@ namespace CH4
                     timebackAny = true;
                 }
             }
-            string timebackDir = AdminService.ResolveTimebackArchiveDir(catKey);
+            string timebackDir = CatHostService.ResolveTimebackArchiveDir(catKey);
             if (timebackDir.Length > 0)
             {
                 TimebackArchive timebackArchive = new TimebackArchive(timebackDir);
@@ -562,7 +562,7 @@ namespace CH4
             {
                 info["timeback"] = timebackBlock;
             }
-            return JsonSerializer.Serialize(info, AdminService.InfoJsonOptions);
+            return JsonSerializer.Serialize(info, CatHostService.InfoJsonOptions);
         }
         /// <summary>
         /// timeback 归档行摘要——info timeback.recent 条目（只取观测字段；findings 全文不进 info）。

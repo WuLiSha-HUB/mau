@@ -7,19 +7,20 @@ using Mau.Runtime;
 using CatHome4.Http;
 using Mau.Providers;
 using CH4;
+using static CatHome4.Admin.AdminService;
 
 namespace CatHome4.Admin
 {
     /// <summary>
-    /// Program 多猫持久化面分部——CatEntry/CatCfgData 实体 + cat.cfg 读写与文件清理（P9.3b 拆分自 Program.Cats.cs）。
+    /// 猫宿主管理域持久化分部（A285：自 AdminService 抽出）——CatEntry/CatCfgData 实体 + cat.cfg 读写与文件清理（P9.3b 拆分自 Program.Cats.cs）。
     /// 线程模型：处理函数仅主线程调用（HTTP 线程经 P9.3c PumpCatQueues 入队泵消费）。
     /// </summary>
-    internal static partial class AdminService
+    internal static partial class CatHostService
     {
         /// <summary>
         /// 猫实体——注册表条目（会话 + 外观层 + 持久化态）。
         /// </summary>
-        private sealed class CatEntry
+        internal sealed class CatEntry
         {
             /// <summary>会话唯一 ID——创建时间戳注入（cat.cfg 持久化）</summary>
             public string Id;
@@ -216,7 +217,7 @@ namespace CatHome4.Admin
         /// 全局默认模板原子写——ConfigStore.AtomicWrite（与 cat.cfg 同源）。
         /// </summary>
         /// <param name="data">模板数据</param>
-        private static void SaveCatDefaultCfg(CatDefaultCfgData data)
+        internal static void SaveCatDefaultCfg(CatDefaultCfgData data)
         {
             var payload = new
             {
@@ -243,7 +244,7 @@ namespace CatHome4.Admin
         /// </summary>
         /// <param name="path">候选路径</param>
         /// <returns>合法 true</returns>
-        private static bool IsValidInjectPath(string path)
+        internal static bool IsValidInjectPath(string path)
         {
             if (path == null || path.Length == 0)
             {
@@ -410,7 +411,7 @@ namespace CatHome4.Admin
         /// <param name="obj">JSON 对象</param>
         /// <param name="prop">属性名</param>
         /// <returns>属性值</returns>
-        private static bool GetBoolProp(JsonElement obj, string prop)
+        internal static bool GetBoolProp(JsonElement obj, string prop)
         {
             JsonElement value;
             if (obj.TryGetProperty(prop, out value) && value.ValueKind == JsonValueKind.True)
@@ -446,7 +447,7 @@ namespace CatHome4.Admin
         /// <param name="obj">JSON 对象</param>
         /// <param name="prop">属性名</param>
         /// <returns>字符串数组；缺字段空数组</returns>
-        private static string[] GetStringArrayProp(JsonElement obj, string prop)
+        internal static string[] GetStringArrayProp(JsonElement obj, string prop)
         {
             JsonElement value;
             if (obj.TryGetProperty(prop, out value) && value.ValueKind == JsonValueKind.Array)
@@ -467,6 +468,228 @@ namespace CatHome4.Admin
                 return list.ToArray();
             }
             return new string[0];
+        }
+
+        /// <summary>
+        /// cat.cfg 原子写——按配置数据落盘（M3 端点写面；与 SaveCatCfg(CatEntry) 同源；A285 自 Handlers 迁入）。
+        /// </summary>
+        /// <param name="id">会话 ID（majordomo=默认猫）</param>
+        /// <param name="data">配置数据（用户配置面——运行态 running/port 不在此落盘）</param>
+        internal static void SaveCatCfgData(string id, CatCfgData data)
+        {
+            string dir = Path.Combine(_dataRoot, "Data", "sessions", id);
+            string path = Path.Combine(dir, "cat.cfg");
+            var payload = new
+            {
+                id = data.Id,
+                displayName = data.DisplayName,
+                type = data.Type,
+                apiConfigId = data.ApiConfigId,
+                persona = data.Persona,
+                // M2c 写时校验——序列化前比对内置清单过滤非法名（外部损坏防御：持久化面只落合法名）
+                toolNames = ValidateToolNames(data.ToolNames),
+                injectList = data.InjectList,
+                qqbotId = data.QqBotId,
+                qqbotEnable = data.QqBotEnable,
+                enabledRoots = data.EnabledRoots,
+                packs = data.Packs,
+                dbLibs = data.DbLibs,
+                userInjectIdleOnly = data.UserInjectIdleOnly,
+                appearanceId = data.AppearanceId,
+                reasoningEffort = data.ReasoningEffort
+            };
+            try
+            {
+                ConfigStore.AtomicWrite(path, JsonUtil.Serialize(payload));
+            }
+            catch (Exception ex)
+            {
+                LogStore.Add("CatHome4", 2, "cat.cfg 写入失败：" + ex.Message, "CHAT");
+            }
+        }
+
+        /// <summary>
+        /// catcfg.apply 执行体——主线程泵消费：重读 cat.cfg → 更新注册表字段 + 重裁剪声明面 + apiConfigId 变更 SwapLlmRuntime（A285 自 Handlers 迁入）。
+        /// </summary>
+        /// <param name="key">猫寻址键（majordomo=默认猫）</param>
+        /// <returns>结果文本</returns>
+        internal static string HandleCatCfgApply(string key)
+        {
+            CatCfgData cfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", key, "cat.cfg"));
+            if (cfg == null)
+            {
+                return "catcfg.apply | cat.cfg 不存在: " + key;
+            }
+            string persona = "";
+            if (cfg.Persona != null)
+            {
+                persona = cfg.Persona;
+            }
+            string[] injectList = cfg.InjectList;
+            if (injectList == null)
+            {
+                injectList = new string[0];
+            }
+            string toolNames = "";
+            if (cfg.ToolNames != null)
+            {
+                toolNames = cfg.ToolNames;
+            }
+            bool includePrivileged = IsDefaultCatKey(key);
+            ToolSpec[] specs = FilterToolSpecs(ResolveToolNames(toolNames, includePrivileged), includePrivileged);
+            // M4e 猫级白名单——配置变更后重建猫文件系统（启用根子集）
+            ApplyCatRoots(key);
+            if (key == "majordomo")
+            {
+                // 默认猫——静态面更新（session.new 重注入消费）
+                _chatBridge.DefaultPersona = persona;
+                _chatBridge.DefaultInjectList = injectList;
+                _chatBridge.DefaultToolSpecs = specs;
+                // 授权面原始串——实时解析输入（改配置即改内存；design-ch4-tools §三·十一）
+                _chatBridge.DefaultToolNames = toolNames;
+                _chatBridge.DefaultQqBotId = ResolveQqBotId(cfg);
+                _chatBridge.DefaultQqBotEnable = cfg.QqBotEnable;
+                _chatBridge.DefaultSession.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
+                _chatBridge.DefaultSession.SetRoundSummary(ResolveEffectiveRoundSummary("majordomo"));
+                _chatBridge.DefaultSession.SetPetKind(ResolveEffectivePetKind("majordomo"));
+                // A230 显示名立即刷新（改配置即改内存；空值保持原值）
+                if (cfg.DisplayName != null && cfg.DisplayName.Length > 0)
+                {
+                    _chatBridge.DefaultSession.SetDisplayName(cfg.DisplayName);
+                }
+                Guid newApi = ResolveApiConfigId(cfg);
+                string newEffort = NormalizeReasoningEffort(cfg.ReasoningEffort);
+                if (_defaultApiConfigId != newApi || _defaultReasoningEffort != newEffort)
+                {
+                    _defaultApiConfigId = newApi;
+                    _defaultReasoningEffort = newEffort;
+                    _chatBridge.DefaultSession.SwapLlmRuntime(new DeepSeekLlmRuntime(_apiStore, newApi, _globalConfig, newEffort));
+                    LogStore.Add("CatHome4", 1, "majordomo 配置生效：LLM 端点 " + newApi.ToString("D") + "，思考强度 " + (newEffort.Length > 0 ? newEffort : "跟随全局"), "CONFIG");
+                }
+                return "catcfg.apply | majordomo | 已生效（前文项新会话生效）";
+            }
+            CatEntry cat = FindCat(key);
+            if (cat == null)
+            {
+                return "catcfg.apply | 猫不存在: " + key;
+            }
+            cat.Persona = persona;
+            // A230 显示名立即刷新（改配置即改内存；空值保持原值）
+            if (cfg.DisplayName != null && cfg.DisplayName.Length > 0)
+            {
+                cat.DisplayName = cfg.DisplayName;
+                cat.Session.SetDisplayName(cfg.DisplayName);
+            }
+            cat.Type = cfg.Type == null ? "" : cfg.Type;
+            cat.InjectList = injectList;
+            cat.ToolNames = toolNames;
+            cat.ToolSpecs = specs;
+            cat.QqBotId = ResolveQqBotId(cfg);
+            cat.QqBotEnable = cfg.QqBotEnable;
+            cat.UserInjectIdleOnly = cfg.UserInjectIdleOnly;
+            cat.Session.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
+            cat.AppearanceId = ResolveAppearanceId(cfg);
+            cat.RoundSummary = ResolveEffectiveRoundSummary(key);
+            cat.Session.SetRoundSummary(cat.RoundSummary);
+            cat.Session.SetPetKind(ResolveEffectivePetKind(key));
+            // M4e 猫级白名单——运行时猫文件系统已在上方 ApplyCatRoots 重建（含本分支）
+            Guid newApiId = ResolveApiConfigId(cfg);
+            string newCatEffort = NormalizeReasoningEffort(cfg.ReasoningEffort);
+            if (cat.ApiConfigId != newApiId || cat.ReasoningEffort != newCatEffort)
+            {
+                cat.ApiConfigId = newApiId;
+                cat.ReasoningEffort = newCatEffort;
+                CH_LlmApiConfig apiConfig = new CH_LlmApiConfig();
+                if (_apiStore != null)
+                {
+                    _apiStore.TryGet(newApiId, out apiConfig);
+                }
+                cat.ApiConfig = apiConfig;
+                cat.Session.SwapLlmRuntime(new DeepSeekLlmRuntime(_apiStore, newApiId, _globalConfig, newCatEffort));
+                LogStore.Add("CatHome4", 1, "猫「" + cat.DisplayName + "」配置生效：LLM 端点 " + newApiId.ToString("D") + "，思考强度 " + (newCatEffort.Length > 0 ? newCatEffort : "跟随全局"), "CONFIG");
+            }
+            return "catcfg.apply | " + cat.DisplayName + " | 已生效（前文项新会话生效）";
+        }
+
+        /// <summary>
+        /// 解析 cat.cfg 的 qqbot 配置身份——缺省 Guid.Empty=未绑定（A285 自 Handlers 迁入）。
+        /// </summary>
+        /// <param name="cfg">配置数据</param>
+        /// <returns>qqbot 配置身份</returns>
+        private static Guid ResolveQqBotId(CatCfgData cfg)
+        {
+            Guid id = Guid.Empty;
+            if (cfg != null && cfg.QqBotId != null && cfg.QqBotId.Length > 0)
+            {
+                Guid parsed;
+                if (Guid.TryParse(cfg.QqBotId, out parsed) && parsed != Guid.Empty)
+                {
+                    id = parsed;
+                }
+            }
+            return id;
+        }
+
+        /// <summary>
+        /// 解析 cat.cfg 的 API 配置身份——缺省 Guid.Empty=默认端点语义（Cat 可选配置；未配置走默认端点；A285 自 Handlers 迁入）。
+        /// </summary>
+        /// <param name="cfg">配置数据</param>
+        /// <returns>API 配置身份</returns>
+        internal static Guid ResolveApiConfigId(CatCfgData cfg)
+        {
+            Guid id = Guid.Empty;
+            if (cfg != null && cfg.ApiConfigId != null && cfg.ApiConfigId.Length > 0)
+            {
+                Guid parsed;
+                if (Guid.TryParse(cfg.ApiConfigId, out parsed) && parsed != Guid.Empty)
+                {
+                    id = parsed;
+                }
+            }
+            return id;
+        }
+
+        /// <summary>
+        /// majordomo 默认猫 cat.cfg 补建——缺失时按全局默认模板创建（A285 自 Handlers 迁入）。
+        /// 已存在不覆盖——尊重用户已保存配置；模板缺失回退空默认（与运行时缺省回退语义一致）。
+        /// </summary>
+        internal static void EnsureMajordomoCfg()
+        {
+            string path = Path.Combine(_dataRoot, "Data", "sessions", "majordomo", "cat.cfg");
+            if (File.Exists(path))
+            {
+                return;
+            }
+
+            CatDefaultCfgData tpl = LoadCatDefaultCfg();
+            CatCfgData data = new CatCfgData();
+            data.Id = "majordomo";
+            data.DisplayName = "majordomo";
+            data.Running = false;
+            data.Port = 0;
+            data.ApiConfigId = "";
+            data.QqBotId = "";
+            data.QqBotEnable = false;
+            data.EnabledRoots = null;
+            if (tpl != null)
+            {
+                data.Persona = tpl.DefaultPersona != null ? tpl.DefaultPersona : "";
+                data.ToolNames = tpl.DefaultToolNames != null ? tpl.DefaultToolNames : "";
+                data.InjectList = tpl.DefaultInjectList != null ? tpl.DefaultInjectList : new string[0];
+            }
+            else
+            {
+                data.Persona = "";
+                data.ToolNames = "";
+                data.InjectList = new string[0];
+            }
+
+            if (tpl != null)
+            {
+                data.UserInjectIdleOnly = tpl.DefaultUserInjectIdleOnly;
+            }
+            SaveCatCfgData("majordomo", data);
+            LogStore.Add("CatHome4", 1, "majordomo cat.cfg 缺失——已按默认模板补建", "CONFIG");
         }
     }
 }

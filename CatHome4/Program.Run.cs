@@ -80,7 +80,7 @@ namespace CH4
                 }
                 LoopTiming.Accumulate("http", ElapsedMsSince(segTicks));
                 segTicks = Stopwatch.GetTimestamp();
-                AdminService.PumpAllHosts();
+                CatHostService.PumpAllHosts();
                 LoopTiming.Accumulate("hosts", ElapsedMsSince(segTicks));
                 segTicks = Stopwatch.GetTimestamp();
                 _chatBridge.PumpSessions();
@@ -159,7 +159,7 @@ namespace CH4
                 {
                     _httpHost.PumpMainThread();
                 }
-                AdminService.PumpAllHosts();
+                CatHostService.PumpAllHosts();
                 _chatBridge.PumpSessions();
                 AdminService.PumpInputQueue();
                 QQBotService.Tick();

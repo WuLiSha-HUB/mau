@@ -11,18 +11,23 @@ using CatHome4.QQ;
 using CatHome4.Contracts;
 using Mau.Providers;
 using CH4;
+using static CatHome4.Admin.AdminService;
 
 namespace CatHome4.Admin
 {
     /// <summary>
-    /// Program 多猫管理面分部——CatEntry 注册表 + PortAllocator + cat.* 指令族 + cat.cfg 持久化（P9.3b）。
+    /// 猫宿主管理域（A285：自 AdminService 抽出）——CatEntry 注册表 + PortAllocator + cat.* 指令族 + cat.cfg 持久化（P9.3b）。
     /// 两态：静默（持久化未运行）/ 启动（运行 + 端口监听）；删除 = 本地销毁 + 目录删除。
     /// 线程模型：处理函数仅主线程调用（HTTP 线程经 P9.3c PumpCatQueues 入队泵消费）。
     /// </summary>
-    internal static partial class AdminService
+    internal static partial class CatHostService
     {
-        /// <summary>数据根——Bootstrap 赋值（P9.3c 静态化条目提前落地一行；cat.cfg/前文路径构造依赖）</summary>
-        internal static string _dataRoot;
+        /// <summary>端口段——经 AdminService 注入面转发（同名单字段遮蔽 using static 导入，消除与类型名的二义）。</summary>
+        private static PortBand PortBand
+        {
+            get { return AdminService.PortBand; }
+        }
+
         /// <summary>
         /// info 系返回体序列化选项——缩进 + 中文直显（LLM 可读优先）。
         /// 消费面：info 内置工具（Program.BuildEnvInfo）与 cat.info（本类 HandleCatInfo）——单一定义两处共用。
@@ -1333,7 +1338,7 @@ namespace CatHome4.Admin
                 ChatSession session = new ChatSession(id, displayName, context, store, catRuntime, _oa, sessionTools, ExecuteTool, viewStore);
                 // M4e 猫级白名单——多猫启用根（cat.cfg enabledRoots；缺省全量）+ 工具执行猫上下文
                 session.SetCatKey(id);
-                AdminService.ApplyCatRoots(id);
+                ApplyCatRoots(id);
                 session.AttachEnvInfo(() => BuildEnvInfoProvider());
                 session.AttachRoundNotify(NotifyBalloon);
                 session.SetUserInjectIdleOnly(userInjectIdleOnly);
@@ -1802,7 +1807,7 @@ namespace CatHome4.Admin
         /// </summary>
         /// <param name="key">寻址键</param>
         /// <returns>猫实体；未找到/歧义 null</returns>
-        private static CatEntry FindCat(string key)
+        internal static CatEntry FindCat(string key)
         {
             if (key == null || key.Length == 0)
             {

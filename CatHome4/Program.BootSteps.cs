@@ -80,7 +80,7 @@ namespace CH4
         internal SessionStore ChatStore = null;
 
         /// <summary>默认猫配置（S5 产物；缺失为 null）</summary>
-        internal AdminService.CatCfgData DefaultCfg = null;
+        internal CatHostService.CatCfgData DefaultCfg = null;
 
         /// <summary>默认猫 API 配置引用（S5 产物）</summary>
         internal Guid DefaultApiConfigId = Guid.Empty;
@@ -560,9 +560,9 @@ namespace CH4
             // 加载包数据面接线——pack 内置工具（池定义与猫挂载解析归 Admin 域；Core 零配置面依赖）
             ChatSession.PackPayloadProvider = AdminService.BuildPackPayload;
             // 授权面实时查询接线——工具调用判定按当前 cat.cfg 名单实时解析（design-ch4-tools §三·十一：注入面=提示，授权面=真相）
-            ChatSession.AuthorizedToolNamesProvider = AdminService.ResolveCatAuthorizedToolNames;
+            ChatSession.AuthorizedToolNamesProvider = CatHostService.ResolveCatAuthorizedToolNames;
             // 轮末总结 LLM 配置接线——catKey → [endpoint, apikey, model]（LLMSimpleRequest 服务工单参数；roundsummary）
-            ChatSession.RoundSummaryLlmProvider = AdminService.ResolveRoundSummaryLlm;
+            ChatSession.RoundSummaryLlmProvider = CatHostService.ResolveRoundSummaryLlm;
             // 轮末总结播报接线——catKey → [启用标志, 音色槽位值]（A247：总结自动出声）
             ChatSession.SummaryAudioProvider = AdminService.ResolveSummaryAudio;
             // 延迟队列落盘接线——Data/runtime/delays.json（跨宿主重启保留；design-ch4-delay §七）
@@ -592,11 +592,11 @@ namespace CH4
                     });
             }
             // timeback 归档落点接线——Data/runtime/timeback（全局计数 + 每次回收一个作用域文件；A104）
-            ChatSession.TimebackArchiveDirProvider = AdminService.ResolveTimebackArchiveDir;
+            ChatSession.TimebackArchiveDirProvider = CatHostService.ResolveTimebackArchiveDir;
             // A201 会话元数据落点接线——Data/sessions/<id>/<id>.session.json（会话自身参数持久化；design-ch4-protocol §十三）
-            ChatSession.SessionMetaPathProvider = AdminService.ResolveSessionMetaPath;
+            ChatSession.SessionMetaPathProvider = CatHostService.ResolveSessionMetaPath;
             // A201 显示名解析接线——session.new 时按 cat.cfg 现值刷新（新会话取最新）
-            ChatSession.DisplayNameProvider = AdminService.ResolveCatDisplayName;
+            ChatSession.DisplayNameProvider = CatHostService.ResolveCatDisplayName;
             // timeback 归档现场记录接线——回收时采集本猫 info 快照（归档文件第二行）
             ChatSession.TimebackInfoProvider = BuildEnvInfo;
             AdminService.NotifyBalloon = Program.NotifyBalloon;
@@ -622,8 +622,8 @@ namespace CH4
             LogStore.Add("CatHome4", 1, poolSummary, "CONFIG");
 
             // 默认猫 cat.cfg 补建——缺失时按全局默认模板创建（新用户无 cfg 必然态；运行时缺省回退 → 启动落盘）
-            AdminService.EnsureMajordomoCfg();
-            AdminService.CatCfgData defaultCfg = AdminService.LoadCatCfg(Path.Combine(dataRoot, "Data", "sessions", "majordomo", "cat.cfg"));
+            CatHostService.EnsureMajordomoCfg();
+            CatHostService.CatCfgData defaultCfg = CatHostService.LoadCatCfg(Path.Combine(dataRoot, "Data", "sessions", "majordomo", "cat.cfg"));
             _chatBridge.DefaultPersona = "";
             _chatBridge.DefaultInjectList = new string[0];
             string defaultToolNames = "";
@@ -707,7 +707,7 @@ namespace CH4
             // 🔴 缺这两句 = 重启后 majordomo 外观不生效、只有点保存（catcfg.apply）才应用（判例 2026-10-20）
             _chatBridge.DefaultSession.SetRoundSummary(AdminService.ResolveEffectiveRoundSummary("majordomo"));
             _chatBridge.DefaultSession.SetPetKind(AdminService.ResolveEffectivePetKind("majordomo"));
-            AdminService.ApplyCatRoots("majordomo");
+            CatHostService.ApplyCatRoots("majordomo");
             _chatBridge.DefaultSession.AttachEnvInfo(() => BuildEnvInfo());
             _chatBridge.DefaultSession.AttachRoundNotify(Program.NotifyBalloon);
             _chatBridge.RegisterSession(_chatBridge.DefaultSession);
@@ -823,7 +823,7 @@ namespace CH4
                 Dispatcher = DispatchCommand,
                 EnvelopeBuilder = AdminService.MakeChatEnvelopeBuilder(_chatBridge.DefaultSession),
                 FrameBuilder = ObserveService.BuildCompactFrameJson,
-                CatsBuilder = AdminService.BuildCatsJson,
+                CatsBuilder = CatHostService.BuildCatsJson,
                 PatchBuilder = ObserveService.BuildPatchJson,
                 ServeChatPage = false,
                 RouteRegistrar = AdminRoutes.Register,
@@ -835,10 +835,10 @@ namespace CH4
             int mainPort = 0;
             _httpHost = StartMainHostWithFallback(mainHostOptions, mainHostOptions.Port, out mainPort);
             // F2.2 majordomo 特殊会话——独立端口 serve chat.html + 强制自启（DefaultSession 事件推送绑独立端口 host）
-            AdminService.StartMajorHost();
+            CatHostService.StartMajorHost();
             if (_httpHost != null)
             {
-                Console.WriteLine("[CMD] HTTP 外观层就绪: http://127.0.0.1:" + _httpHost.Port.ToString() + " | Majordomo 对话: http://127.0.0.1:" + AdminService.MajorPort.ToString());
+                Console.WriteLine("[CMD] HTTP 外观层就绪: http://127.0.0.1:" + _httpHost.Port.ToString() + " | Majordomo 对话: http://127.0.0.1:" + CatHostService.MajorPort.ToString());
             }
             else
             {
@@ -891,7 +891,7 @@ namespace CH4
                 return;
             }
             // [段6b] 启动扫描——sessions/*/cat.cfg 中 running 猫拉起（主 HTTP 就位后——每猫 HttpHost 独立实例）
-            AdminService.LoadCatsOnBoot();
+            CatHostService.LoadCatsOnBoot();
             // [段6c] 前端测试服务拉起——开发流程（改前端 → 跑测试 → 刷新生效）；未监听则启动 node server.js
             EnsureFrontendTestService();
             // R2.3 QQ 管理器启动——扫描 Bot 池建立全部连接（附属功能组件；Bot 池空 = 零连接静默）

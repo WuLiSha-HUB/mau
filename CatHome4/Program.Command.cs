@@ -7,7 +7,7 @@ namespace CH4
     /// <summary>
     /// Program 宿主指令服务分部——工具面触达内核指令族的桥（IHostCommandService 实现 + 统一执行出口）。
     /// 数据流单向：工具组 Flow → host.command 积木 → IHostCommandService → 内核指令族 → 回执（无回流）。
-    /// 单一内核：CLI（--run）/ HTTP 面板（/api/v1/command）/ 工具桥三面落同一执行体 AdminService.HandleCatCommand。
+    /// 单一内核：CLI（--run）/ HTTP 面板（/api/v1/command）/ 工具桥三面落同一执行体 CatHostService.HandleCatCommand。
     /// 权限分层：本桥不判权限——可见性由会话工具面承担（工具定义积木组级 privileged 声明 → ToolRegistry 标记）。
     /// 线程契约：指令族触碰注册表与会话面（ThreadGuard 守卫）——主线程直执；非主线程入 _catQueue 泵。
     /// </summary>
@@ -54,7 +54,7 @@ namespace CH4
                 return "ERR|HOST_RESTARTING|宿主重启中——指令未受理: " + trimmed;
             }
             // [段4] 内核执行——唯一执行体（与 CLI / HTTP 主线程分支同一落点）
-            return AdminService.HandleCatCommand(trimmed);
+            return CatHostService.HandleCatCommand(trimmed);
         }
 
         /// <summary>

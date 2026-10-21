@@ -76,7 +76,7 @@ namespace CatHome4.Core.Tests
             {
                 string cfgPath = Path.Combine(tempRoot, "cat.cfg");
                 File.WriteAllText(cfgPath, "{\"id\":\"t1\",\"displayName\":\"测试\",\"dbLibs\":[\"ccbp\",\"notes\"]}");
-                AdminService.CatCfgData cfg = AdminService.LoadCatCfg(cfgPath);
+                CatHostService.CatCfgData cfg = CatHostService.LoadCatCfg(cfgPath);
                 Assert.NotNull(cfg);
                 Assert.Equal(new string[] { "ccbp", "notes" }, cfg.DbLibs);
             }
@@ -97,7 +97,7 @@ namespace CatHome4.Core.Tests
             {
                 string cfgPath = Path.Combine(tempRoot, "cat.cfg");
                 File.WriteAllText(cfgPath, "{\"id\":\"t1\",\"displayName\":\"测试\"}");
-                AdminService.CatCfgData cfg = AdminService.LoadCatCfg(cfgPath);
+                CatHostService.CatCfgData cfg = CatHostService.LoadCatCfg(cfgPath);
                 Assert.NotNull(cfg);
                 Assert.Empty(cfg.DbLibs);
             }

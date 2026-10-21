@@ -14,6 +14,9 @@ namespace CatHome4.Admin
     /// </summary>
     internal static partial class AdminService
     {
+        /// <summary>数据根——Bootstrap 注入（Admin 全域共用；猫域经 using static 引用同一份，不另存副本）。</summary>
+        internal static string _dataRoot;
+
         // [段1] 依赖注入字段——入口壳 Configure 一次性设置（命名与入口壳原静态成员一致——引用零改动）
         /// <summary>会话协调桥——默认猫/多猫会话注册（Core 域；入口壳注入）</summary>
         public static ChatBridge _chatBridge;
