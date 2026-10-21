@@ -826,7 +826,7 @@ namespace CH4
                 CatsBuilder = AdminService.BuildCatsJson,
                 PatchBuilder = ObserveService.BuildPatchJson,
                 ServeChatPage = false,
-                RouteRegistrar = AdminService.RegisterAdminRoutes,
+                RouteRegistrar = AdminRoutes.Register,
                 DepsRefresh = DependencyProbe.Refresh,
                 LlmProbe = LlmEndpointProbe.ProbeAsync,
                 HtmlRootProvider = new HtmlRootProvider()

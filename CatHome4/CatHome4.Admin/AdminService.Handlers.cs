@@ -14,7 +14,7 @@ namespace CatHome4.Admin
 {
     /// <summary>
     /// Program 管理端点面分部——M3 前后端配置管理（LLM API 池 CRUD + 每猫配置读写）。
-    /// 端点处理器经 HttpHost.BuildApp 主端口注册（catsBuilder 非空——管理面收敛主端口）。
+    /// 端点装配表见 AdminRoutes（A284——装配与执行分离）；处理器经 HttpHost.BuildApp 主端口注册（catsBuilder 非空——管理面收敛主端口）。
     /// 线程模型：读端点 HTTP 线程直读（BuildCatsJson 同先例）；写端点落盘 HTTP 线程 + 运行时生效入队主线程泵（catcfg.apply 指令）。
     /// </summary>
     internal static partial class AdminService
@@ -74,57 +74,6 @@ namespace CatHome4.Admin
                 norm = "high";
             }
             return norm;
-        }
-
-        /// <summary>
-        /// 管理路由注册——S2 解耦：入口壳经 IHttpRouteSink 向 Http 域注册管理端点（主端口仅一次）。
-        /// 归属：Admin 域——llm-apis/qqbot-apis/cat-config/cat-default/workspace 管理面（S4 随 Admin 域迁 CatHome4.Admin）。
-        /// </summary>
-        /// <param name="sink">HTTP 路由注册面（HttpHost 实现）</param>
-        internal static void RegisterAdminRoutes(IHttpRouteSink sink)
-        {
-            // LLM API 池 CRUD——M3 管理面
-            sink.MapGet("/api/v1/llm-apis", (Delegate)HandleLlmApisGet);
-            sink.MapPost("/api/v1/llm-apis", (Delegate)HandleLlmApisPost);
-            sink.MapPost("/api/v1/llm-apis/edit", (Delegate)HandleLlmApisEdit);
-            sink.MapPost("/api/v1/llm-apis/delete", (Delegate)HandleLlmApisDelete);
-            sink.MapPost("/api/v1/llm-apis/default", (Delegate)HandleLlmApisDefault);
-            // QQ Bot 池 CRUD——R2.3 管理面
-            sink.MapGet("/api/v1/qqbot-apis", (Delegate)HandleQqBotApisGet);
-            sink.MapPost("/api/v1/qqbot-apis", (Delegate)HandleQqBotApisPost);
-            sink.MapPost("/api/v1/qqbot-apis/edit", (Delegate)HandleQqBotApisEdit);
-            sink.MapPost("/api/v1/qqbot-apis/delete", (Delegate)HandleQqBotApisDelete);
-            // 每猫配置读写——M3
-            sink.MapGet("/api/v1/cat-config", (Delegate)HandleCatConfigGet);
-            sink.MapPost("/api/v1/cat-config", (Delegate)HandleCatConfigPost);
-            // 新猫默认模板——全局配置管理面（M3d）
-            sink.MapGet("/api/v1/cat-default", (Delegate)HandleCatDefaultGet);
-            sink.MapPost("/api/v1/cat-default", (Delegate)HandleCatDefaultPost);
-            // 受控根编辑面——管理员面（M4d）
-            sink.MapGet("/api/v1/workspace", (Delegate)HandleWorkspaceGet);
-            sink.MapPost("/api/v1/workspace", (Delegate)HandleWorkspacePost);
-            // A244 外观配置池——全局池管理面（每猫 appearanceId 引用 + 唯一默认项）
-            sink.MapGet("/api/v1/appearance-apis", (Delegate)HandleAppearanceApisGet);
-            sink.MapPost("/api/v1/appearance-apis", (Delegate)HandleAppearanceApisPost);
-            sink.MapPost("/api/v1/appearance-apis/edit", (Delegate)HandleAppearanceApisEdit);
-            sink.MapPost("/api/v1/appearance-apis/delete", (Delegate)HandleAppearanceApisDelete);
-            sink.MapPost("/api/v1/appearance-apis/default", (Delegate)HandleAppearanceApisDefault);
-            // 加载包池——全局池管理面（R4 加载包）
-            sink.MapGet("/api/v1/packs", (Delegate)HandlePacksGet);
-            sink.MapPost("/api/v1/packs", (Delegate)HandlePacksPost);
-            sink.MapPost("/api/v1/packs/delete", (Delegate)HandlePacksDelete);
-            // 打开数据目录——前端按钮（explorer.exe 打开持久化 Data 目录——三级锚定解析）
-            sink.MapPost("/api/v1/open-data-dir", (Delegate)HandleOpenDataDir);
-            // A65 对话图片附件——上传 + 取图（主端口注册；每猫 / majordomo 对话页走 RegisterChatPageRoutes）
-            sink.MapPost("/api/v1/chat-images", (Delegate)HandleChatImagesUpload);
-            sink.MapGet("/api/v1/cache-image/{**file}", (Delegate)HandleCacheImageGet);
-            // A265 音频资产——轮末总结拼接音频取回（单独资产入口；与图片面分离）
-            sink.MapGet("/api/v1/audio/{**file}", (Delegate)HandleAudioGet);
-            // A269 数据库（Smriti）——库清单 / 新建库 / 条目查询 / 条目全文（写入走 db-* 工具面）
-            sink.MapGet("/api/v1/db/libs", (Delegate)HandleDbLibsGet);
-            sink.MapPost("/api/v1/db/libs", (Delegate)HandleDbLibsPost);
-            sink.MapGet("/api/v1/db/libs/{lib}/entries", (Delegate)HandleDbEntriesGet);
-            sink.MapGet("/api/v1/db/libs/{lib}/entries/{entryId}", (Delegate)HandleDbEntryGet);
         }
 
         /// <summary>
