@@ -50,7 +50,7 @@ namespace Mau.Bricks
                     result = "ERR|DB_NO_SERVICE|宿主未注入 DbService";
                     return false;
                 }
-                DbResult call = db.Delete(lib, title);
+                DbResult call = db.Delete(lib, title, JsonArgs.Get(argsJson, "catId"));
                 result = call.ToToolText("db-delete", lib);
                 return call.Ok;
             }
@@ -62,4 +62,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:0AEC64632A00D984DD98CED4530AF26E59CBCA6102ED4E3D28A1222814920079
+// #MAU_CHECKSUM:SHA256:5B85672B5B0D85077CABFE32A98A23288301CDD8F22EB102859A23BA947E26BE

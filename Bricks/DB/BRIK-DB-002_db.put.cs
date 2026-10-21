@@ -51,7 +51,7 @@ namespace Mau.Bricks
                     result = "ERR|DB_NO_SERVICE|宿主未注入 DbService";
                     return false;
                 }
-                DbResult call = db.Put(lib, title, body);
+                DbResult call = db.Put(lib, title, body, JsonArgs.Get(argsJson, "catId"));
                 result = call.ToToolText("db-put", lib);
                 return call.Ok;
             }
@@ -63,4 +63,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:BD4FA4B971185303DFE33696F7F0B0CA6F88B645C192F3EFF8F7E4B05530FB68
+// #MAU_CHECKSUM:SHA256:7D3788C6305C7DBFA7105D958EB32021CE73978969DAEC319CE38372B5770401

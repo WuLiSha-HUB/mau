@@ -1,6 +1,6 @@
 ﻿{
   "version": 3,
-  "generatedAt": "2026-10-20T14:30:10Z",
+  "generatedAt": "2026-10-21T04:27:59Z",
   "packages": ["Microsoft.CodeAnalysis.CSharp@4.11.0"],
   "bricks": [
     {"id":"BRIK-AUDIO-001","name":"audio.play","category":"AUDIO","path":"Audio/BRIK-AUDIO-001_audio.play.cs","dependencies":[],"packages":[],"status":"active","contract":{"implementation":"Mau.Bricks.AudioPlayBrick.Play","inputs":[{"name":"argsJson","type":"string"}],"outputs":[{"name":"result","type":"string"}]},"return":"Bool","duration":"Sync","thread":"main"},

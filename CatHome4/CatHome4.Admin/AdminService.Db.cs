@@ -27,7 +27,8 @@ namespace CatHome4.Admin
             {
                 return DbServiceUnavailable();
             }
-            DbResult result = service.ListLibs();
+            // 管理面：无猫上下文（空 catId = 全放）
+            DbResult result = service.ListLibs("");
             if (!result.Ok)
             {
                 return DbServiceFail(result);
@@ -76,7 +77,7 @@ namespace CatHome4.Admin
                     message = "请求体解析失败: " + ex.Message
                 });
             }
-            DbResult result = service.Create(libId);
+            DbResult result = service.Create(libId, "");
             if (!result.Ok)
             {
                 return DbServiceFail(result);
@@ -123,7 +124,7 @@ namespace CatHome4.Admin
                     });
                 }
             }
-            DbResult result = service.Query(lib, keyword, limit);
+            DbResult result = service.Query(lib, keyword, limit, "");
             if (!result.Ok)
             {
                 return DbServiceFail(result);
@@ -156,7 +157,7 @@ namespace CatHome4.Admin
             }
             string lib = ReadRouteValue(ctx, "lib");
             string entryId = ReadRouteValue(ctx, "entryId");
-            DbResult result = service.Get(lib, "id", entryId);
+            DbResult result = service.Get(lib, "id", entryId, "");
             if (!result.Ok)
             {
                 return DbServiceFail(result);
@@ -191,7 +192,8 @@ namespace CatHome4.Admin
             {
                 return list;
             }
-            DbResult result = service.ListLibs();
+            // 管理面：无猫上下文（空 catId = 全放）
+            DbResult result = service.ListLibs("");
             if (!result.Ok)
             {
                 return list;

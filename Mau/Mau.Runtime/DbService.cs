@@ -100,13 +100,19 @@ namespace Mau.Runtime
         /// 新建库——建目录 + meta.json + entries.jsonl 头行 + 注册表登记。
         /// </summary>
         /// <param name="libId">库名（小写字母 / 数字 / 短横线，2–32 位）</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行；库级授权判定见 DbAccessPolicy）</param>
         /// <returns>结果（载荷含库名与创建时刻）</returns>
-        public DbResult Create(string libId)
+        public DbResult Create(string libId, string catId)
         {
             string lib = NormalizeLibId(libId);
             if (!LibIdPattern.IsMatch(lib))
             {
                 return DbResult.Fail("BAD_ARGS", "库名不合法（小写字母 / 数字 / 短横线，2–32 位）: " + libId);
+            }
+            string? deny = DbAccessPolicy.DenyReason(catId, lib);
+            if (deny != null)
+            {
+                return DbResult.Fail("DB_LIB_DENIED", deny);
             }
             lock (_writeGate)
             {
@@ -150,8 +156,9 @@ namespace Mau.Runtime
         /// <param name="libId">库名</param>
         /// <param name="title">标题（≤50 字符，库内唯一）</param>
         /// <param name="body">正文（≤5000 字符）</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <returns>结果（载荷含 ID 与版本号）</returns>
-        public DbResult Put(string libId, string title, string body)
+        public DbResult Put(string libId, string title, string body, string catId)
         {
             string titleText = TrimText(title);
             string bodyText = body == null ? "" : body;
@@ -159,7 +166,7 @@ namespace Mau.Runtime
             {
                 List<DbEntry> all = new List<DbEntry>();
                 int badLines = 0;
-                DbResult? openFail = OpenLib(libId, all, ref badLines);
+                DbResult? openFail = OpenLib(catId, libId, all, ref badLines);
                 if (openFail != null)
                 {
                     return openFail;
@@ -205,8 +212,9 @@ namespace Mau.Runtime
         /// <param name="libId">库名</param>
         /// <param name="title">标题（定位键，完全匹配）</param>
         /// <param name="body">新正文（≤5000 字符）</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <returns>结果（载荷含 ID 与新版本号）</returns>
-        public DbResult Update(string libId, string title, string body)
+        public DbResult Update(string libId, string title, string body, string catId)
         {
             string titleText = TrimText(title);
             string bodyText = body == null ? "" : body;
@@ -214,7 +222,7 @@ namespace Mau.Runtime
             {
                 List<DbEntry> all = new List<DbEntry>();
                 int badLines = 0;
-                DbResult? openFail = OpenLib(libId, all, ref badLines);
+                DbResult? openFail = OpenLib(catId, libId, all, ref badLines);
                 if (openFail != null)
                 {
                     return openFail;
@@ -251,15 +259,16 @@ namespace Mau.Runtime
         /// </summary>
         /// <param name="libId">库名</param>
         /// <param name="title">标题（定位键，完全匹配）</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <returns>结果（载荷含 ID）</returns>
-        public DbResult Delete(string libId, string title)
+        public DbResult Delete(string libId, string title, string catId)
         {
             string titleText = TrimText(title);
             lock (_writeGate)
             {
                 List<DbEntry> all = new List<DbEntry>();
                 int badLines = 0;
-                DbResult? openFail = OpenLib(libId, all, ref badLines);
+                DbResult? openFail = OpenLib(catId, libId, all, ref badLines);
                 if (openFail != null)
                 {
                     return openFail;
@@ -297,8 +306,9 @@ namespace Mau.Runtime
         /// <param name="libId">库名</param>
         /// <param name="keyword">关键词（空 = 全库列表）</param>
         /// <param name="limit">返回条数（1–200；≤0 取默认 10）</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <returns>结果（载荷含 total / matched / shown / items 三数自证）</returns>
-        public DbResult Query(string libId, string keyword, int limit)
+        public DbResult Query(string libId, string keyword, int limit, string catId)
         {
             int take = limit;
             if (take <= 0)
@@ -311,7 +321,7 @@ namespace Mau.Runtime
             }
             List<DbEntry> all = new List<DbEntry>();
             int badLines = 0;
-            DbResult? openFail = OpenLib(libId, all, ref badLines);
+            DbResult? openFail = OpenLib(catId, libId, all, ref badLines);
             if (openFail != null)
             {
                 return openFail;
@@ -354,8 +364,9 @@ namespace Mau.Runtime
         /// <param name="libId">库名</param>
         /// <param name="mode">定位模式（title | id）</param>
         /// <param name="key">标题文本或 ID 文本</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <returns>结果（载荷为完整条目记录）</returns>
-        public DbResult Get(string libId, string mode, string key)
+        public DbResult Get(string libId, string mode, string key, string catId)
         {
             string useMode = TrimText(mode).ToLowerInvariant();
             if (useMode.Length == 0)
@@ -368,7 +379,7 @@ namespace Mau.Runtime
             }
             List<DbEntry> all = new List<DbEntry>();
             int badLines = 0;
-            DbResult? openFail = OpenLib(libId, all, ref badLines);
+            DbResult? openFail = OpenLib(catId, libId, all, ref badLines);
             if (openFail != null)
             {
                 return openFail;
@@ -403,9 +414,11 @@ namespace Mau.Runtime
 
         /// <summary>
         /// 库清单——注册表登记的库 + 活跃条目计数（控制台库下拉与端点用）。
+        /// 按猫授权过滤：未授权库不出现在清单（防泄露未登记库存在性；空 catId = 全放）。
         /// </summary>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <returns>结果（载荷为 libs 数组）</returns>
-        public DbResult ListLibs()
+        public DbResult ListLibs(string catId)
         {
             List<DbLib> libs = new List<DbLib>();
             string indexErr = ReadIndex(libs);
@@ -416,9 +429,13 @@ namespace Mau.Runtime
             List<string> items = new List<string>();
             for (int i = 0; i < libs.Count; i = i + 1)
             {
+                if (!DbAccessPolicy.IsAllowed(catId, libs[i].Id))
+                {
+                    continue;
+                }
                 List<DbEntry> all = new List<DbEntry>();
                 int badLines = 0;
-                DbResult? openFail = OpenLib(libs[i].Id, all, ref badLines);
+                DbResult? openFail = OpenLib(catId, libs[i].Id, all, ref badLines);
                 int active = 0;
                 if (openFail == null)
                 {
@@ -432,23 +449,37 @@ namespace Mau.Runtime
                 }
                 items.Add(JsonUtil.Object(("id", libs[i].Id), ("createdAt", libs[i].CreatedAt), ("entries", active), ("broken", openFail != null)));
             }
-            return DbResult.Success("库 " + libs.Count.ToString(), JsonUtil.Object(("libs", JsonUtil.RawArray(items.ToArray()))));
+            // [段2] 摘要自证全集——过滤掉未授权库时显式出声（不静默缩水）
+            string summary = "库 " + items.Count.ToString();
+            int hidden = libs.Count - items.Count;
+            if (hidden > 0)
+            {
+                summary = summary + "（授权内 " + items.Count.ToString() + " / 共 " + libs.Count.ToString() + "——" + hidden.ToString() + " 个未授权已隐藏）";
+            }
+            return DbResult.Success(summary, JsonUtil.Object(("libs", JsonUtil.RawArray(items.ToArray()))));
         }
 
         // [段5] 内部——打开与追加
         /// <summary>
         /// 打开库并载入条目聚合——库名形态 → 注册表登记 → 条目文件读取（三关全过才返回 null）。
         /// </summary>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <param name="libId">库名</param>
         /// <param name="all">输出：按 ID 聚合后的最新版本条目（含墓碑）</param>
         /// <param name="badLines">坏行计数（引用累加）</param>
         /// <returns>失败结果；成功返回 null</returns>
-        private DbResult? OpenLib(string libId, List<DbEntry> all, ref int badLines)
+        private DbResult? OpenLib(string catId, string libId, List<DbEntry> all, ref int badLines)
         {
             string lib = NormalizeLibId(libId);
             if (!LibIdPattern.IsMatch(lib))
             {
                 return DbResult.Fail("BAD_ARGS", "库名不合法（小写字母 / 数字 / 短横线，2–32 位）: " + libId);
+            }
+            // [段0] 库级授权（唯一判定点）——先于登记检查：未授权不泄露库是否存在
+            string? deny = DbAccessPolicy.DenyReason(catId, lib);
+            if (deny != null)
+            {
+                return DbResult.Fail("DB_LIB_DENIED", deny);
             }
             List<DbLib> libs = new List<DbLib>();
             string indexErr = ReadIndex(libs);

@@ -22,7 +22,7 @@ namespace CatHome4.Core.Tests
             try
             {
                 DbService service = new DbService(dbRoot);
-                Assert.True(service.Create("smoke-lib").Ok);
+                Assert.True(service.Create("smoke-lib", "").Ok);
                 DataBox.Bind<DbService>(service);
                 bool available;
                 List<object> libs = AdminService.BuildAllDbLibs(out available);

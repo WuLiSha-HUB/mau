@@ -60,7 +60,7 @@ namespace Mau.Bricks
                     result = "ERR|DB_NO_SERVICE|宿主未注入 DbService";
                     return false;
                 }
-                DbResult call = db.Query(lib, keyword, limit);
+                DbResult call = db.Query(lib, keyword, limit, JsonArgs.Get(argsJson, "catId"));
                 result = call.ToToolText("db-query", lib);
                 return call.Ok;
             }
@@ -72,4 +72,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:488B2CEA3D6BC0C054F4D68F87BC3FC58365F9280EC97B9CC5A14CB469BC2A89
+// #MAU_CHECKSUM:SHA256:5BEEFA9E30A8989C2F23220F82356CDA841431A7F69E502891E0DE2299DD15E2

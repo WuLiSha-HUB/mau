@@ -333,7 +333,7 @@
             <div id="catCfgTools" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px"></div>
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">目录白名单（enabledRoots——全局根池子集；workspace 系统根必选；空=全量）</label>
             <div id="catCfgRoots" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px"></div>
-            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">库权限（dbLibs——本猫可用库白名单；空=未登记；当前仅登记，工具面校验后置）</label>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">库权限（dbLibs——本猫可用库白名单；空=无库权限（默认猫 majordomo 全放）；未勾选的库在工具面报 DB_LIB_DENIED）</label>
             <div id="catCfgDbLibs" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px"></div>
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">前文注入 List（injectList——id:相对路径 / 绝对路径 / 目录（加载其一级 *.md，文件名升序）；拖动 ≡ 调顺序；新会话时按序注入）</label>
             <div id="catCfgInject" style="margin-top:5px"></div>

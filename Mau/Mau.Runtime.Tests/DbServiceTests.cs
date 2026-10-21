@@ -22,28 +22,28 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.True(db.Create("liba").Ok);
-                DbResult put = db.Put("liba", "时间back 域类型门禁", "正文一");
+                Assert.True(db.Create("liba", "").Ok);
+                DbResult put = db.Put("liba", "时间back 域类型门禁", "正文一", "");
                 Assert.True(put.Ok);
                 Assert.Equal(1, ReadInt(put.Data, "id"));
-                DbResult query = db.Query("liba", "门禁", 10);
+                DbResult query = db.Query("liba", "门禁", 10, "");
                 Assert.True(query.Ok);
                 Assert.Equal(1, ReadInt(query.Data, "total"));
                 Assert.Equal(1, ReadInt(query.Data, "matched"));
                 Assert.Equal(1, ReadInt(query.Data, "shown"));
-                DbResult byTitle = db.Get("liba", "title", "时间back 域类型门禁");
-                DbResult byId = db.Get("liba", "id", "1");
+                DbResult byTitle = db.Get("liba", "title", "时间back 域类型门禁", "");
+                DbResult byId = db.Get("liba", "id", "1", "");
                 Assert.True(byTitle.Ok);
                 Assert.True(byId.Ok);
                 Assert.Equal(ReadStr(byTitle.Data, "body"), ReadStr(byId.Data, "body"));
-                DbResult update = db.Update("liba", "时间back 域类型门禁", "正文二");
+                DbResult update = db.Update("liba", "时间back 域类型门禁", "正文二", "");
                 Assert.True(update.Ok);
                 Assert.Equal(2, ReadInt(update.Data, "v"));
-                Assert.Equal("正文二", ReadStr(db.Get("liba", "id", "1").Data, "body"));
-                DbResult delete = db.Delete("liba", "时间back 域类型门禁");
+                Assert.Equal("正文二", ReadStr(db.Get("liba", "id", "1", "").Data, "body"));
+                DbResult delete = db.Delete("liba", "时间back 域类型门禁", "");
                 Assert.True(delete.Ok);
-                Assert.Equal(0, ReadInt(db.Query("liba", "", 10).Data, "total"));
-                DbResult gone = db.Get("liba", "id", "1");
+                Assert.Equal(0, ReadInt(db.Query("liba", "", 10, "").Data, "total"));
+                DbResult gone = db.Get("liba", "id", "1", "");
                 Assert.False(gone.Ok);
                 Assert.Equal("DB_ENTRY_NOT_FOUND", gone.Code);
                 Assert.Equal(4, File.ReadAllLines(EntriesPath(root, "liba")).Length);
@@ -64,19 +64,19 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.True(db.Create("bulk").Ok);
+                Assert.True(db.Create("bulk", "").Ok);
                 for (int i = 1; i <= 100; i = i + 1)
                 {
-                    DbResult put = db.Put("bulk", "条目" + i.ToString(), "正文" + i.ToString());
+                    DbResult put = db.Put("bulk", "条目" + i.ToString(), "正文" + i.ToString(), "");
                     Assert.True(put.Ok);
                 }
                 Assert.Equal(101, File.ReadAllLines(EntriesPath(root, "bulk")).Length);
-                DbResult all = db.Query("bulk", "", 200);
+                DbResult all = db.Query("bulk", "", 200, "");
                 Assert.True(all.Ok);
                 Assert.Equal(100, ReadInt(all.Data, "total"));
                 Assert.Equal(100, ReadInt(all.Data, "matched"));
                 Assert.Equal(100, ReadInt(all.Data, "shown"));
-                DbResult page = db.Query("bulk", "", 10);
+                DbResult page = db.Query("bulk", "", 10, "");
                 Assert.Equal(10, ReadInt(page.Data, "shown"));
                 Assert.Equal(100, ReadInt(page.Data, "matched"));
             }
@@ -96,14 +96,14 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.True(db.Create("keys").Ok);
-                Assert.True(db.Put("keys", "同名", "一").Ok);
-                DbResult dup = db.Put("keys", "同名", "二");
+                Assert.True(db.Create("keys", "").Ok);
+                Assert.True(db.Put("keys", "同名", "一", "").Ok);
+                DbResult dup = db.Put("keys", "同名", "二", "");
                 Assert.False(dup.Ok);
                 Assert.Equal("DB_TITLE_EXISTS", dup.Code);
-                DbResult upd = db.Update("keys", "没有这条", "正文");
+                DbResult upd = db.Update("keys", "没有这条", "正文", "");
                 Assert.Equal("DB_TITLE_NOT_FOUND", upd.Code);
-                DbResult del = db.Delete("keys", "没有这条");
+                DbResult del = db.Delete("keys", "没有这条", "");
                 Assert.Equal("DB_TITLE_NOT_FOUND", del.Code);
             }
             finally
@@ -122,14 +122,14 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.True(db.Create("limits").Ok);
-                DbResult longTitle = db.Put("limits", new string('标', 51), "正文");
+                Assert.True(db.Create("limits", "").Ok);
+                DbResult longTitle = db.Put("limits", new string('标', 51), "正文", "");
                 Assert.False(longTitle.Ok);
                 Assert.Equal("DB_TITLE_TOO_LONG", longTitle.Code);
-                DbResult longBody = db.Put("limits", "标题", new string('文', 5001));
+                DbResult longBody = db.Put("limits", "标题", new string('文', 5001), "");
                 Assert.False(longBody.Ok);
                 Assert.Equal("DB_BODY_TOO_LONG", longBody.Code);
-                Assert.True(db.Put("limits", new string('标', 50), new string('文', 5000)).Ok);
+                Assert.True(db.Put("limits", new string('标', 50), new string('文', 5000), "").Ok);
             }
             finally
             {
@@ -147,10 +147,10 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.True(db.Create("bad").Ok);
-                Assert.True(db.Put("bad", "好条目", "正文").Ok);
+                Assert.True(db.Create("bad", "").Ok);
+                Assert.True(db.Put("bad", "好条目", "正文", "").Ok);
                 File.AppendAllText(EntriesPath(root, "bad"), "这不是 JSON\n");
-                DbResult query = db.Query("bad", "", 10);
+                DbResult query = db.Query("bad", "", 10, "");
                 Assert.True(query.Ok);
                 Assert.Equal(1, query.BadLines);
                 Assert.Equal(1, ReadInt(query.Data, "total"));
@@ -171,12 +171,12 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.True(db.Create("fmtlib").Ok);
+                Assert.True(db.Create("fmtlib", "").Ok);
                 string path = EntriesPath(root, "fmtlib");
                 string[] lines = File.ReadAllLines(path);
                 lines[0] = "{\"_\":\"db.entries\",\"fmt\":9,\"lib\":\"fmtlib\"}";
                 File.WriteAllLines(path, lines);
-                DbResult query = db.Query("fmtlib", "", 10);
+                DbResult query = db.Query("fmtlib", "", 10, "");
                 Assert.False(query.Ok);
                 Assert.Equal("DB_FORMAT_UNSUPPORTED", query.Code);
             }
@@ -196,12 +196,12 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.Equal("DB_LIB_NOT_FOUND", db.Query("nope", "", 10).Code);
-                Assert.Equal("BAD_ARGS", db.Create("A").Code);
-                Assert.True(db.Create("ok-lib").Ok);
-                Assert.Equal("DB_LIB_EXISTS", db.Create("ok-lib").Code);
+                Assert.Equal("DB_LIB_NOT_FOUND", db.Query("nope", "", 10, "").Code);
+                Assert.Equal("BAD_ARGS", db.Create("A", "").Code);
+                Assert.True(db.Create("ok-lib", "").Ok);
+                Assert.Equal("DB_LIB_EXISTS", db.Create("ok-lib", "").Code);
                 Directory.CreateDirectory(Path.Combine(root, "ghost"));
-                Assert.Equal("DB_LIB_NOT_FOUND", db.Query("ghost", "", 10).Code);
+                Assert.Equal("DB_LIB_NOT_FOUND", db.Query("ghost", "", 10, "").Code);
             }
             finally
             {
@@ -219,14 +219,14 @@ namespace Mau.Runtime.Tests
             try
             {
                 DbService db = new DbService(root);
-                Assert.True(db.Create("release").Ok);
-                DbResult first = db.Put("release", "可复用标题", "一");
+                Assert.True(db.Create("release", "").Ok);
+                DbResult first = db.Put("release", "可复用标题", "一", "");
                 Assert.True(first.Ok);
-                Assert.True(db.Delete("release", "可复用标题").Ok);
-                DbResult second = db.Put("release", "可复用标题", "二");
+                Assert.True(db.Delete("release", "可复用标题", "").Ok);
+                DbResult second = db.Put("release", "可复用标题", "二", "");
                 Assert.True(second.Ok);
                 Assert.Equal(2, ReadInt(second.Data, "id"));
-                Assert.Equal(1, ReadInt(db.Query("release", "", 10).Data, "total"));
+                Assert.Equal(1, ReadInt(db.Query("release", "", 10, "").Data, "total"));
             }
             finally
             {

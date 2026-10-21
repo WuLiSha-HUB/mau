@@ -241,6 +241,20 @@ namespace CatHome4.Admin
                 rootIds.Add(entries[i].Id);
             }
             LogStore.Add("CatHome4", 1, "cat.roots | cat=" + catKey + " | 来源=" + rootSource + " | 声明=" + rootDeclared.ToString() + " | 实际=" + entries.Length.ToString() + " | [" + string.Join(",", rootIds) + "]", "CHAT");
+            // [段2] 库级授权登记（A277）——默认猫全放；其余按 cat.cfg dbLibs 白名单（空集合 = 无库权限）
+            bool allDbLibs = string.Equals(catKey, "majordomo", StringComparison.OrdinalIgnoreCase);
+            string[] dbLibs = new string[0];
+            if (catCfg != null && catCfg.DbLibs != null)
+            {
+                dbLibs = catCfg.DbLibs;
+            }
+            DbAccessPolicy.Register(catKey, allDbLibs, dbLibs);
+            string allFlag = "0";
+            if (allDbLibs)
+            {
+                allFlag = "1";
+            }
+            LogStore.Add("CatHome4", 1, "cat.dblibs | cat=" + catKey + " | allLibs=" + allFlag + " | 声明=" + dbLibs.Length.ToString() + " | [" + string.Join(",", dbLibs) + "]", "CHAT");
             if (entries.Length == 0)
             {
                 ToolCatContext.UpdateCatFileSystem(catKey, null, "");
