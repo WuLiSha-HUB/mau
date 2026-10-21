@@ -1,0 +1,38 @@
+﻿// db_admin.mau —— DbAdmin 语料（库级管理面工具组——dbAdmin-* 三件独立 Flow）
+// 角色：工具组 Flow——认领 TOOL 域 dbAdmin-* 3 工具（libs/create/drop）
+// 与 DbCat 的分工：条目读写仍只有 DbCat 五件；本组只管库级生命周期（列库 / 建库 / 删库）
+// 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（宿主发单落盒）
+// 线程模型（A48）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行
+// 服务面：积木经 DataBox.TryResolve<DbService>（宿主 S2 段绑定；未注入即 ERR|DB_NO_SERVICE）
+// 授权：三件均带 catId → DbAccessPolicy 判定（未授权库 DB_LIB_DENIED）；建议只勾给管理猫
+
+// ── 状态机（3 线——每线独立生命周期）──
+§ 'S_Libs' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Create' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Drop' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+
+// ── 主动传感器壳——3 线各自探测（纯只读判断积木 → bool 落盒）──
+§ 'P_LibsOpen' ↻ [1]: 'oa.is_open'["TOOL", "dbAdmin-libs"] > @lbOpen
+§ 'P_CreateOpen' ↻ [1]: 'oa.is_open'["TOOL", "dbAdmin-create"] > @crOpen
+§ 'P_DropOpen' ↻ [1]: 'oa.is_open'["TOOL", "dbAdmin-drop"] > @dpOpen
+
+// ══════════════ dbAdmin-libs 线 ══════════════
+§ 'T_LibsClaim' : @lbOpen & 'S_Libs' = 'Idle' → 'oa.claim_next_simple'["TOOL", "dbAdmin-libs"] > @lbOffice | 'S_Libs' = 'Claimed' | 'S_Libs' = 'Idle'
+§ 'T_LibsArgs' : 'S_Libs' = 'Claimed' → 'oa.get_str'[@lbOffice, "args"] > @lbArgs | 'self.desc'["dbAdmin-libs 执行中", "", ""] | 'S_Libs' = 'Ready' | 'S_Libs' = 'Failed'
+§ 'T_LibsExec' [t=2400, par] : 'S_Libs' = 'Ready' → 'dbAdmin.libs'[@lbArgs] > @lbRes | 'S_Libs' = 'Done' | 'S_Libs' = 'Failed'
+§ 'T_LibsReply' : 'S_Libs' = 'Done' → 'oa.complete_str'[@lbOffice, @lbRes] | 'self.desc'["空闲待命", "", ""] | 'S_Libs' = 'Idle' | 'S_Libs' = 'Idle'
+§ 'T_LibsAbort' : 'S_Libs' = 'Failed' → 'oa.complete_str'[@lbOffice, @lbRes] | 'S_Libs' = 'Idle' | 'S_Libs' = 'Idle'
+
+// ══════════════ dbAdmin-create 线 ══════════════
+§ 'T_CreateClaim' : @crOpen & 'S_Create' = 'Idle' → 'oa.claim_next_simple'["TOOL", "dbAdmin-create"] > @crOffice | 'S_Create' = 'Claimed' | 'S_Create' = 'Idle'
+§ 'T_CreateArgs' : 'S_Create' = 'Claimed' → 'oa.get_str'[@crOffice, "args"] > @crArgs | 'self.desc'["dbAdmin-create 执行中", "", ""] | 'S_Create' = 'Ready' | 'S_Create' = 'Failed'
+§ 'T_CreateExec' [t=2400, par] : 'S_Create' = 'Ready' → 'dbAdmin.create'[@crArgs] > @crRes | 'S_Create' = 'Done' | 'S_Create' = 'Failed'
+§ 'T_CreateReply' : 'S_Create' = 'Done' → 'oa.complete_str'[@crOffice, @crRes] | 'self.desc'["空闲待命", "", ""] | 'S_Create' = 'Idle' | 'S_Create' = 'Idle'
+§ 'T_CreateAbort' : 'S_Create' = 'Failed' → 'oa.complete_str'[@crOffice, @crRes] | 'S_Create' = 'Idle' | 'S_Create' = 'Idle'
+
+// ══════════════ dbAdmin-drop 线 ══════════════
+§ 'T_DropClaim' : @dpOpen & 'S_Drop' = 'Idle' → 'oa.claim_next_simple'["TOOL", "dbAdmin-drop"] > @dpOffice | 'S_Drop' = 'Claimed' | 'S_Drop' = 'Idle'
+§ 'T_DropArgs' : 'S_Drop' = 'Claimed' → 'oa.get_str'[@dpOffice, "args"] > @dpArgs | 'self.desc'["dbAdmin-drop 执行中", "", ""] | 'S_Drop' = 'Ready' | 'S_Drop' = 'Failed'
+§ 'T_DropExec' [t=2400, par] : 'S_Drop' = 'Ready' → 'dbAdmin.drop'[@dpArgs] > @dpRes | 'S_Drop' = 'Done' | 'S_Drop' = 'Failed'
+§ 'T_DropReply' : 'S_Drop' = 'Done' → 'oa.complete_str'[@dpOffice, @dpRes] | 'self.desc'["空闲待命", "", ""] | 'S_Drop' = 'Idle' | 'S_Drop' = 'Idle'
+§ 'T_DropAbort' : 'S_Drop' = 'Failed' → 'oa.complete_str'[@dpOffice, @dpRes] | 'S_Drop' = 'Idle' | 'S_Drop' = 'Idle'

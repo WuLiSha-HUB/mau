@@ -97,7 +97,7 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
-        /// 条目列表——GET /api/v1/db/libs/{lib}/entries?keyword=&amp;limit=（与 db-query 同语义）。
+        /// 条目列表——GET /api/v1/db/libs/{lib}/entries?keyword=&amp;limit=（与 db-query 同语义；可选 offset 与 order=updated|id）。
         /// </summary>
         /// <param name="ctx">HTTP 上下文</param>
         /// <returns>回执 JSON——ok + data（total / matched / shown / items）</returns>
@@ -124,7 +124,22 @@ namespace CatHome4.Admin
                     });
                 }
             }
-            DbResult result = service.Query(lib, keyword, limit, "");
+            string offsetText = ReadQueryText(ctx, "offset");
+            int offset = 0;
+            if (offsetText.Length > 0)
+            {
+                if (!int.TryParse(offsetText, out offset) || offset < 0)
+                {
+                    return Results.Json(new
+                    {
+                        ok = false,
+                        code = "BAD_ARGS",
+                        message = "offset 非法（非负整数）: " + offsetText
+                    });
+                }
+            }
+            string order = ReadQueryText(ctx, "order");
+            DbResult result = service.Query(lib, keyword, limit, offset, order, "");
             if (!result.Ok)
             {
                 return DbServiceFail(result);

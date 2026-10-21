@@ -302,5 +302,141 @@ namespace Mau.Runtime.Tests
                 System.Diagnostics.Debug.WriteLine(ex.Message);
             }
         }
+        /// <summary>
+        /// 口径边界——标题归一（Trim 后比较 + 忽略大小写）与标题控制字符拒绝。
+        /// </summary>
+        [Fact]
+        public void Contract_TitleNormalization()
+        {
+            string root = NewRoot();
+            try
+            {
+                DbService db = new DbService(root);
+                Assert.True(db.Create("norm", "").Ok);
+                Assert.True(db.Put("norm", "  标题甲  ", "正文一", "").Ok);
+                DbResult padded = db.Put("norm", "标题甲", "正文二", "");
+                Assert.False(padded.Ok);
+                Assert.Equal("DB_TITLE_EXISTS", padded.Code);
+                DbResult getPadded = db.Get("norm", "title", "  标题甲 ", "");
+                Assert.True(getPadded.Ok);
+                Assert.True(db.Put("norm", "Chapter", "正文三", "").Ok);
+                DbResult caseDup = db.Put("norm", "chapter", "正文四", "");
+                Assert.Equal("DB_TITLE_EXISTS", caseDup.Code);
+                DbResult getCase = db.Get("norm", "title", "CHAPTER", "");
+                Assert.True(getCase.Ok);
+                DbResult ctrl = db.Put("norm", "标题\n乙", "正文五", "");
+                Assert.False(ctrl.Ok);
+                Assert.Equal("BAD_ARGS", ctrl.Code);
+            }
+            finally
+            {
+                SafeDelete(root);
+            }
+        }
+        /// <summary>
+        /// 口径边界——正文纯空白拒、keyword 超长拒、id 非正整数拒、limit 上界拒而下界回落默认。
+        /// </summary>
+        [Fact]
+        public void Contract_ArgumentBounds()
+        {
+            string root = NewRoot();
+            try
+            {
+                DbService db = new DbService(root);
+                Assert.True(db.Create("bounds", "").Ok);
+                Assert.True(db.Put("bounds", "条目一", "正文", "").Ok);
+                DbResult blank = db.Put("bounds", "条目二", "   ", "");
+                Assert.False(blank.Ok);
+                Assert.Equal("BAD_ARGS", blank.Code);
+                string longKeyword = new string('k', 201);
+                DbResult kw = db.Query("bounds", longKeyword, 10, "");
+                Assert.False(kw.Ok);
+                Assert.Equal("BAD_ARGS", kw.Code);
+                DbResult idText = db.Get("bounds", "id", "abc", "");
+                Assert.Equal("BAD_ARGS", idText.Code);
+                DbResult idZero = db.Get("bounds", "id", "0", "");
+                Assert.Equal("BAD_ARGS", idZero.Code);
+                DbResult limitOver = db.Query("bounds", "", 201, "");
+                Assert.Equal("BAD_ARGS", limitOver.Code);
+                DbResult limitZero = db.Query("bounds", "", 0, "");
+                Assert.True(limitZero.Ok);
+                Assert.Equal(1, ReadInt(limitZero.Data, "shown"));
+            }
+            finally
+            {
+                SafeDelete(root);
+            }
+        }
+        /// <summary>
+        /// 分页与排序——offset 翻页三页自洽（nextOffset 衔接）；超界返回空页；order 非枚举 / offset 负数拒。
+        /// </summary>
+        [Fact]
+        public void QueryPaging_OffsetAndOrder()
+        {
+            string root = NewRoot();
+            try
+            {
+                DbService db = new DbService(root);
+                Assert.True(db.Create("page", "").Ok);
+                for (int i = 1; i <= 5; i = i + 1)
+                {
+                    Assert.True(db.Put("page", "分页" + i.ToString(), "正文" + i.ToString(), "").Ok);
+                }
+                DbResult p1 = db.Query("page", "", 2, 0, "id", "");
+                Assert.Equal(2, ReadInt(p1.Data, "shown"));
+                Assert.Equal(0, ReadInt(p1.Data, "offset"));
+                Assert.Equal(2, ReadInt(p1.Data, "nextOffset"));
+                DbResult p2 = db.Query("page", "", 2, 2, "id", "");
+                Assert.Equal(2, ReadInt(p2.Data, "shown"));
+                Assert.Equal(4, ReadInt(p2.Data, "nextOffset"));
+                DbResult p3 = db.Query("page", "", 2, 4, "id", "");
+                Assert.Equal(1, ReadInt(p3.Data, "shown"));
+                Assert.Equal(5, ReadInt(p3.Data, "nextOffset"));
+                DbResult over = db.Query("page", "", 2, 99, "id", "");
+                Assert.True(over.Ok);
+                Assert.Equal(0, ReadInt(over.Data, "shown"));
+                DbResult badOrder = db.Query("page", "", 2, 0, "kkk", "");
+                Assert.Equal("BAD_ARGS", badOrder.Code);
+                DbResult negOffset = db.Query("page", "", 2, -1, "updated", "");
+                Assert.Equal("BAD_ARGS", negOffset.Code);
+            }
+            finally
+            {
+                SafeDelete(root);
+            }
+        }
+        /// <summary>
+        /// 管理面——库级明细列出活跃 / 墓碑；删库 confirm 不符拒；未登记拒；删后查询报 NOT_FOUND。
+        /// </summary>
+        [Fact]
+        public void Admin_ListDetailAndDrop()
+        {
+            string root = NewRoot();
+            try
+            {
+                DbService db = new DbService(root);
+                Assert.True(db.Create("admina", "").Ok);
+                Assert.True(db.Put("admina", "甲", "正文", "").Ok);
+                Assert.True(db.Put("admina", "乙", "正文", "").Ok);
+                Assert.True(db.Delete("admina", "乙", "").Ok);
+                DbResult libs = db.ListLibsDetail("");
+                Assert.True(libs.Ok);
+                Assert.Contains("admina", libs.Data);
+                DbResult wrongConfirm = db.DropLib("admina", "other", "");
+                Assert.Equal("BAD_ARGS", wrongConfirm.Code);
+                DbResult missing = db.DropLib("nolibx", "nolibx", "");
+                Assert.Equal("DB_LIB_NOT_FOUND", missing.Code);
+                DbResult drop = db.DropLib("admina", "admina", "");
+                Assert.True(drop.Ok);
+                DbResult after = db.ListLibsDetail("");
+                Assert.DoesNotContain("admina", after.Data);
+                DbResult gone = db.Query("admina", "", 10, "");
+                Assert.Equal("DB_LIB_NOT_FOUND", gone.Code);
+            }
+            finally
+            {
+                SafeDelete(root);
+            }
+        }
     }
 }

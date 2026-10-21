@@ -40,6 +40,11 @@ namespace Mau.Runtime
         private const int LimitMax = 200;
 
         /// <summary>
+        /// 查询关键词长度上限（Unicode 字符数；超限拒）
+        /// </summary>
+        private const int KeywordMax = 200;
+
+        /// <summary>
         /// 库名合法形态——小写字母 / 数字 / 短横线，2–32 位（单层目录名）
         /// </summary>
         private static readonly Regex LibIdPattern = new Regex("^[a-z0-9-]{2,32}$", RegexOptions.Compiled);
@@ -68,6 +73,10 @@ namespace Mau.Runtime
         /// 串行保护复合写操作（追加行与注册表更新）
         /// </summary>
         private readonly object _writeGate;
+        /// <summary>
+        /// 删库回收目录名（库根下；不进注册表，不参与库扫描）
+        /// </summary>
+        private const string TrashDir = "_trash";
 
         /// <summary>
         /// 建立库服务——库根不存在则创建。
@@ -301,14 +310,16 @@ namespace Mau.Runtime
 
         // [段3] 读取
         /// <summary>
-        /// 查询条目——标题子串匹配（忽略大小写），返回 ID / 标题 / 更新时间，不含正文；按更新时间倒序。
+        /// 查询条目——标题子串匹配（忽略大小写），返回 ID / 标题 / 更新时间，不含正文；分页 + 排序。
         /// </summary>
         /// <param name="libId">库名</param>
         /// <param name="keyword">关键词（空 = 全库列表）</param>
         /// <param name="limit">返回条数（1–200；≤0 取默认 10）</param>
+        /// <param name="offset">起始偏移（0 起；超界返回空页，hasMore=false）</param>
+        /// <param name="order">排序（updated=更新时间倒序 默认 | id=ID 升序，供稳定遍历）</param>
         /// <param name="catId">猫 key（空=无猫上下文放行）</param>
-        /// <returns>结果（载荷含 total / matched / shown / items 三数自证）</returns>
-        public DbResult Query(string libId, string keyword, int limit, string catId)
+        /// <returns>结果（载荷含 total / matched / shown / offset / hasMore / nextOffset / items）</returns>
+        public DbResult Query(string libId, string keyword, int limit, int offset, string order, string catId)
         {
             int take = limit;
             if (take <= 0)
@@ -318,6 +329,25 @@ namespace Mau.Runtime
             if (take > LimitMax)
             {
                 return DbResult.Fail("BAD_ARGS", "limit 超上限（1–" + LimitMax.ToString() + "）: " + limit.ToString());
+            }
+            int skip = offset;
+            if (skip < 0)
+            {
+                return DbResult.Fail("BAD_ARGS", "offset 不能为负: " + offset.ToString());
+            }
+            string useOrder = TrimText(order).ToLowerInvariant();
+            if (useOrder.Length == 0)
+            {
+                useOrder = "updated";
+            }
+            if (useOrder != "updated" && useOrder != "id")
+            {
+                return DbResult.Fail("BAD_ARGS", "order 非枚举（updated|id）: " + order);
+            }
+            int keywordCount = CharCount(TrimText(keyword));
+            if (keywordCount > KeywordMax)
+            {
+                return DbResult.Fail("BAD_ARGS", "keyword 超长（上限 " + KeywordMax.ToString() + " 字符，实际 " + keywordCount.ToString() + "）");
             }
             List<DbEntry> all = new List<DbEntry>();
             int badLines = 0;
@@ -343,19 +373,33 @@ namespace Mau.Runtime
                     matched.Add(active[i]);
                 }
             }
-            matched.Sort(CompareEntryDesc);
-            int shown = matched.Count;
+            if (useOrder == "id")
+            {
+                matched.Sort(CompareEntryAsc);
+            }
+            else
+            {
+                matched.Sort(CompareEntryDesc);
+            }
+            int fetchFrom = skip;
+            if (fetchFrom > matched.Count)
+            {
+                fetchFrom = matched.Count;
+            }
+            int shown = matched.Count - fetchFrom;
             if (shown > take)
             {
                 shown = take;
             }
             List<string> items = new List<string>();
-            for (int i = 0; i < shown; i = i + 1)
+            for (int i = fetchFrom; i < fetchFrom + shown; i = i + 1)
             {
                 items.Add(JsonUtil.Object(("id", matched[i].Id), ("title", matched[i].Title), ("updatedAt", matched[i].UpdatedAt)));
             }
-            string payload = JsonUtil.Object(("total", active.Count), ("matched", matched.Count), ("shown", shown), ("items", JsonUtil.RawArray(items.ToArray())));
-            return DbResult.Success("命中 " + matched.Count.ToString() + " / 活跃 " + active.Count.ToString(), payload, badLines);
+            bool hasMore = fetchFrom + shown < matched.Count;
+            int nextOffset = fetchFrom + shown;
+            string payload = JsonUtil.Object(("total", active.Count), ("matched", matched.Count), ("shown", shown), ("offset", fetchFrom), ("hasMore", hasMore), ("nextOffset", nextOffset), ("items", JsonUtil.RawArray(items.ToArray())));
+            return DbResult.Success("命中 " + matched.Count.ToString() + " / 活跃 " + active.Count.ToString() + "（本页 " + shown.ToString() + " · 偏移 " + fetchFrom.ToString() + "）", payload, badLines);
         }
 
         /// <summary>
@@ -393,10 +437,11 @@ namespace Mau.Runtime
             else
             {
                 int id = 0;
-                if (int.TryParse(keyText, out id))
+                if (!int.TryParse(keyText, out id) || id <= 0)
                 {
-                    found = FindActiveById(all, id);
+                    return DbResult.Fail("BAD_ARGS", "id 须为正整数: " + keyText);
                 }
+                found = FindActiveById(all, id);
             }
             if (found == null)
             {
@@ -772,7 +817,7 @@ namespace Mau.Runtime
         }
 
         /// <summary>
-        /// 按标题查活跃条目——完全匹配（区分大小写，与写入键一致）；未命中返回 null。
+        /// 按标题查活跃条目——完全匹配（忽略大小写：唯一键口径，写入 / 定位三处同源）；未命中返回 null。
         /// </summary>
         /// <param name="all">聚合条目</param>
         /// <param name="title">标题</param>
@@ -781,7 +826,7 @@ namespace Mau.Runtime
         {
             for (int i = 0; i < all.Count; i = i + 1)
             {
-                if (all[i].Del == 0 && string.Equals(all[i].Title, title, StringComparison.Ordinal))
+                if (all[i].Del == 0 && string.Equals(all[i].Title, title, StringComparison.OrdinalIgnoreCase))
                 {
                     return all[i];
                 }
@@ -827,6 +872,14 @@ namespace Mau.Runtime
                 {
                     return DbResult.Fail("DB_TITLE_TOO_LONG", "标题超长（上限 " + TitleMax.ToString() + " 字符，实际 " + titleCount.ToString() + "）");
                 }
+                if (HasControlChar(title))
+                {
+                    return DbResult.Fail("BAD_ARGS", "标题不得含控制字符（换行 / 制表 / 其他 <0x20）");
+                }
+            }
+            if (TrimText(body).Length == 0)
+            {
+                return DbResult.Fail("BAD_ARGS", "正文不能为空");
             }
             int bodyCount = CharCount(body);
             if (bodyCount > BodyMax)
@@ -879,6 +932,28 @@ namespace Mau.Runtime
         }
 
         /// <summary>
+        /// 是否含控制字符——C0（小于 0x20）与 DEL（0x7F）；标题面禁（单行键），正文面允许。
+        /// </summary>
+        /// <param name="text">待检文本</param>
+        /// <returns>true = 含控制字符</returns>
+        private static bool HasControlChar(string text)
+        {
+            if (text == null)
+            {
+                return false;
+            }
+            for (int i = 0; i < text.Length; i = i + 1)
+            {
+                char c = text[i];
+                if (c < (char)0x20 || c == (char)0x7F)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
         /// 当前时刻——`yyyy-MM-dd HH:mm:ss`（字典序即时间序）。
         /// </summary>
         /// <returns>时刻文本</returns>
@@ -912,6 +987,148 @@ namespace Mau.Runtime
         private static int CompareEntryAsc(DbEntry a, DbEntry b)
         {
             return a.Id.CompareTo(b.Id);
+        }
+        /// <summary>
+        /// 查询条目（兼容重载）——等价于 offset=0、order=updated。
+        /// </summary>
+        /// <param name="libId">库名</param>
+        /// <param name="keyword">关键词（空 = 全库列表）</param>
+        /// <param name="limit">返回条数（1–200）</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
+        /// <returns>结果（同六参版本）</returns>
+        public DbResult Query(string libId, string keyword, int limit, string catId)
+        {
+            return Query(libId, keyword, limit, 0, "updated", catId);
+        }
+        /// <summary>
+        /// 库级明细——注册表登记的库 + 活跃 / 墓碑 / 坏行 / 字节数（管理面用）。
+        /// 按猫授权过滤，摘要自证全集（与 ListLibs 同口径）。
+        /// </summary>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
+        /// <returns>结果（载荷为 libs 数组，含 entries/tombstones/badLines/bytes/broken）</returns>
+        public DbResult ListLibsDetail(string catId)
+        {
+            List<DbLib> libs = new List<DbLib>();
+            string indexErr = ReadIndex(libs);
+            if (indexErr.Length > 0)
+            {
+                return DbResult.Fail("DB_INDEX_UNREADABLE", indexErr);
+            }
+            List<string> items = new List<string>();
+            for (int i = 0; i < libs.Count; i = i + 1)
+            {
+                if (!DbAccessPolicy.IsAllowed(catId, libs[i].Id))
+                {
+                    continue;
+                }
+                List<DbEntry> all = new List<DbEntry>();
+                int badLines = 0;
+                DbResult? openFail = OpenLib(catId, libs[i].Id, all, ref badLines);
+                int active = 0;
+                int tombstones = 0;
+                if (openFail == null)
+                {
+                    for (int j = 0; j < all.Count; j = j + 1)
+                    {
+                        if (all[j].Del == 0)
+                        {
+                            active = active + 1;
+                        }
+                        else
+                        {
+                            tombstones = tombstones + 1;
+                        }
+                    }
+                }
+                long bytes = 0;
+                try
+                {
+                    FileInfo info = new FileInfo(Path.Combine(_dbRoot, libs[i].Id, EntriesFile));
+                    if (info.Exists)
+                    {
+                        bytes = info.Length;
+                    }
+                }
+                catch (System.Exception)
+                {
+                    bytes = 0;
+                }
+                items.Add(JsonUtil.Object(("id", libs[i].Id), ("createdAt", libs[i].CreatedAt), ("entries", active), ("tombstones", tombstones), ("badLines", badLines), ("bytes", bytes), ("broken", openFail != null)));
+            }
+            string summary = "库 " + items.Count.ToString();
+            int hidden = libs.Count - items.Count;
+            if (hidden > 0)
+            {
+                summary = summary + "（授权内 " + items.Count.ToString() + " / 共 " + libs.Count.ToString() + "——" + hidden.ToString() + " 个未授权已隐藏）";
+            }
+            return DbResult.Success(summary, JsonUtil.Object(("libs", JsonUtil.RawArray(items.ToArray()))));
+        }
+        /// <summary>
+        /// 删库——目录移入库根 `_trash/<库名>-<时间戳>`（可恢复），注册表摘除；confirm 须与库名一致。
+        /// </summary>
+        /// <param name="libId">库名</param>
+        /// <param name="confirm">确认串（须等于库名，防误删）</param>
+        /// <param name="catId">猫 key（空=无猫上下文放行）</param>
+        /// <returns>结果（载荷含库名与回收区路径）</returns>
+        public DbResult DropLib(string libId, string confirm, string catId)
+        {
+            string lib = NormalizeLibId(libId);
+            if (!LibIdPattern.IsMatch(lib))
+            {
+                return DbResult.Fail("BAD_ARGS", "库名不合法（小写字母 / 数字 / 短横线，2–32 位）: " + libId);
+            }
+            if (NormalizeLibId(confirm) != lib)
+            {
+                return DbResult.Fail("BAD_ARGS", "confirm 须与库名一致（确认删库）: " + confirm);
+            }
+            string? deny = DbAccessPolicy.DenyReason(catId, lib);
+            if (deny != null)
+            {
+                return DbResult.Fail("DB_LIB_DENIED", deny);
+            }
+            lock (_writeGate)
+            {
+                List<DbLib> libs = new List<DbLib>();
+                string indexErr = ReadIndex(libs);
+                if (indexErr.Length > 0)
+                {
+                    return DbResult.Fail("DB_INDEX_UNREADABLE", indexErr);
+                }
+                DbLib? target = FindLib(libs, lib);
+                if (target == null)
+                {
+                    return DbResult.Fail("DB_LIB_NOT_FOUND", "库未登记: " + lib);
+                }
+                string trashRoot = Path.Combine(_dbRoot, TrashDir);
+                string stamp = NowStamp().Replace(" ", "_").Replace(":", "");
+                string trashPath = Path.Combine(trashRoot, lib + "-" + stamp);
+                try
+                {
+                    Directory.CreateDirectory(trashRoot);
+                    string libDir = Path.Combine(_dbRoot, lib);
+                    if (Directory.Exists(libDir))
+                    {
+                        Directory.Move(libDir, trashPath);
+                    }
+                }
+                catch (System.Exception ex)
+                {
+                    return DbResult.Fail("DB_IO_FAIL", "移入回收区失败: " + ex.Message);
+                }
+                for (int i = libs.Count - 1; i >= 0; i = i - 1)
+                {
+                    if (libs[i].Id == target.Id)
+                    {
+                        libs.RemoveAt(i);
+                    }
+                }
+                string writeErr = WriteIndex(libs);
+                if (writeErr.Length > 0)
+                {
+                    return DbResult.Fail("DB_IO_FAIL", writeErr);
+                }
+                return DbResult.Success("库已移入回收区: " + lib, JsonUtil.Object(("id", lib), ("trash", trashPath)));
+            }
         }
     }
 

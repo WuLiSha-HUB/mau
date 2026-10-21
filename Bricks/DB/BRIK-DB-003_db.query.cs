@@ -28,7 +28,7 @@ namespace Mau.Bricks
         {
             result = "";
             // [参数面] 声明面口径零容忍——未知 / 缺值一律 ERR|BAD_ARGS（catId 保留键放行）
-            string badArgs = JsonArgs.Validate(argsJson, "lib keyword limit", "lib", "", "");
+            string badArgs = JsonArgs.Validate(argsJson, "lib keyword limit offset order", "lib", "", "");
             if (badArgs.Length > 0)
             {
                 result = badArgs;
@@ -37,7 +37,9 @@ namespace Mau.Bricks
             string lib = JsonArgs.Get(argsJson, "lib");
             string keyword = JsonArgs.Get(argsJson, "keyword");
             string limitText = JsonArgs.Get(argsJson, "limit");
-            if (lib == "§PARSE_FAIL§" || keyword == "§PARSE_FAIL§" || limitText == "§PARSE_FAIL§")
+            string offsetText = JsonArgs.Get(argsJson, "offset");
+            string order = JsonArgs.Get(argsJson, "order");
+            if (lib == "§PARSE_FAIL§" || keyword == "§PARSE_FAIL§" || limitText == "§PARSE_FAIL§" || offsetText == "§PARSE_FAIL§" || order == "§PARSE_FAIL§")
             {
                 result = "ERR|BAD_ARGS|工具参数 JSON 解析失败";
                 return false;
@@ -50,6 +52,26 @@ namespace Mau.Bricks
                     result = "ERR|BAD_ARGS|limit 非整数: " + limitText;
                     return false;
                 }
+                // [参数面] 越界即拒——非法值与「未传」必须可分（缺省只在 limitText 为空时生效）
+                if (limit < 1 || limit > 200)
+                {
+                    result = "ERR|BAD_ARGS|limit 越界（1–200）: " + limitText;
+                    return false;
+                }
+            }
+            int offset = 0;
+            if (offsetText.Length > 0)
+            {
+                if (!int.TryParse(offsetText, out offset))
+                {
+                    result = "ERR|BAD_ARGS|offset 非整数: " + offsetText;
+                    return false;
+                }
+                if (offset < 0)
+                {
+                    result = "ERR|BAD_ARGS|offset 不能为负: " + offsetText;
+                    return false;
+                }
             }
             try
             {
@@ -60,7 +82,7 @@ namespace Mau.Bricks
                     result = "ERR|DB_NO_SERVICE|宿主未注入 DbService";
                     return false;
                 }
-                DbResult call = db.Query(lib, keyword, limit, JsonArgs.Get(argsJson, "catId"));
+                DbResult call = db.Query(lib, keyword, limit, offset, order, JsonArgs.Get(argsJson, "catId"));
                 result = call.ToToolText("db-query", lib);
                 return call.Ok;
             }
@@ -72,4 +94,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:5BEEFA9E30A8989C2F23220F82356CDA841431A7F69E502891E0DE2299DD15E2
+// #MAU_CHECKSUM:SHA256:1EE2B5835D75C8D1856EB6D1D4E2106DBAC21F431210D47AD891E4C46B85C5B7

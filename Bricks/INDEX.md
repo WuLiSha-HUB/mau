@@ -22,6 +22,9 @@
 | BRIK-DB-004 | db.get | DB | DB/BRIK-DB-004_db.get.cs | 无 | active |  |
 | BRIK-DB-005 | db.update | DB | DB/BRIK-DB-005_db.update.cs | 无 | active |  |
 | BRIK-DB-006 | db.delete | DB | DB/BRIK-DB-006_db.delete.cs | 无 | active |  |
+| BRIK-DB-007 | dbAdmin.libs | DB | DB/BRIK-DB-007_dbAdmin.libs.cs | 无 | active |  |
+| BRIK-DB-008 | dbAdmin.create | DB | DB/BRIK-DB-008_dbAdmin.create.cs | 无 | active |  |
+| BRIK-DB-009 | dbAdmin.drop | DB | DB/BRIK-DB-009_dbAdmin.drop.cs | 无 | active |  |
 | BRIK-FILE-001 | file.tree | FILE | FILE/BRIK-FILE-001_file.tree.cs | 无 | active |  |
 | BRIK-FILE-002 | file.find | FILE | FILE/BRIK-FILE-002_file.find.cs | 无 | active |  |
 | BRIK-FILE-003 | file.move | FILE | FILE/BRIK-FILE-003_file.move.cs | 无 | active |  |
@@ -89,6 +92,7 @@
 | BRIK-TOOLS-015 | tools.audiocat | TOOLS | TOOLS/BRIK-TOOLS-015_tools.audiocat.cs | 无 | active |  |
 | BRIK-TOOLS-016 | tools.pycat | TOOLS | TOOLS/BRIK-TOOLS-016_tools.pycat.cs | 无 | active |  |
 | BRIK-TOOLS-017 | tools.dbcat | TOOLS | TOOLS/BRIK-TOOLS-017_tools.dbcat.cs | 无 | active |  |
+| BRIK-TOOLS-018 | tools.dbadmin | TOOLS | TOOLS/BRIK-TOOLS-018_tools.dbadmin.cs | 无 | active |  |
 | BRIK-VISION-001 | vision.analyze | VISION | VISION/BRIK-VISION-001_vision.analyze.cs | 无 | active |  |
 | BRIK-VISION-002 | image.inject | VISION | VISION/BRIK-VISION-002_image.inject.cs | 无 | active |  |
 | BRIK-WEB-001 | web.search | WEB | WEB/BRIK-WEB-001_web.search.cs | 无 | active |  |
