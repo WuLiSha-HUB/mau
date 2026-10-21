@@ -45,7 +45,7 @@ namespace CH4
             // [段2] 线程域——非主线程入队主线程泵（与 HTTP 面同源；异步受理，回执走泵日志）
             if (Environment.CurrentManagedThreadId != _mainThreadId)
             {
-                AdminService._catQueue.Enqueue(trimmed);
+                AdminService.PostInput(AdminService.MainInputTarget(), trimmed);
                 return "已受理（非主线程入队，主线程泵执行）: " + trimmed;
             }
             // [段3] 重启停机态——拒收（与 CLI / HTTP 面同规；design-ch4-host-restart §三 T2）

@@ -42,14 +42,6 @@ namespace CatHome4.Admin
             /// <summary>HTTP 外观层——启动态非空</summary>
             public HttpHost Host;
 
-            /// <summary>HTTP 线程 Chat 指令入队面——主线程泵消费（P9.3c PumpCatQueues）</summary>
-            public ConcurrentQueue<string> PendingChat;
-
-            /// <summary>HTTP 线程 Note 指令入队面——主线程泵消费（M4c note.add）</summary>
-            public ConcurrentQueue<string> PendingNote;
-
-            /// <summary>HTTP 线程会话指令入队面——主线程泵消费（P6b session.rollback/fork）</summary>
-            public ConcurrentQueue<string> PendingSessionCmd;
 
             /// <summary>LLM API 配置身份——cat.cfg 持久化；缺省回退内置 DeepSeek（M1b）</summary>
             public Guid ApiConfigId;
@@ -90,8 +82,6 @@ namespace CatHome4.Admin
             /// <summary>工具声明面——M2c 裁剪后（session.new 重注入复用）</summary>
             public ToolSpec[] ToolSpecs;
 
-            /// <summary>session.new 请求标志——HTTP 线程置位/主线程泵消费（M2d 按猫重注入）</summary>
-            public bool SessionNewRequested;
         }
 
         /// <summary>

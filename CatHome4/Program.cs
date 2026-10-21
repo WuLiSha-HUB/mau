@@ -170,9 +170,12 @@ namespace CH4
                 {
                     _runner.Tick();
                 }
-                // 注册确认——启动观测一行（CommandBus 直执面已退役：当前应为 0 个模块，OA 认领为唯一执行路径）
+                // 注册确认——仅在语料真的使用 `⇚`（模块数 > 0）时出声；harness 不投递，常态静默（A278 裁决 / A283）
                 string[] keyDic = _bus.GetKeyDic();
-                Console.WriteLine("[CMD] CommandBus " + keyDic[0]);
+                if (keyDic.Length > 0 && keyDic[0].IndexOf("(0个模块)", StringComparison.Ordinal) < 0)
+                {
+                    Console.WriteLine("[CMD] CommandBus " + keyDic[0]);
+                }
                 // [段2c] P1 自启同步——启动时注册表与配置对齐（防手动删注册表漂移）
                 // 🔴 仅交互模式——非交互探针不得改写 HKCU Run 项（开发区 Data 无 app.cfg → 默认 false → 会静默删掉部署区自启项）
                 if (!nonInteractive)

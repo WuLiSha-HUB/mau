@@ -198,9 +198,9 @@ namespace CH4
             _bus = new CommandBus(guard);
             IdAllocator ids = new IdAllocator();
             _runner = new FlowRunner(guard, _oa, _bus, ids);
-            // DataBox 服务绑定——积木 TryResolve 面（OA/CommandBus/ILlmRuntime）
+            // DataBox 服务绑定——积木 TryResolve 面（OA；ILlmRuntime 由 Providers 段绑定）
             DataBox.Bind<IOA>(_oa);
-            DataBox.Bind<ICommandBus>(_bus);
+            // A283：CommandBus 不作服务绑定——语料 `⇚` 能力保留（FlowRunner 持有本体），宿主侧零投递、积木零引用
         }
 
         /// <summary>
@@ -554,6 +554,9 @@ namespace CH4
             // S4 Admin 域接线——依赖注入（管理 API 处理器 + cat.* 指令族迁入 CatHome4.Admin）
             AdminService.Configure(_chatBridge, _oa, dataRoot, _mainThreadId, ExecuteTool, ObserveService.BuildSnapshotJson, new HtmlRootProvider(), apiConfigStore, ctx.QqBotStore, ctx.AppearanceStore, llmConfig, _portBand);
             AdminService.BuildEnvInfoProvider = BuildEnvInfo;
+            // A281 分发表接线——停机态探针 + 热重载执行体（宿主级能力，Admin 域不持有实现）
+            AdminService.IsRestartingProvider = IsRestarting;
+            AdminService.ReloadHandler = ExecuteReload;
             // 加载包数据面接线——pack 内置工具（池定义与猫挂载解析归 Admin 域；Core 零配置面依赖）
             ChatSession.PackPayloadProvider = AdminService.BuildPackPayload;
             // 授权面实时查询接线——工具调用判定按当前 cat.cfg 名单实时解析（design-ch4-tools §三·十一：注入面=提示，授权面=真相）

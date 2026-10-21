@@ -1020,7 +1020,7 @@ namespace CatHome4.Admin
             }
             SaveCatCfgData(catKey, cfg);
             // 运行时生效——入队主线程泵（注册表/会话面仅主线程触碰）
-            _catQueue.Enqueue("catcfg.apply " + catKey);
+            PostInput(MainInputTarget(), "catcfg.apply " + catKey);
             LogStore.Add("CatHome4", 1, "猫配置已受理：" + catKey + "（工具面 " + cfg.ToolNames + "）", "CONFIG");
             // A132 剔除出声——被剔名字随响应带回（调用方可见；明细已记日志，不静默）
             // 字段级合并写——回执取落盘实况（cfg.ToolNames），不取本次提交值（字段缺省时二者不同）

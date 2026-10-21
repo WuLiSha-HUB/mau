@@ -36,8 +36,6 @@ namespace CatHome4.Admin
         /// <summary>多猫注册表——cat.* 指令族管理面（默认 majordomo 会话不在此列——主端口对话区专属）</summary>
         private static readonly List<CatEntry> _cats = new List<CatEntry>();
 
-        /// <summary>cat.* 指令队列——HTTP 线程投递 / 主线程泵消费（ThreadGuard：注册表仅主线程触碰）</summary>
-        internal static readonly ConcurrentQueue<string> _catQueue = new ConcurrentQueue<string>();
 
         /// <summary>majordomo 独立对话端口 HttpHost——serveChatPage=true（F2.2 方案 A：与多猫同构；主端口保留管理面板）</summary>
         private static HttpHost _majorHost;
@@ -155,17 +153,6 @@ namespace CatHome4.Admin
             get { return _majorPort; }
         }
 
-        /// <summary>majordomo Chat 指令入队面——HTTP 线程投递 / 主线程泵消费（F2.2 DispatchCommandForMajor）</summary>
-        private static readonly ConcurrentQueue<string> _majorPendingChat = new ConcurrentQueue<string>();
-
-        /// <summary>majordomo Note 指令入队面——HTTP 线程投递 / 主线程泵消费（F2.2）</summary>
-        private static readonly ConcurrentQueue<string> _majorPendingNote = new ConcurrentQueue<string>();
-
-        /// <summary>majordomo 会话指令入队面——HTTP 线程投递 / 主线程泵消费（P6b session.rollback/fork）</summary>
-        private static readonly ConcurrentQueue<string> _majorPendingSessionCmd = new ConcurrentQueue<string>();
-
-        /// <summary>majordomo session.new 请求标志——HTTP 线程置位/主线程泵消费（F2.2 同多猫 M2d）</summary>
-        private static bool _majorSessionNewRequested;
 
         /// <summary>
         /// 解析猫启用根条目——cat.cfg enabledRoots → 全局池子集（空/缺失=空白名单——仅常驻 workspace 可用；失败默认收紧，不回落全量）。
@@ -804,7 +791,7 @@ namespace CatHome4.Admin
             }
             // [段2] 全量写回 + 生效入队（与端点同源：写后 catcfg.apply 主线程泵消费）
             SaveCatCfgData(id, cfg);
-            _catQueue.Enqueue("catcfg.apply " + id);
+            PostInput(MainInputTarget(), "catcfg.apply " + id);
             // [段3] 落盘实况——写后读回对照（非"已提交"）
             CatCfgData after = LoadCatCfg(path);
             if (after == null)
@@ -824,90 +811,6 @@ namespace CatHome4.Admin
             }
             sb.Append(FormatCatCfg(id, after));
             return sb.ToString();
-        }
-
-        /// <summary>
-        /// 泵多猫队列——主线程消费（P9.3c 主循环 + DriveUntilIdle 接入）。
-        /// 顺序保证：cat.* 指令泵在前（delete 可能移除注册表条目）→ 再遍历剩余猫的 PendingChat。
-        /// </summary>
-        internal static void PumpCatQueues()
-        {
-            // [段1] cat.* 指令泵消费（HTTP 线程投递 / 主线程执行）
-            string catCmd;
-            while (_catQueue.TryDequeue(out catCmd))
-            {
-                LogStore.Add("CatHome4", 1, "cat 指令: " + HandleCatCommand(catCmd), "CMD", "", "", 200);
-            }
-            // [段2] 每猫 Chat 指令泵消费（每猫 HttpHost HTTP 线程投递 / 主线程投递会话）
-            for (int i = 0; i < _cats.Count; i++)
-            {
-                CatEntry cat = _cats[i];
-                // M2d session.new 按猫重注入——忙时保留标志下帧重判（同默认猫排队语义）
-                if (cat.SessionNewRequested)
-                {
-                    if (cat.Session.IsIdle)
-                    {
-                        cat.SessionNewRequested = false;
-                        _chatBridge.HandleSessionNew(cat.Session, cat.Persona, cat.InjectList, cat.ToolSpecs);
-                    }
-                }
-                string job;
-                while (cat.PendingChat.TryDequeue(out job))
-                {
-                    cat.Session.PostUserMessage(job);
-                }
-                // M4c Note 指令泵消费（HTTP 线程投递 / 主线程执行）
-                string noteText;
-                while (cat.PendingNote.TryDequeue(out noteText))
-                {
-                    if (noteText == "\u0001start")
-                    {
-                        cat.Session.NoteStart();
-                    }
-                    else
-                    {
-                        cat.Session.NoteAdd(noteText);
-                    }
-                }
-                // P6b 会话指令泵消费（session.rollback/fork——HTTP 线程投递 / 主线程执行）
-                string scmd;
-                while (cat.PendingSessionCmd.TryDequeue(out scmd))
-                {
-                    LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(cat.Session, scmd), "CMD", "", "", 200);
-                }
-            }
-            // [段3] majordomo 独立对话端口指令泵（F2.2——独立端口 serve chat.html；HTTP 线程投递 / 主线程直投 DefaultSession）
-            if (_majorSessionNewRequested)
-            {
-                if (_chatBridge.DefaultSession.IsIdle)
-                {
-                    _majorSessionNewRequested = false;
-                    _chatBridge.HandleSessionNew(_chatBridge.DefaultSession, _chatBridge.DefaultPersona, _chatBridge.DefaultInjectList, _chatBridge.DefaultToolSpecs);
-                }
-            }
-            string majorJob;
-            while (_majorPendingChat.TryDequeue(out majorJob))
-            {
-                _chatBridge.DefaultSession.PostUserMessage(majorJob);
-            }
-            string majorNote;
-            while (_majorPendingNote.TryDequeue(out majorNote))
-            {
-                if (majorNote == "\u0001start")
-                {
-                    _chatBridge.DefaultSession.NoteStart();
-                }
-                else
-                {
-                    _chatBridge.DefaultSession.NoteAdd(majorNote);
-                }
-            }
-            // P6b majordomo 会话指令泵消费（session.rollback/fork——HTTP 线程投递 / 主线程执行）
-            string mcmd;
-            while (_majorPendingSessionCmd.TryDequeue(out mcmd))
-            {
-                LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(_chatBridge.DefaultSession, mcmd), "CMD", "", "", 200);
-            }
         }
 
         /// <summary>
@@ -1456,9 +1359,6 @@ namespace CatHome4.Admin
                 cat.Port = 0;
                 cat.Session = session;
                 cat.Host = null;
-                cat.PendingChat = new ConcurrentQueue<string>();
-                cat.PendingNote = new ConcurrentQueue<string>();
-                cat.PendingSessionCmd = new ConcurrentQueue<string>();
                 cat.ApiConfigId = apiConfigId;
                 cat.ApiConfig = apiConfig;
                 cat.Persona = persona;
@@ -1556,7 +1456,7 @@ namespace CatHome4.Admin
                     IsTimebackActive = delegate () { return captured.TimebackActive; },
                     NewSession = delegate ()
                     {
-                        _majorSessionNewRequested = true;
+                        PostInput(MainInputTarget(), "session.new");
                         return "新会话已请求（注入执行中）\n" + _chatBridge.BuildInjectSummary(_chatBridge.DefaultPersona, _chatBridge.DefaultInjectList, _chatBridge.DefaultToolSpecs);
                     },
                     GetInfo = delegate () { return captured.GetInfoText(); }
@@ -1582,7 +1482,7 @@ namespace CatHome4.Admin
                         IsTimebackActive = delegate () { return captured.Session.TimebackActive; },
                         NewSession = delegate ()
                         {
-                            captured.SessionNewRequested = true;
+                            PostInput(CatInputTarget(captured), "session.new");
                             return "新会话已请求（注入执行中）\n" + _chatBridge.BuildInjectSummary(captured.Persona, captured.InjectList, captured.ToolSpecs);
                         },
                         GetInfo = delegate () { return captured.Session.GetInfoText(); }
@@ -2092,7 +1992,7 @@ namespace CatHome4.Admin
                 FrontendTestPort = PortBand.FrontendTestPort,
                 SessionId = cat.Session.Id,
                 SnapshotBuilder = BuildSnapshotJson,
-                Dispatcher = (string line) => DispatchCommandForCat(cat, line),
+                Dispatcher = (string line) => DispatchInput(CatInputTarget(cat), line),
                 EnvelopeBuilder = MakeChatEnvelopeBuilder(cat.Session),
                 FrameBuilder = null,
                 CatsBuilder = null,
@@ -2137,7 +2037,7 @@ namespace CatHome4.Admin
                     FrontendTestPort = PortBand.FrontendTestPort,
                     SessionId = _chatBridge.DefaultSession.Id,
                     SnapshotBuilder = BuildSnapshotJson,
-                    Dispatcher = (string line) => DispatchCommandForMajor(line),
+                    Dispatcher = (string line) => DispatchInput(MajorInputTarget(), line),
                     EnvelopeBuilder = MakeChatEnvelopeBuilder(_chatBridge.DefaultSession),
                     FrameBuilder = null,
                     CatsBuilder = null,
@@ -2165,186 +2065,6 @@ namespace CatHome4.Admin
             AttachSessionHost(_chatBridge.DefaultSession, host);
             LogStore.Add("CatHome4", 1, "majordomo 独立对话端口已启动：" + port.ToString(), "CHAT");
             return true;
-        }
-
-        /// <summary>
-        /// majordomo 独立端口指令投递——Chat/session.new/note.* 路由 DefaultSession（主线程直投 / HTTP 线程入队泵）。
-        /// F2.2 与 DispatchCommandForCat 同构——目标固定 DefaultSession；队列走 _majorPendingChat/_majorPendingNote。
-        /// </summary>
-        /// <param name="line">指令行</param>
-        /// <returns>true=识别并投递</returns>
-        private static bool DispatchCommandForMajor(string line)
-        {
-            if (line.StartsWith("Chat ", StringComparison.Ordinal))
-            {
-                string content = line.Substring(5).Trim();
-                if (content.Length == 0)
-                {
-                    return false;
-                }
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.PostUserMessage(content);
-                }
-                else
-                {
-                    _majorPendingChat.Enqueue(content);
-                }
-                return true;
-            }
-            if (line == "cat.pause")
-            {
-                // P6 中止——HTTP 线程直接调用（内部仅置位 + 取消令牌——线程安全；相位推进主线程 Pump 消费）
-                _chatBridge.DefaultSession.Pause();
-                return true;
-            }
-            if (line == "cat.continue")
-            {
-                // 继续——HTTP 线程直接调用（内部仅前文非空校验 + 入队——线程安全；相位推进主线程 Pump 消费）
-                _chatBridge.DefaultSession.Continue();
-                return true;
-            }
-            if (line == "session.new")
-            {
-                // F2.2 按 DefaultSession 重注入——HTTP 线程置位/主线程泵消费（PumpCatQueues 段3）
-                _majorSessionNewRequested = true;
-                return true;
-            }
-            if (line.StartsWith("session.rollback ", StringComparison.Ordinal) || line.StartsWith("session.fork ", StringComparison.Ordinal))
-            {
-                // P6b 回滚/分支——主线程直执 / HTTP 线程入队泵消费（ThreadGuard：上下文仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(_chatBridge.DefaultSession, line), "CMD", "", "", 200);
-                }
-                else
-                {
-                    _majorPendingSessionCmd.Enqueue(line);
-                }
-                return true;
-            }
-            if (line == "note.start")
-            {
-                // M4c Note 启动——主线程直执 / HTTP 线程入队泵
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.NoteStart();
-                }
-                else
-                {
-                    _majorPendingNote.Enqueue("\u0001start");
-                }
-                return true;
-            }
-            if (line.StartsWith("note.add ", StringComparison.Ordinal))
-            {
-                // M4c Note 手动新增——主线程直执 / HTTP 线程入队泵
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.NoteAdd(line.Substring(9).Trim());
-                }
-                else
-                {
-                    _majorPendingNote.Enqueue(line.Substring(9).Trim());
-                }
-                return true;
-            }
-            // 延迟指令族——delay.*（design-ch4-delay §5.1；调度器内部锁保护——HTTP 线程可直执）
-            if (DelayCommand.Handle(_chatBridge.DefaultSession.Id, line))
-            {
-                return true;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// 每猫指令投递——Chat 指令路由本猫会话（主线程直投 / HTTP 线程入队泵）。
-        /// </summary>
-        /// <param name="cat">猫实体</param>
-        /// <param name="line">指令行</param>
-        /// <returns>true=识别并投递</returns>
-        private static bool DispatchCommandForCat(CatEntry cat, string line)
-        {
-            if (line.StartsWith("Chat ", StringComparison.Ordinal))
-            {
-                string content = line.Substring(5).Trim();
-                if (content.Length == 0)
-                {
-                    return false;
-                }
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    cat.Session.PostUserMessage(content);
-                }
-                else
-                {
-                    cat.PendingChat.Enqueue(content);
-                }
-                return true;
-            }
-            if (line == "cat.pause")
-            {
-                // P6 中止——HTTP 线程直接调用（内部仅置位 + 取消令牌——线程安全；相位推进主线程 Pump 消费）
-                cat.Session.Pause();
-                return true;
-            }
-            if (line == "cat.continue")
-            {
-                // 继续——HTTP 线程直接调用（内部仅前文非空校验 + 入队——线程安全；相位推进主线程 Pump 消费）
-                cat.Session.Continue();
-                return true;
-            }
-            if (line == "session.new")
-            {
-                // M2d 按猫重注入——HTTP 线程置位/主线程泵消费（会话忙时排队语义同默认猫）
-                cat.SessionNewRequested = true;
-                return true;
-            }
-            if (line.StartsWith("session.rollback ", StringComparison.Ordinal) || line.StartsWith("session.fork ", StringComparison.Ordinal))
-            {
-                // P6b 回滚/分支——主线程直执 / HTTP 线程入队泵消费（ThreadGuard：上下文仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(cat.Session, line), "CMD", "", "", 200);
-                }
-                else
-                {
-                    cat.PendingSessionCmd.Enqueue(line);
-                }
-                return true;
-            }
-            if (line == "note.start")
-            {
-                // M4c Note 启动——拼接计划+进度推给 LLM（主线程直执 / HTTP 线程入队泵）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    cat.Session.NoteStart();
-                }
-                else
-                {
-                    cat.PendingNote.Enqueue("\u0001start");
-                }
-                return true;
-            }
-            if (line.StartsWith("note.add ", StringComparison.Ordinal))
-            {
-                // M4c Note 手动新增——主线程直执 / HTTP 线程入队泵（Note 状态仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    cat.Session.NoteAdd(line.Substring(9).Trim());
-                }
-                else
-                {
-                    cat.PendingNote.Enqueue(line.Substring(9).Trim());
-                }
-                return true;
-            }
-            // 延迟指令族——delay.*（design-ch4-delay §5.1；调度器内部锁保护——HTTP 线程可直执）
-            if (DelayCommand.Handle(cat.Session.Id, line))
-            {
-                return true;
-            }
-            return false;
         }
 
         /// <summary>
