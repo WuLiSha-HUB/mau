@@ -403,6 +403,55 @@ namespace CH4
                 qqbotBlock["usage"] = qqbotShow;
                 info["qqbot"] = qqbotBlock;
             }
+            // [段8b] db——授权库清单（A279）：库权限（cat.cfg dbLibs）已授权时 info 必须自证可见面；
+            // 判据取 DbService.ListLibs（按 catId 授权过滤 + 摘要自证全集）；服务缺失 / 读失败如实出声，不静默省略该段
+            Dictionary<string, object> dbBlock = new Dictionary<string, object>();
+            DbService dbSvc = null;
+            bool dbSvcReady = DataBox.TryResolve<DbService>(out dbSvc);
+            if (!dbSvcReady || dbSvc == null)
+            {
+                dbBlock["ok"] = false;
+                dbBlock["reason"] = "数据库服务未绑定";
+            }
+            else
+            {
+                DbResult dbList = dbSvc.ListLibs(catKey);
+                dbBlock["ok"] = dbList.Ok;
+                if (dbList.Ok)
+                {
+                    dbBlock["summary"] = dbList.Message;
+                    JsonDocument dbDoc = JsonUtil.Parse(dbList.Data, "info.db");
+                    if (dbDoc != null)
+                    {
+                        JsonElement dbLibsNode;
+                        if (dbDoc.RootElement.TryGetProperty("libs", out dbLibsNode) && dbLibsNode.ValueKind == JsonValueKind.Array)
+                        {
+                            dbBlock["libs"] = dbLibsNode.Clone();
+                        }
+                        dbDoc.Dispose();
+                    }
+                }
+                else
+                {
+                    dbBlock["reason"] = dbList.Code + " " + dbList.Message;
+                }
+            }
+            bool dbRootVisible = false;
+            for (int i = 0; i < rootList.Count; i = i + 1)
+            {
+                object rootIdObj;
+                if (rootList[i].TryGetValue("id", out rootIdObj))
+                {
+                    string rootIdText = rootIdObj as string;
+                    if (rootIdText != null && string.Equals(rootIdText, "db", StringComparison.OrdinalIgnoreCase))
+                    {
+                        dbRootVisible = true;
+                        break;
+                    }
+                }
+            }
+            dbBlock["rootVisible"] = dbRootVisible;
+            info["db"] = dbBlock;
             // [段9] tools_drift——工具面漂移（会话注入面 vs 当前授权集；仅不一致时输出——design-ch4-tools §三·十一）
             // added 附用法摘要（name/desc/args——注册表声明派生，冷启动猫不新会话即可上手；removed 只给名字）
             if (session != null)

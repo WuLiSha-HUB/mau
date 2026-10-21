@@ -69,9 +69,6 @@ namespace CatHome4.Admin
             /// <summary>加载包挂载清单——cat.cfg 持久化（R4；空=未挂载任何包）</summary>
             public string[] Packs;
 
-            /// <summary>库白名单——cat.cfg 持久化（A266；空=未授权任何库；工具面校验后置）</summary>
-            public string[] DbLibs;
-
             /// <summary>qqbot 配置身份——cat.cfg 持久化（R2.3；Guid.Empty=未绑定）</summary>
             public Guid QqBotId;
 
@@ -340,7 +337,6 @@ namespace CatHome4.Admin
             data.ToolNames = cat.ToolNames;
             data.InjectList = cat.InjectList;
             data.Packs = cat.Packs;
-            data.DbLibs = cat.DbLibs;
             data.QqBotId = cat.QqBotId.ToString("D");
             data.QqBotEnable = cat.QqBotEnable;
             data.UserInjectIdleOnly = cat.UserInjectIdleOnly;
