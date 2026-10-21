@@ -126,7 +126,7 @@ namespace CH4
         /// 落盘启动报告——最近一次启动的完整降级清单（覆盖写）。
         /// 落点：数据根 Data/runtime/startup_report.json；不可写时回落早期 sink 目录。
         /// </summary>
-        /// <param name="mode">启动形态（interactive / run / script / selfcheck / tool-check / probe）</param>
+        /// <param name="mode">启动形态（interactive / non-interactive）</param>
         internal static void WriteStartupReport(string mode)
         {
             try

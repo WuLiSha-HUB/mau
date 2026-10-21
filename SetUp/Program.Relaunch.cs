@@ -625,15 +625,68 @@ namespace SetUp
             return RunProcess(exe, "--run \"session count\"", targetDir, ProbeTargetTimeoutMs);
         }
         /// <summary>
-        /// incr 前置段——哨兵与拒绝面 → 准备段（关 html 对齐）→ 探活 → 落 ready 哨兵。
-        /// 全程在旧宿主存活期完成：过了才放行宿主退场，停摆窗口只剩「等退出 + 切换 + 自启」。
+        /// 上次 prepare 报告闸——报告 Ok=false 即拒绝（半链推进族：产物可能已刷新但准备链没过，搬运即把未验证产物推上线）。
+        /// 报告缺失或不可解析不阻断（首次部署 / 自定义报告路径）——由段16 哨兵与段18 产物区自检兜底。
         /// </summary>
+        /// <param name="repoRoot">仓库根</param>
+        /// <param name="reason">拒绝原因（空=通过）</param>
+        /// <returns>true=通过</returns>
+        private static bool CheckLastPrepareReport(string repoRoot, out string reason)
+        {
+            reason = "";
+            string reportPath = Path.Combine(repoRoot, "CatTemp", "setup_report.json");
+            if (!File.Exists(reportPath))
+            {
+                return true;
+            }
+            try
+            {
+                using (System.Text.Json.JsonDocument doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(reportPath)))
+                {
+                    System.Text.Json.JsonElement root = doc.RootElement;
+                    System.Text.Json.JsonElement modeEl;
+                    string mode = "";
+                    if (root.TryGetProperty("Mode", out modeEl) && modeEl.ValueKind == System.Text.Json.JsonValueKind.String)
+                    {
+                        mode = modeEl.GetString();
+                    }
+                    if (!string.Equals(mode, "prepare", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                    System.Text.Json.JsonElement okEl;
+                    if (!root.TryGetProperty("Ok", out okEl) || okEl.ValueKind != System.Text.Json.JsonValueKind.False)
+                    {
+                        return true;
+                    }
+                    reason = "上次 prepare 未通过（" + reportPath + " 的 Ok=false）——产物可能已刷新但准备链没过，搬运即把未验证产物推上线；请修好后重跑 prepare。";
+                    return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[SetUp] ⚠ 上次 prepare 报告不可解析，跳过该闸：" + ex.Message);
+                return true;
+            }
+        }
+        /// <summary>incr 前置段——上次 prepare 报告闸 → 哨兵与拒绝面 → 准备段（关 html 对齐）→ 产物区自检（同 prepare 步6）→ 候选区探活 → 落 ready 哨兵。</summary>
         /// <param name="repoRoot">仓库根</param>
         /// <param name="targetFull">运行区绝对路径</param>
         /// <param name="sourceDir">产物区（public/app）</param>
         /// <returns>true=前置段通过（已落 ok 哨兵）</returns>
         private static bool RunIncrPreflight(string repoRoot, string targetFull, string sourceDir)
         {
+            // [段15] 上次 prepare 报告闸——报告 Ok=false 即拒绝（半链推进族：产物可能已刷新但准备链没过）
+            long repMs = Environment.TickCount64;
+            string repReason;
+            bool repOk = CheckLastPrepareReport(repoRoot, out repReason);
+            _steps.Add(new StepReport() { Step = 15, Name = "incr 上次 prepare 报告闸", Ok = repOk, Ms = Environment.TickCount64 - repMs, Detail = repOk ? "" : repReason });
+            if (!repOk)
+            {
+                Console.WriteLine("[SetUp] ❌ " + repReason);
+                WriteRelay(repoRoot, false, repReason);
+                return false;
+            }
             // [段16] 哨兵与拒绝面——源码比产物新即拒绝
             long chkMs = Environment.TickCount64;
             string reason;
@@ -655,13 +708,26 @@ namespace SetUp
                 WriteRelay(repoRoot, false, prepErr);
                 return false;
             }
-            // [段18] 探活——新产物离线自检（prepare 步6 自检位的替代物）
+            // [段18] 产物区自检——与 prepare 步6 同源（同一 exe / 同一工作目录 = 同一数据根）
+            // 判据不同构的坑：候选区副本在运行区目录下 → 解析成部署区数据根，产物区的数据根坏掉时副本照样能起，单跑副本会把红掩盖成绿
+            long srcChkMs = Environment.TickCount64;
+            string sourceExe = Path.Combine(sourceDir, "CatHome4.exe");
+            bool sourceOk = File.Exists(sourceExe) && RunProcess(sourceExe, "--run \"session count\"", repoRoot, ProbeTargetTimeoutMs);
+            _steps.Add(new StepReport() { Step = 18, Name = "incr 产物区自检（同 prepare 步6）", Ok = sourceOk, Ms = Environment.TickCount64 - srcChkMs });
+            if (!sourceOk)
+            {
+                string sourceReason = "产物区自检未通过（--run session count 非零退出，与 prepare 步6 同源）——先修产物区数据根 / 配置并重跑 prepare。";
+                Console.WriteLine("[SetUp] ❌ " + sourceReason);
+                WriteRelay(repoRoot, false, sourceReason);
+                return false;
+            }
+            // [段19] 候选区探活——搬运副本自身可起（验 _new 目录完整性，不承担数据根判据）
             long probeMs = Environment.TickCount64;
             bool probeOk = ProbeTarget(targetFull + "_new");
-            _steps.Add(new StepReport() { Step = 18, Name = "incr 探活（新产物离线自检）", Ok = probeOk, Ms = Environment.TickCount64 - probeMs });
+            _steps.Add(new StepReport() { Step = 19, Name = "incr 候选区探活（副本可起）", Ok = probeOk, Ms = Environment.TickCount64 - probeMs });
             if (!probeOk)
             {
-                string probeReason = "新产物离线自检未通过（--run session count 非零退出）——请走 restart-full，或先修好构建。";
+                string probeReason = "候选区副本自检未通过（--run session count 非零退出）——请走 restart-full，或先修好构建。";
                 Console.WriteLine("[SetUp] ❌ " + probeReason);
                 WriteRelay(repoRoot, false, probeReason);
                 return false;

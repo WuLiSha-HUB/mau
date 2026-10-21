@@ -22,7 +22,7 @@ namespace CH4
         /// <summary>语料生成物 dll 目录</summary>
         internal string DllDir = "";
 
-        /// <summary>非交互模式（--run/--script/--selfcheck/--tool-check）</summary>
+        /// <summary>非交互模式（--run/--script/--selfcheck/--probe-llm）</summary>
         internal bool Headless = false;
 
         /// <summary>数据根绝对路径（S2 产物）</summary>

@@ -470,10 +470,6 @@ function cmdFmtHostExe(seg, m) {
     if (run) {
         return '宿主 CLI 执行指令「' + cmdHostCommand(cmdTrim(run[1])) + '」';
     }
-    var tc = /--tool-check\s+(\S+)/i.exec(rest);
-    if (tc) {
-        return '工具全链自检 ' + cmdQuote(tc[1]);
-    }
     var script = /--script\s+(\S+)/i.exec(rest);
     if (script) {
         return '批量指令脚本 ' + cmdQuote(cmdTrunc(script[1], 60));
@@ -825,7 +821,7 @@ function cmdTagSetUp(seg) {
 
 /** 宿主 CLI 指令类标识——「CatHome4 <开关>」 */
 function cmdTagHostExe(seg) {
-    var m = /--(run|tool-check|script|selfcheck|probe-llm|majordomopush)/i.exec(seg || '');
+    var m = /--(run|script|selfcheck|probe-llm|majordomopush)/i.exec(seg || '');
     return m ? ('CatHome4 --' + m[1].toLowerCase()) : 'CatHome4';
 }
 

@@ -254,45 +254,6 @@ namespace CH4
         }
 
         /// <summary>
-        /// 工具自检工单 ownerId——独立于会话 ToolOwnerId（避免与会话工单归属混淆）
-        /// </summary>
-        private const long ToolCheckOwnerId = 9001;
-
-        /// <summary>
-        /// 工具全链自检——投递一条真实工具单（OA 走单 → 工具组 Flow 认领 → 桥）→ 驱动帧至闭环 → 输出回执。
-        /// A23：工具交付自检须含一条全链实跑（单元测试直调桥会绕过宿主注入面）。
-        /// </summary>
-        /// <param name="name">工具名（如 text-read / cs-check）</param>
-        /// <param name="argsJson">参数整包 JSON</param>
-        /// <returns>退出码（0=闭环 / 3=挂单失败 / 4=未闭环）</returns>
-        private static int RunToolCheck(string name, string argsJson)
-        {
-            ToolOrderDog dog = new ToolOrderDog("tool-check", name, argsJson);
-            dog.Post(_oa, ToolCheckOwnerId);
-            if (dog.OfficeId == 0)
-            {
-                Console.WriteLine("[TOOLCHECK] name=" + name + " ERR|OA_POST_FAIL|工单提交失败（OA 不可用）");
-                return 3;
-            }
-            Console.WriteLine("[TOOLCHECK] name=" + name + " office=#" + dog.OfficeId + " timeoutFrames=" + dog.TimeoutFrames);
-            long frames = 0;
-            while (!dog.IsClosed && !dog.IsTimedOut && frames < dog.TimeoutFrames)
-            {
-                _runner.Tick();
-                dog.Tick(_oa);
-                frames = frames + 1;
-                Thread.Sleep(FrameTargetMs);
-            }
-            Console.WriteLine("[TOOLCHECK] frames=" + frames + " closed=" + dog.IsClosed + " timedOut=" + dog.IsTimedOut);
-            Console.WriteLine("[TOOLCHECK] result=" + (dog.Result == null ? "" : dog.Result));
-            if (dog.IsClosed && dog.Result != null && dog.Result.Length > 0 && !dog.Result.StartsWith("ERR|", StringComparison.Ordinal))
-            {
-                return 0;
-            }
-            return 4;
-        }
-
-        /// <summary>
         /// 工具执行器路由——按工具名调度（宿主直执面：仅 host-* 宿主级工具；其余工具一律 OA 认领）
         /// </summary>
         /// <param name="name">工具名</param>

@@ -126,7 +126,7 @@ namespace CH4
         /// 宿主参数面校验——零容忍：未知参数 / 缺值 / 与非常驻模式互斥一律报错（design-ch4-host-restart §五）。
         /// </summary>
         /// <param name="args">命令行参数</param>
-        /// <param name="nonInteractive">非交互模式（--run/--script/--selfcheck/--tool-check——不启动外观层与常驻附属）</param>
+        /// <param name="nonInteractive">非交互模式（--run/--script/--selfcheck——不启动外观层与常驻附属）</param>
         /// <returns>错误文本（空=通过）</returns>
         private static string ValidateHostArgs(string[] args, out bool nonInteractive)
         {
@@ -136,7 +136,7 @@ namespace CH4
             // 预扫描——先定非交互形态：出错提前返回时也要能分派「脚本必须拿到退出码」（A260 R2）
             for (int i = 0; i < args.Length; i = i + 1)
             {
-                if (args[i] == "--run" || args[i] == "--script" || args[i] == "--selfcheck" || args[i] == "--tool-check" || args[i] == "--probe-llm")
+                if (args[i] == "--run" || args[i] == "--script" || args[i] == "--selfcheck" || args[i] == "--probe-llm")
                 {
                     nonInteractive = true;
                     break;
@@ -156,15 +156,6 @@ namespace CH4
                         hasNonInteractive = true;
                     }
                     i = i + 1;
-                }
-                else if (arg == "--tool-check")
-                {
-                    if (i + 2 >= args.Length)
-                    {
-                        return "参数错误：--tool-check 需 <工具名> <参数JSON>。";
-                    }
-                    hasNonInteractive = true;
-                    i = i + 2;
                 }
                 else if (arg == "--selfcheck")
                 {
@@ -186,7 +177,7 @@ namespace CH4
             }
             if (hasPush && hasNonInteractive)
             {
-                return "参数错误：--majordomopush 仅用于常驻交互启动（不可与 --run/--script/--selfcheck/--tool-check 同用）。";
+                return "参数错误：--majordomopush 仅用于常驻交互启动（不可与 --run/--script/--selfcheck 同用）。";
             }
             nonInteractive = hasNonInteractive;
             return "";

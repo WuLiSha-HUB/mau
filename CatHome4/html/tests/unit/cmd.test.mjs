@@ -54,8 +54,7 @@ test('宿主 CLI --run 子指令解码（reload）', () => {
   expect(r.brief).toBe('CatHome4 --run · 宿主 CLI 执行指令「热重载 Flow TextCat」');
 });
 
-test('宿主 CLI --tool-check 与 --selfcheck', () => {
-  expect(cmdDecodeTool(args('CatHome4.exe --tool-check text-read {"path":"a"}')).brief).toBe('CatHome4 --tool-check · 工具全链自检 「text-read」');
+test('宿主 CLI --selfcheck', () => {
   expect(cmdDecodeTool(args('CatHome4.exe --selfcheck')).brief).toBe('CatHome4 --selfcheck · 宿主启动自检');
 });
 

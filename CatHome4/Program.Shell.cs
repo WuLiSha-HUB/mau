@@ -160,7 +160,7 @@ namespace CH4
         private static System.IO.StreamWriter _cmdCaptureWriter;
 
         /// <summary>
-        /// 启用控制台输出落盘——非交互模式（`--run` / `--script` / `--selfcheck` / `--tool-check` / `--probe-llm`）
+        /// 启用控制台输出落盘——非交互模式（`--run` / `--script` / `--selfcheck` / `--probe-llm`）
         /// 把 Console 输出**双写** `Data/runs/cmd_&lt;时间戳&gt;.txt`。
         /// 🔴 保留原 stdout——父进程显式重定向（SetUp / mau-setup）的捕获链路不受影响，本方法只增落盘副本。
         /// </summary>
