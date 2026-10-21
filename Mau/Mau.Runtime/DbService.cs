@@ -1064,10 +1064,10 @@ namespace Mau.Runtime
             return DbResult.Success(summary, JsonUtil.Object(("libs", JsonUtil.RawArray(items.ToArray()))));
         }
         /// <summary>
-        /// 删库——目录移入库根 `_trash/<库名>-<时间戳>`（可恢复），注册表摘除；confirm 须与库名一致。
+        /// 删库——目录移入库根 _trash 下的「库名-时间戳」目录（可恢复），注册表摘除；confirm 须与库名完全一致（精确比对）。
         /// </summary>
         /// <param name="libId">库名</param>
-        /// <param name="confirm">确认串（须等于库名，防误删）</param>
+        /// <param name="confirm">确认串（须与库名完全一致——精确比对，不忽略大小写与首尾空白；防误删）</param>
         /// <param name="catId">猫 key（空=无猫上下文放行）</param>
         /// <returns>结果（载荷含库名与回收区路径）</returns>
         public DbResult DropLib(string libId, string confirm, string catId)
@@ -1077,9 +1077,10 @@ namespace Mau.Runtime
             {
                 return DbResult.Fail("BAD_ARGS", "库名不合法（小写字母 / 数字 / 短横线，2–32 位）: " + libId);
             }
-            if (NormalizeLibId(confirm) != lib)
+            // [段1] 确认串精确比对——不 Trim、不转大小写（不可逆动作的保护不得被归一化削掉）
+            if (!string.Equals(confirm, lib, StringComparison.Ordinal))
             {
-                return DbResult.Fail("BAD_ARGS", "confirm 须与库名一致（确认删库）: " + confirm);
+                return DbResult.Fail("BAD_ARGS", "confirm 须与库名完全一致（确认删库）: " + confirm);
             }
             string? deny = DbAccessPolicy.DenyReason(catId, lib);
             if (deny != null)
@@ -1111,7 +1112,7 @@ namespace Mau.Runtime
                         Directory.Move(libDir, trashPath);
                     }
                 }
-                catch (System.Exception ex)
+                catch (Exception ex)
                 {
                     return DbResult.Fail("DB_IO_FAIL", "移入回收区失败: " + ex.Message);
                 }
@@ -1125,7 +1126,20 @@ namespace Mau.Runtime
                 string writeErr = WriteIndex(libs);
                 if (writeErr.Length > 0)
                 {
-                    return DbResult.Fail("DB_IO_FAIL", writeErr);
+                    // [段2] 注册表写失败——目录已移走，尽量搬回原处（避免「库还在盘上但已不在注册表」的半删态）
+                    try
+                    {
+                        string libDir = Path.Combine(_dbRoot, lib);
+                        if (!Directory.Exists(libDir) && Directory.Exists(trashPath))
+                        {
+                            Directory.Move(trashPath, libDir);
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        return DbResult.Fail("DB_IO_FAIL", writeErr + "（目录已移入回收区且注册表未更新，需人工核对: " + trashPath + "）");
+                    }
+                    return DbResult.Fail("DB_IO_FAIL", writeErr + "（已回滚目录，库未删除）");
                 }
                 return DbResult.Success("库已移入回收区: " + lib, JsonUtil.Object(("id", lib), ("trash", trashPath)));
             }

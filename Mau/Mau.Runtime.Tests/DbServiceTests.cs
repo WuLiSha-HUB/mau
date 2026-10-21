@@ -424,6 +424,11 @@ namespace Mau.Runtime.Tests
                 Assert.Contains("admina", libs.Data);
                 DbResult wrongConfirm = db.DropLib("admina", "other", "");
                 Assert.Equal("BAD_ARGS", wrongConfirm.Code);
+                // 确认串精确比对——大小写 / 首尾空白均不构成确认（不可逆动作的保护不被归一化削掉）
+                DbResult caseConfirm = db.DropLib("admina", "AdminA", "");
+                Assert.Equal("BAD_ARGS", caseConfirm.Code);
+                DbResult padConfirm = db.DropLib("admina", " admina ", "");
+                Assert.Equal("BAD_ARGS", padConfirm.Code);
                 DbResult missing = db.DropLib("nolibx", "nolibx", "");
                 Assert.Equal("DB_LIB_NOT_FOUND", missing.Code);
                 DbResult drop = db.DropLib("admina", "admina", "");

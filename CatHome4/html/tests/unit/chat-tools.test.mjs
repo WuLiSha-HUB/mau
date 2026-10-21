@@ -3,7 +3,7 @@
 //
 // 覆盖：
 //   ① 声明面 ↔ 落位面不漂移——`TOOL_DECL`（各件自注册）与 `TOOL_SKELETONS`（落位表）键集必须一致，
-//      且同为运行态工具池 78 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
+//      且同为运行态工具池 81 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
 //   ② 骨架分派——登记工具走对应骨架；未登记工具走形态探测回落（禁止空白）
 //   ③ 专属骨架——`info`（分类摊平）/ `catinfo`（每猫一行）
 //   ④ 折叠行四级——前缀（图标 / 批次 / 失败）· 声明层 headline · 骨架兜底 · 规模后缀
@@ -44,6 +44,8 @@ const POOL = [
     'audio-play', 'audio-speak', 'py-run', 'py-list', 'py-service',
     // DbCat 5（A274）
     'db-put', 'db-query', 'db-get', 'db-update', 'db-delete',
+    // DbAdmin 3（库级管理——明细分列 / 建库 / 删库）
+    'dbAdmin-libs', 'dbAdmin-create', 'dbAdmin-drop',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -67,9 +69,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 78 件', () => {
+    it('落位表 = 工具池 81 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(78);
+        expect(POOL.length).toBe(81);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -354,6 +356,60 @@ describe('DbCat——库名与条目摘要（A274）', () => {
         const node = window.buildToolBlock(card('db-put', { lib: 'smriti', title: '甲', body: 'x' },
             'ERR|DB_TITLE_EXISTS|标题已存在: 甲'), 'toolcard');
         expect(node.textContent).toContain('DB_TITLE_EXISTS');
+        expect(node.querySelector('.chat-tool').classList.contains('err')).toBe(true);
+    });
+});
+
+describe('DbAdmin——库级管理渲染', () => {
+    /** 管理面回执三段（无 target 时省略该键） */
+    function adminResult(tool, target, summary, payload) {
+        var head = '{"ok":true,"tool":"' + tool + '"' + (target ? ',"target":"' + target + '"' : '') + '}';
+        return head + '\n' + summary + (payload ? '\n' + payload : '');
+    }
+
+    it('dbAdmin-libs——逐库一行（条目 / 墓碑 / 坏行 / 字节 / 创建 + 损坏标记）', () => {
+        const res = adminResult('dbAdmin-libs', '', '库 2（授权内 2 / 共 3——1 个未授权已隐藏）',
+            '{"libs":[{"id":"smriti","createdAt":"2026-10-21 13:10:33","entries":105,"tombstones":20,"badLines":0,"bytes":179699,"broken":false},'
+            + '{"id":"probe","createdAt":"2026-10-20 10:00:00","entries":0,"tombstones":0,"badLines":2,"bytes":900,"broken":true}]}');
+        const node = window.buildToolBlock(card('dbAdmin-libs', {}, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('库明细 · 2 个库');
+        expect(text).toContain('列举库明细（按猫授权过滤）');
+        expect(text).toContain('smriti · 条目 105 · 墓碑 20 · 坏行 0 · 175.5 KB');
+        expect(text).toContain('创建 2026-10-21 13:10:33');
+        expect(text).toContain('probe · 条目 0');
+        expect(text).toContain('900 B');
+        expect(text).toContain('⚠️ 损坏');
+    });
+
+    it('dbAdmin-libs——授权内无库时显式占位', () => {
+        const res = adminResult('dbAdmin-libs', '', '库 0（授权内 0 / 共 3——3 个未授权已隐藏）', '{"libs":[]}');
+        expect(window.buildToolBlock(card('dbAdmin-libs', {}, res), 'toolcard').textContent).toContain('（授权内无库）');
+    });
+
+    it('dbAdmin-create——库名与创建时刻自然语言化', () => {
+        const res = adminResult('dbAdmin-create', 'smriti2', '库已建立: smriti2',
+            '{"id":"smriti2","createdAt":"2026-10-21 15:30:00"}');
+        const node = window.buildToolBlock(card('dbAdmin-create', { lib: 'smriti2' }, res), 'toolcard');
+        expect(node.textContent).toContain('新建库 smriti2 · 已建立');
+        expect(node.textContent).toContain('库 smriti2 已建立');
+        expect(node.textContent).toContain('创建时刻 · 2026-10-21 15:30:00');
+    });
+
+    it('dbAdmin-drop——确认串入输入段，回收路径可见（可恢复）', () => {
+        const res = adminResult('dbAdmin-drop', 'tmpdb', '库已移入回收区: tmpdb',
+            '{"id":"tmpdb","trash":"C:/db/_trash/tmpdb-20261021_153000"}');
+        const node = window.buildToolBlock(card('dbAdmin-drop', { lib: 'tmpdb', confirm: 'tmpdb' }, res), 'toolcard');
+        expect(node.textContent).toContain('删除库 tmpdb · 已移入回收区');
+        expect(node.textContent).toContain('确认串 tmpdb');
+        expect(node.textContent).toContain('已移入回收区（可恢复）');
+        expect(node.textContent).toContain('回收路径 · C:/db/_trash/tmpdb-20261021_153000');
+    });
+
+    it('失败态——授权面拒绝落 err 块且机器码可见（不空白）', () => {
+        const node = window.buildToolBlock(card('dbAdmin-create', { lib: 'x1' },
+            'ERR|TOOL_FORBIDDEN|工具不在当前授权面: dbAdmin-create'), 'toolcard');
+        expect(node.textContent).toContain('TOOL_FORBIDDEN');
         expect(node.querySelector('.chat-tool').classList.contains('err')).toBe(true);
     });
 });
