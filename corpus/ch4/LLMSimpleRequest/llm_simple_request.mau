@@ -17,9 +17,6 @@
 // ── 主动传感器壳（探测 → bool 落盒，帧门控 1）──
 § 'P_AnyOpen' ↻ [1]: 'oa.is_open'["SVC", "LLMSimpleRequest"] > @anyOpen
 
-// P_Stall：等待兜底探测——工单已终结（Closed / TimeOut；oa.is_done）落盒（帧门控 1）
-§ 'P_OfficeDone' ↻ [1]: 'oa.is_done'[@office] > @stalled
-
 // ── 导线链 ──
 // T_Claim：原子接单（竞态失败回 Idle 重试）
 § 'T_Claim' : @anyOpen & 'S_Llm' = 'Idle' → 'oa.claim_next_simple'["SVC", "LLMSimpleRequest"] > @office | 'S_Llm' = 'Claimed' | 'S_Llm' = 'Idle'
@@ -36,11 +33,6 @@
 
 // T_Fetch：取回执文本——已结算必有一次读；读不到（盒缺失 / 空内容）即失败，走 T_Abort 回执后回 Idle（不留常驻态）
 § 'T_Fetch' : 'S_Llm' = 'Fetching' → 'llm.simple_read'[@office] > @reply | 'S_Llm' = 'Done' | 'S_Llm' = 'Failed'
-
-// T_Stall：等待兜底——工单已终结（Closed / TimeOut）而后台仍未结算 → 走失败出口，防实例常驻 Waiting
-// （A287 · 2026-10-22 C 项：Waiting 原无上限出口，单点异常即永久占用池位、并使重启闸门恒假）
-// 置于 T_Reply 之后——同帧 T_Reply 命中即转 Fetching，本导线条件随后为假，不与之竞争
-§ 'T_Stall' : 'S_Llm' = 'Waiting' & @stalled → 'self.desc'["执行失败", "", ""] | 'S_Llm' = 'Failed' | 'S_Llm' = 'Failed'
 
 // T_Done：回执——就绪后单发（与取数分导线，避免失败侧仍执行 complete_str）
 § 'T_Done' : 'S_Llm' = 'Done' → 'oa.complete_str'[@office, @reply] | 'self.desc'["空闲待命", "", ""] | 'S_Llm' = 'Idle' | 'S_Llm' = 'Failed'
