@@ -178,7 +178,7 @@ namespace Mau.Bricks
         }
 
         /// <summary>
-        /// 解析响应——choices[0].message.content；失败返回 ERR| 文本
+        /// 解析响应——choices[0].message.content；失败返回 ERR| 文本（空内容亦为失败：ERR|EMPTY_CONTENT）
         /// </summary>
         /// <param name="json">响应体</param>
         /// <returns>生成文本或 ERR| 错误</returns>
@@ -206,7 +206,13 @@ namespace Mau.Bricks
                 {
                     return "ERR|EMPTY_RESULT|响应无 message";
                 }
-                return JsonUtil.GetStr(message, "content", "");
+                string content = JsonUtil.GetStr(message, "content", "");
+                if (content.Length == 0)
+                {
+                    // A287（2026-10-22）——空内容不是有效回执：原样落空串会让调用方按「未就绪」无限轮询
+                    return "ERR|EMPTY_CONTENT|模型返回空内容";
+                }
+                return content;
             }
             finally
             {
@@ -234,4 +240,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:553100123E3CC4123081E6AE3F014ACFD83D6E45C58D5D94619408C2D0C85A2B
+// #MAU_CHECKSUM:SHA256:34B0D1AF31A38FAD8FA2E06D24C75C6F541130EFA75554634995A4BD1F4ABA62

@@ -9,13 +9,16 @@
 // 回执：result = 生成文本（成功）/ ERR| 文本（失败可见）
 
 // ── 状态机 ──
-§ 'S_Llm' = { 'Init', 'Idle', 'Claimed', 'Calling', 'Waiting', 'Done', 'Failed' }
+§ 'S_Llm' = { 'Init', 'Idle', 'Claimed', 'Calling', 'Waiting', 'Fetching', 'Done', 'Failed' }
 
 // T_Init：初始化自述
 § 'T_Init' : 'S_Llm' = 'Init' → 'self.desc'["空闲待命", "", ""] | 'S_Llm' = 'Idle' | 'S_Llm' = 'Idle'
 
 // ── 主动传感器壳（探测 → bool 落盒，帧门控 1）──
 § 'P_AnyOpen' ↻ [1]: 'oa.is_open'["SVC", "LLMSimpleRequest"] > @anyOpen
+
+// P_Stall：等待兜底探测——工单已终结（Closed / TimeOut；oa.is_done）落盒（帧门控 1）
+§ 'P_OfficeDone' ↻ [1]: 'oa.is_done'[@office] > @stalled
 
 // ── 导线链 ──
 // T_Claim：原子接单（竞态失败回 Idle 重试）
@@ -27,9 +30,17 @@
 // T_Call：启动后台一次性 LLM 调用（主线程立即返回——后台执行）
 § 'T_Call' : 'S_Llm' = 'Calling' → 'llm.simple_request'[@endpoint, @apikey, @model, @system, @content, @office] | 'self.desc'["调用中", "", ""] | 'S_Llm' = 'Waiting' | 'S_Llm' = 'Failed'
 
-// T_Reply：轮询取数——积木返回即就绪判据（不依赖传感器滞后值）；未就绪自环回 Waiting 下帧再试
-// （修 2026-10-13 竞态：传感器 @office 滞后一帧 → 提前判就绪 → 空回执）
-§ 'T_Reply' : 'S_Llm' = 'Waiting' → 'llm.simple_read'[@office] > @reply | 'S_Llm' = 'Done' | 'S_Llm' = 'Waiting'
+// T_Reply：轮询就绪——判据改为「后台已结算」（llm.simple_ready 读 done 盒），未就绪自环回 Waiting 下帧再试
+// （A287 · 2026-10-22 修：原用 llm.simple_read 的「回执非空」作就绪判据——空内容回执使判据永假，实例永久停在 Waiting）
+§ 'T_Reply' : 'S_Llm' = 'Waiting' → 'llm.simple_ready'[@office] | 'S_Llm' = 'Fetching' | 'S_Llm' = 'Waiting'
+
+// T_Fetch：取回执文本——已结算必有一次读；读不到（盒缺失 / 空内容）即失败，走 T_Abort 回执后回 Idle（不留常驻态）
+§ 'T_Fetch' : 'S_Llm' = 'Fetching' → 'llm.simple_read'[@office] > @reply | 'S_Llm' = 'Done' | 'S_Llm' = 'Failed'
+
+// T_Stall：等待兜底——工单已终结（Closed / TimeOut）而后台仍未结算 → 走失败出口，防实例常驻 Waiting
+// （A287 · 2026-10-22 C 项：Waiting 原无上限出口，单点异常即永久占用池位、并使重启闸门恒假）
+// 置于 T_Reply 之后——同帧 T_Reply 命中即转 Fetching，本导线条件随后为假，不与之竞争
+§ 'T_Stall' : 'S_Llm' = 'Waiting' & @stalled → 'self.desc'["执行失败", "", ""] | 'S_Llm' = 'Failed' | 'S_Llm' = 'Failed'
 
 // T_Done：回执——就绪后单发（与取数分导线，避免失败侧仍执行 complete_str）
 § 'T_Done' : 'S_Llm' = 'Done' → 'oa.complete_str'[@office, @reply] | 'self.desc'["空闲待命", "", ""] | 'S_Llm' = 'Idle' | 'S_Llm' = 'Failed'
