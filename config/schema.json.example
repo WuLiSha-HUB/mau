@@ -3,6 +3,7 @@
   "items": [
     { "key": "llm.thinking", "file": "llm.cfg", "default": "enabled", "sensitive": false, "writable": false, "desc": "思考模式（默认开启、运行时常开不可关闭；只读项）" },
     { "key": "llm.reasoning_effort", "file": "llm.cfg", "default": "high", "sensitive": false, "writable": true, "type": "string", "values": ["low", "high", "max"], "empty_desc": "空=回落 high", "desc": "思考强度（low / high / max；运行时实时读取——写盘即生效）" },
+    { "key": "llm.max_tokens", "file": "llm.cfg", "default": "131072", "sensitive": false, "writable": true, "type": "int", "min": "1", "max": "131072", "empty_desc": "空=回落 131072", "desc": "单次输出上限（max_tokens，显式随请求传入；实测 Foldin 端点接受 131072，DeepSeek 官方文档口径 8192。不传时上游按自家默认截断——实测默认 1024，回复与工具参数被切断）" },
     { "key": "http.port", "file": "app.cfg", "default": "", "sensitive": false, "writable": false, "empty_desc": "空=按端口段取值（开发区 8079 / 部署区 8080）", "desc": "HTTP 端口——显式覆盖端口段主端口；非法/越界回退区段主端口（启动时读取，改后重启生效）" },
     { "key": "llm.cache_isolation", "file": "llm.cfg", "default": "cat", "sensitive": false, "writable": true, "type": "string", "values": ["cat", "off"], "empty_desc": "空=非声明值 → 运行时回落 cat（启动与运行时各告警一次）", "desc": "LLM 缓存隔离粒度（cat=按猫 key / off=不隔离；会话标识 ≡ 猫 key，无按会话粒度）" },
     { "key": "ui.font_scale", "file": "ui.cfg", "default": "100", "sensitive": false, "writable": true, "type": "int", "min": "50", "max": "300", "desc": "界面字号缩放（百分比）——本地适配不同桌面缩放倍率；100=基准" },

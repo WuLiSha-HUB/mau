@@ -589,7 +589,7 @@ namespace CH4
             ConfigSchema schema = null;
             if (DataBox.TryResolve<ConfigSchema>(out schema) && schema != null)
             {
-                ConfigSchema.Item? item = schema.Find("audio.voice");
+                ConfigSchema.Item item = schema.Find("audio.voice");
                 if (item != null)
                 {
                     return item.Default;

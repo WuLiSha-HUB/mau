@@ -12,6 +12,10 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.11.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.11.0" />
     <PackageReference Include="Microsoft.CodeAnalysis.Workspaces.MSBuild" Version="4.11.0" />
+    <!-- 传递依赖钉版（NU1903）——Roslyn 4.11 带入 Microsoft.Build.* 17.7.2：
+         CVE-2025-26646 修补 17.8.29 · CVE-2025-55247 修补 17.8.43 → 取同时避开两者的 17.8.43 -->
+    <PackageReference Include="Microsoft.Build.Tasks.Core" Version="17.8.43" />
+    <PackageReference Include="Microsoft.Build.Utilities.Core" Version="17.8.43" />
   </ItemGroup>
 
   <ItemGroup>

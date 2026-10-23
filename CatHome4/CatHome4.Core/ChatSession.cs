@@ -259,6 +259,12 @@ namespace CH4
         /// <summary>已预警请求号——同一请求多 usage 帧只报一次（比对 _requestCount；0 为起点哨兵，请求号自 1 起）</summary>
         private int _lastMissAlertReq;
 
+        /// <summary>本次请求 finish_reason——流末由 Finish 事件回填（length = 输出被截断）</summary>
+        private string _finishReason = "";
+
+        /// <summary>已投截断提示请求号——同一请求只投一次（比对 _requestCount；0 为起点哨兵，请求号自 1 起）</summary>
+        private int _lastTruncationAlertReq;
+
         /// <summary>本轮开始时间戳——Stopwatch.GetTimestamp（roundsum 总耗时）</summary>
         private long _roundStartTick;
 
@@ -1604,6 +1610,7 @@ namespace CH4
                 // [段1] 槽预置 + 后台流式消费
                 StringBuilder text = new StringBuilder();
                 string toolCalls = "";
+                _finishReason = "";
                 await foreach (LlmStreamEvent ev in _llmRuntime.ChatStream(messages, _tools, ResolveCacheIsolationKey(), ct))
                 {
                     if (ev.Kind == LlmStreamKind.Text)
@@ -1727,6 +1734,11 @@ namespace CH4
                             _viewStore.AppendError(missAlert, ViewTimestamp());
                         }
                     }
+                    else if (ev.Kind == LlmStreamKind.Finish)
+                    {
+                        // finish_reason 落槽——length 的可见处置在流末结算段（日志 WARN + 提示气泡）
+                        _finishReason = ev.Text;
+                    }
                     else if (ev.Kind == LlmStreamKind.Done)
                     {
                         // F4 视图——done 由整块 replace 表达（流式结束不单独推事件；无需推送）
@@ -1770,6 +1782,17 @@ namespace CH4
                 }
                 // E3 Token 统计——结算行带本轮 usage（轮级：本轮全部请求累加；SSE 推送仍走 usage 事件——前端覆盖式显示整轮累计值）
                 llmSummary = llmSummary + "。本轮 Token：输入 " + _usagePrompt.ToString() + "（含缓存 " + _usageCacheHit.ToString() + "）· 输出 " + _usageCompletion.ToString();
+                // finish_reason=length——输出被截断：结算行点名 + WARN 日志 + 提示气泡（失败必须可见；同请求只提示一次）
+                if (_finishReason == "length")
+                {
+                    llmSummary = llmSummary + "；输出被截断（finish_reason=length）";
+                    LogStore.Add("LLM", 2, "输出被截断：finish_reason=length（输出 " + _usageCompletion.ToString() + " token 达上限——回复与工具参数不完整）", "LLM");
+                    if (_lastTruncationAlertReq != _requestCount)
+                    {
+                        _lastTruncationAlertReq = _requestCount;
+                        _viewStore.AppendError("⚠ 输出被截断：模型输出达 token 上限（finish_reason=length），本轮回复不完整。可调 llm.max_tokens 提高上限后重试", ViewTimestamp());
+                    }
+                }
                 LogStore.Add("LLM", 0, llmSummary, "LLM");
             }
             catch (System.OperationCanceledException ex)

@@ -240,6 +240,8 @@ namespace Mau.Providers
             payload["model"] = GetModel();
             payload["messages"] = wireMessages;
             payload["stream"] = true;
+            // 输出上限——显式传入（不传则吃上游默认值——实测 Foldin 默认 1024，回复与工具参数被静默切断）
+            payload["max_tokens"] = GetMaxTokens();
             // E3 Token 统计（CH2 移植）——流式 usage 兼容：要求服务端在 [DONE] 前发送完整统计块（usage-only 尾帧）
             payload["stream_options"] = new { include_usage = true };
             if (GetThinkingEnabled())

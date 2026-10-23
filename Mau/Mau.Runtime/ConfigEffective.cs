@@ -102,6 +102,10 @@ namespace Mau.Runtime
             {
                 return "MAU_LLM_REASONING_EFFORT";
             }
+            if (key == "llm.max_tokens")
+            {
+                return "MAU_LLM_MAX_TOKENS";
+            }
             return "";
         }
 

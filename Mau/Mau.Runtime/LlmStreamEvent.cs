@@ -50,7 +50,13 @@
         /// <summary>
         /// 工具决策流开始——首个 tool_calls 增量帧产出一次（后续分片静默；Text 为空）——2026-09-16：会话层 Tool 态判定依据
         /// </summary>
-        ToolCallsStart
+        ToolCallsStart,
+
+        /// <summary>
+        /// finish_reason 通知——流末产出一次（Text 携带上游原文：stop / length / tool_calls 等；为空不产事件）。
+        /// 用途：length = 输出被截断——消费方据此出声（失败必须可见）
+        /// </summary>
+        Finish
     }
 
     /// <summary>

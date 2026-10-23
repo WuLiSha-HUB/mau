@@ -51,6 +51,21 @@ namespace Mau.Providers
         private const string FallbackModel = "deepseek-v4-flash";
 
         /// <summary>
+        /// 默认输出上限——实测 Foldin 端点接受 131072（DeepSeek 官方文档口径 8192）；显式传入以脱离上游默认（实测默认 1024）
+        /// </summary>
+        private const int DefaultMaxTokens = 131072;
+
+        /// <summary>
+        /// 输出上限合法上界——取本端点实测可接受上限 131072；超界回落默认
+        /// </summary>
+        private const int MaxMaxTokens = 131072;
+
+        /// <summary>
+        /// 非法 max_tokens 已告警标记——避免每请求刷屏（静态：配置非法时进程内只告警一次）
+        /// </summary>
+        private static bool _maxTokensWarned;
+
+        /// <summary>
         /// 请求重试上限——S2 规格：同端点重试 3 次（共 4 次尝试），失败后中止（无配置池降级）
         /// </summary>
         private const int MaxRetries = 3;
@@ -407,6 +422,44 @@ namespace Mau.Providers
                 return norm;
             }
             return "high";
+        }
+
+        /// <summary>
+        /// 实时读取单次输出上限——全局配置 llm.max_tokens → MAU_LLM_MAX_TOKENS → 默认 131072。
+        /// 显式传入动机：不带 max_tokens 时上游按自家默认截断（实测 Foldin 默认 1024，回复正文与工具参数被切断）。
+        /// </summary>
+        /// <returns>max_tokens（有效区间 1..131072；空/非法回落默认，非法值进程内告警一次）</returns>
+        private int GetMaxTokens()
+        {
+            string value = "";
+            if (_globalConfig != null)
+            {
+                value = _globalConfig.Get("llm.max_tokens", "");
+            }
+            if (value.Length == 0)
+            {
+                string? env = Environment.GetEnvironmentVariable("MAU_LLM_MAX_TOKENS");
+                if (!string.IsNullOrEmpty(env))
+                {
+                    value = env;
+                }
+            }
+            string norm = value.Trim();
+            if (norm.Length == 0)
+            {
+                return DefaultMaxTokens;
+            }
+            int parsed;
+            if (int.TryParse(norm, out parsed) && parsed > 0 && parsed <= MaxMaxTokens)
+            {
+                return parsed;
+            }
+            if (!_maxTokensWarned)
+            {
+                _maxTokensWarned = true;
+                LogStore.Add("LLM", 2, "llm.max_tokens 非法（" + norm + "）——回落 " + DefaultMaxTokens.ToString(), "LLM");
+            }
+            return DefaultMaxTokens;
         }
     }
 }
