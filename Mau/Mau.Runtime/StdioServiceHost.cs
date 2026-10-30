@@ -319,6 +319,12 @@ namespace Mau.Runtime
                 return "ERR|" + _errPrefix + "_UNAVAILABLE|服务连续拉起失败达上限（" + _name + "）——需重启恢复";
             }
 
+            // [段0] 清残留回执——上次进程留下的 §EOF§ / 迟到行不得被本次 ready 握手读成「启动即退出」
+            string? staleLine;
+            while (_lines.TryTake(out staleLine, 0))
+            {
+            }
+
             ProcessStartInfo psi = new ProcessStartInfo();
             psi.FileName = _exe;
             string argsSuffix = _args.Length > 0 ? " " + _args : "";

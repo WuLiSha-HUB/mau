@@ -184,12 +184,10 @@ function getProject(configPath)
         getScriptFileNames: function () { return fileNames; },
         getScriptVersion: function (fileName)
         {
-            var v = versions[fileName];
-            if (v === undefined)
-            {
-                v = fileVersion(fileName);
-                versions[fileName] = v;
-            }
+            // 现算不缓存——缓存版本会让外部写入（ts-patch / 编辑器）对 LanguageService 不可见，
+            // 诊断停留在旧 Program 上（判例 2026-10-30：patch 落盘后 ts-check 仍报旧错）
+            var v = fileVersion(fileName);
+            versions[fileName] = v;
             return v;
         },
         getScriptSnapshot: function (fileName)

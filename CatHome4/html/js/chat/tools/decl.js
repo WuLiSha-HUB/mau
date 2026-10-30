@@ -141,7 +141,13 @@ var TOOL_SKELETONS = {
     // dbAdmin——库级管理（DbAdmin）
     'dbAdmin-libs': 'listing',
     'dbAdmin-create': 'text',
-    'dbAdmin-drop': 'text'
+    'dbAdmin-drop': 'text',
+    // ts——TypeScript 编码工具面（TsCat · A294）
+    'ts-check': 'diagnostics',
+    'ts-list': 'listing',
+    'ts-read': 'lines',
+    'ts-find-ref': 'matches',
+    'ts-patch': 'text'
 };
 
 // ── 骨架图标 / 中文名（与骨架一一对应）──────────────────────

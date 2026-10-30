@@ -3,7 +3,7 @@
 //
 // 覆盖：
 //   ① 声明面 ↔ 落位面不漂移——`TOOL_DECL`（各件自注册）与 `TOOL_SKELETONS`（落位表）键集必须一致，
-//      且同为运行态工具池 81 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
+//      且同为运行态工具池 86 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
 //   ② 骨架分派——登记工具走对应骨架；未登记工具走形态探测回落（禁止空白）
 //   ③ 专属骨架——`info`（分类摊平）/ `catinfo`（每猫一行）
 //   ④ 折叠行四级——前缀（图标 / 批次 / 失败）· 声明层 headline · 骨架兜底 · 规模后缀
@@ -19,7 +19,7 @@ beforeAll(async () => {
     await bootChatPage();
 });
 
-// 工具池基准——72 件（按工具组；新增工具须同批登记落位表 + 落件 + 本表）
+// 工具池基准——86 件（按工具组；新增工具须同批登记落位表 + 落件 + 本表）
 const POOL = [
     // TextCat 7
     'text-read', 'text-read_lines', 'text-read_between', 'text-write', 'text-append', 'text-replace', 'text-grep',
@@ -46,6 +46,8 @@ const POOL = [
     'db-put', 'db-query', 'db-get', 'db-update', 'db-delete',
     // DbAdmin 3（库级管理——明细分列 / 建库 / 删库）
     'dbAdmin-libs', 'dbAdmin-create', 'dbAdmin-drop',
+    // TsCat 5（A294——TS 编码工具面）
+    'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -69,9 +71,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 81 件', () => {
+    it('落位表 = 工具池 86 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(81);
+        expect(POOL.length).toBe(86);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -411,5 +413,107 @@ describe('DbAdmin——库级管理渲染', () => {
             'ERR|TOOL_FORBIDDEN|工具不在当前授权面: dbAdmin-create'), 'toolcard');
         expect(node.textContent).toContain('TOOL_FORBIDDEN');
         expect(node.querySelector('.chat-tool').classList.contains('err')).toBe(true);
+    });
+});
+
+describe('TsCat——TS 编码工具面渲染（A294）', () => {
+    /** TS 工具回执——单段 JSON（无结构化头） */
+    function tsResult(o) {
+        return JSON.stringify(o);
+    }
+
+    it('ts-check——折叠行读 counts，正例显式「无类型错误」', () => {
+        const res = tsResult({
+            ok: true, mode: 'project', tsconfig: 'tsconfig.json', files: 3,
+            errors: [], warnings: [], counts: { errors: 0, warnings: 0 }
+        });
+        const node = window.buildToolBlock(card('ts-check', { path: 'mau:tools/ts/fixtures/tsconfig.json' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('TS 类型检查 mau:tools/ts/fixtures/tsconfig.json');
+        expect(text).toContain('TS 检查 tsconfig.json · 0 错 0 警 · 3 文件');
+        expect(text).toContain('（无类型错误）');
+    });
+
+    it('ts-check——负例逐条诊断（文件:行:列 TS码 消息），单文件降级标注', () => {
+        const res = tsResult({
+            ok: true, mode: 'single', files: 1,
+            errors: [{ file: 'src/broken.ts', line: 15, col: 14, code: 2322, message: "Type 'string' is not assignable to type 'number'." }],
+            warnings: [], counts: { errors: 1, warnings: 0 }
+        });
+        const node = window.buildToolBlock(card('ts-check', { path: 'mau:tools/ts/fixtures-err/src/broken.ts' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('1 错 0 警 · 1 文件 · 单文件');
+        expect(text).toContain('src/broken.ts:15:14 TS2322');
+        expect(text).toContain("Type 'string' is not assignable to type 'number'.");
+    });
+
+    it('ts-list——模块判定与逐条声明（种类 / 名称 / 签名 / 行号）', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', isModule: true, kind: 'all', total: 2,
+            items: [
+                { kind: 'class', name: 'EntityStore', signature: 'export class EntityStore', line: 25 },
+                { kind: 'method', name: 'add', signature: 'public add(entity: Entity): void', line: 34 }
+            ]
+        });
+        const node = window.buildToolBlock(card('ts-list', { file: 'mau:tools/ts/fixtures/src/model.ts' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('结构 model.ts · 2 项 · 模块');
+        expect(text).toContain('[class] EntityStore — export class EntityStore (L25)');
+        expect(text).toContain('[method] add — public add(entity: Entity): void (L34)');
+    });
+
+    it('ts-read——源码段带行号列，折叠行标区间', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', symbol: 'add', kind: 'method',
+            text: '30:     /**\n31:      * 加入实体\n34:     public add(entity: Entity): void',
+            range: { start: 30, end: 37 }
+        });
+        const node = window.buildToolBlock(card('ts-read', { file: 'mau:tools/ts/fixtures/src/model.ts', symbol: 'add' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('读取 model.ts · add · method · L30-37');
+        expect(text).toContain('public add(entity: Entity): void');
+    });
+
+    it('ts-find-ref——三列命中（路径 / 行号 / 种类），无引用显式占位', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', symbol: 'makeEntity', total: 2,
+            refs: [
+                { file: 'src/model.ts', line: 61, col: 17, kind: 'decl' },
+                { file: 'src/consumer.ts', line: 12, col: 27, kind: 'ref' }
+            ]
+        });
+        const node = window.buildToolBlock(card('ts-find-ref', { file: 'mau:tools/ts/fixtures/src/model.ts', symbol: 'makeEntity' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('引用 makeEntity · 2 处');
+        expect(text).toContain('src/model.ts:61:17: decl');
+        expect(text).toContain('src/consumer.ts:12:27: ref');
+
+        const empty = window.buildToolBlock(card('ts-find-ref', { symbol: 'nobody' }, tsResult({ ok: true, total: 0, refs: [] })), 'toolcard');
+        expect(empty.textContent).toContain('（无引用）');
+    });
+
+    it('ts-patch——diff 逐行 + 诊断行；无变更显式占位', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', mode: 'replace', changedLines: 1,
+            diff: ["-     return { id: id, name: 'entity-' + id };", "+     return { id: id, name: 'probe-' + id };"],
+            diagnostics: [], errorCount: 0
+        });
+        const node = window.buildToolBlock(card('ts-patch', { file: 'mau:tools/ts/fixtures/src/model.ts', old: "x", new: "y" }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('改写 model.ts · 替换 · 1 行变更');
+        expect(text).toContain("-     return { id: id, name: 'entity-' + id };");
+        expect(text).toContain("+     return { id: id, name: 'probe-' + id };");
+
+        const noChange = window.buildToolBlock(card('ts-patch', { file: 'x.ts', symbol: 's' },
+            tsResult({ ok: true, mode: 'symbol', changedLines: 0, diff: [], diagnostics: [], errorCount: 0 })), 'toolcard');
+        expect(noChange.textContent).toContain('（无变更）');
+    });
+
+    it('服务失败——ok:false 显式出声（不静默成空白）', () => {
+        const node = window.buildToolBlock(card('ts-check', { path: 'x' },
+            tsResult({ ok: false, error: 'BAD_OP', message: '未知操作：ts.check' })), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('服务失败');
+        expect(text).toContain('BAD_OP');
     });
 });
