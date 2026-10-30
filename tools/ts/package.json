@@ -1,0 +1,13 @@
+{
+  "name": "cat-home4-ts-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CH4 node 常驻服务胶水——stdio 严格协议（design-ch4-node-services）。依赖按需引入（A291 ts-* 工具面）。",
+  "main": "stdio_server.js",
+  "scripts": {
+    "start": "node stdio_server.js"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}

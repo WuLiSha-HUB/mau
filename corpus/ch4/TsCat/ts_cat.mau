@@ -1,0 +1,58 @@
+﻿// ts_cat.mau —— TsCat 语料（TypeScript 编码工具组——ts-* 五件独立 Flow）
+// 角色：工具组 Flow——认领 TOOL 域 ts-* 5 工具（check / list / read / find-ref / patch）
+// 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 5 线认领执行 → complete_str 回执
+// 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（宿主发单落盒）
+// 线程模型：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行
+//   —— ts.check 首编译工程可达数十秒，超时口径取 2400 帧（120s）与工具执行层同限
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到结果按代际丢弃）
+// 服务面：积木经 DataBox.TryResolve<INodeService>（A290 宿主 S1 段绑定；未注入即 ERR|TS_NO_SERVICE）
+// 说明：Node 服务实例名固定 "ts"——配置段 node.service.ts.*（A291）
+
+// ── 状态机（5 线——每线独立生命周期）──
+§ 'S_Check' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_List' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Read' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_FindRef' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Patch' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+
+// ── 主动传感器壳——5 线各自探测（纯只读判断积木 → bool 落盒）──
+§ 'P_CheckOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-check"] > @ckOpen
+§ 'P_ListOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-list"] > @lsOpen
+§ 'P_ReadOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-read"] > @rdOpen
+§ 'P_FindRefOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-find-ref"] > @frOpen
+§ 'P_PatchOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-patch"] > @ptOpen
+
+// ══════════════ ts-check 线 ══════════════
+§ 'T_CheckClaim' : @ckOpen & 'S_Check' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-check"] > @ckOffice | 'S_Check' = 'Claimed' | 'S_Check' = 'Idle'
+§ 'T_CheckArgs' : 'S_Check' = 'Claimed' → 'oa.get_str'[@ckOffice, "args"] > @ckArgs | 'self.desc'["ts-check 执行中", "", ""] | 'S_Check' = 'Ready' | 'S_Check' = 'Failed'
+§ 'T_CheckExec' [t=2400, par] : 'S_Check' = 'Ready' → 'ts.check'[@ckArgs] > @ckRes | 'S_Check' = 'Done' | 'S_Check' = 'Failed'
+§ 'T_CheckReply' : 'S_Check' = 'Done' → 'oa.complete_str'[@ckOffice, @ckRes] | 'self.desc'["空闲待命", "", ""] | 'S_Check' = 'Idle' | 'S_Check' = 'Idle'
+§ 'T_CheckAbort' : 'S_Check' = 'Failed' → 'oa.complete_str'[@ckOffice, @ckRes] | 'S_Check' = 'Idle' | 'S_Check' = 'Idle'
+
+// ══════════════ ts-list 线 ══════════════
+§ 'T_ListClaim' : @lsOpen & 'S_List' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-list"] > @lsOffice | 'S_List' = 'Claimed' | 'S_List' = 'Idle'
+§ 'T_ListArgs' : 'S_List' = 'Claimed' → 'oa.get_str'[@lsOffice, "args"] > @lsArgs | 'self.desc'["ts-list 执行中", "", ""] | 'S_List' = 'Ready' | 'S_List' = 'Failed'
+§ 'T_ListExec' [t=2400, par] : 'S_List' = 'Ready' → 'ts.list'[@lsArgs] > @lsRes | 'S_List' = 'Done' | 'S_List' = 'Failed'
+§ 'T_ListReply' : 'S_List' = 'Done' → 'oa.complete_str'[@lsOffice, @lsRes] | 'self.desc'["空闲待命", "", ""] | 'S_List' = 'Idle' | 'S_List' = 'Idle'
+§ 'T_ListAbort' : 'S_List' = 'Failed' → 'oa.complete_str'[@lsOffice, @lsRes] | 'S_List' = 'Idle' | 'S_List' = 'Idle'
+
+// ══════════════ ts-read 线 ══════════════
+§ 'T_ReadClaim' : @rdOpen & 'S_Read' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-read"] > @rdOffice | 'S_Read' = 'Claimed' | 'S_Read' = 'Idle'
+§ 'T_ReadArgs' : 'S_Read' = 'Claimed' → 'oa.get_str'[@rdOffice, "args"] > @rdArgs | 'self.desc'["ts-read 执行中", "", ""] | 'S_Read' = 'Ready' | 'S_Read' = 'Failed'
+§ 'T_ReadExec' [t=2400, par] : 'S_Read' = 'Ready' → 'ts.read'[@rdArgs] > @rdRes | 'S_Read' = 'Done' | 'S_Read' = 'Failed'
+§ 'T_ReadReply' : 'S_Read' = 'Done' → 'oa.complete_str'[@rdOffice, @rdRes] | 'self.desc'["空闲待命", "", ""] | 'S_Read' = 'Idle' | 'S_Read' = 'Idle'
+§ 'T_ReadAbort' : 'S_Read' = 'Failed' → 'oa.complete_str'[@rdOffice, @rdRes] | 'S_Read' = 'Idle' | 'S_Read' = 'Idle'
+
+// ══════════════ ts-find-ref 线 ══════════════
+§ 'T_FindRefClaim' : @frOpen & 'S_FindRef' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-find-ref"] > @frOffice | 'S_FindRef' = 'Claimed' | 'S_FindRef' = 'Idle'
+§ 'T_FindRefArgs' : 'S_FindRef' = 'Claimed' → 'oa.get_str'[@frOffice, "args"] > @frArgs | 'self.desc'["ts-find-ref 执行中", "", ""] | 'S_FindRef' = 'Ready' | 'S_FindRef' = 'Failed'
+§ 'T_FindRefExec' [t=2400, par] : 'S_FindRef' = 'Ready' → 'ts.findRef'[@frArgs] > @frRes | 'S_FindRef' = 'Done' | 'S_FindRef' = 'Failed'
+§ 'T_FindRefReply' : 'S_FindRef' = 'Done' → 'oa.complete_str'[@frOffice, @frRes] | 'self.desc'["空闲待命", "", ""] | 'S_FindRef' = 'Idle' | 'S_FindRef' = 'Idle'
+§ 'T_FindRefAbort' : 'S_FindRef' = 'Failed' → 'oa.complete_str'[@frOffice, @frRes] | 'S_FindRef' = 'Idle' | 'S_FindRef' = 'Idle'
+
+// ══════════════ ts-patch 线 ══════════════
+§ 'T_PatchClaim' : @ptOpen & 'S_Patch' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-patch"] > @ptOffice | 'S_Patch' = 'Claimed' | 'S_Patch' = 'Idle'
+§ 'T_PatchArgs' : 'S_Patch' = 'Claimed' → 'oa.get_str'[@ptOffice, "args"] > @ptArgs | 'self.desc'["ts-patch 执行中", "", ""] | 'S_Patch' = 'Ready' | 'S_Patch' = 'Failed'
+§ 'T_PatchExec' [t=2400, par] : 'S_Patch' = 'Ready' → 'ts.patch'[@ptArgs] > @ptRes | 'S_Patch' = 'Done' | 'S_Patch' = 'Failed'
+§ 'T_PatchReply' : 'S_Patch' = 'Done' → 'oa.complete_str'[@ptOffice, @ptRes] | 'self.desc'["空闲待命", "", ""] | 'S_Patch' = 'Idle' | 'S_Patch' = 'Idle'
+§ 'T_PatchAbort' : 'S_Patch' = 'Failed' → 'oa.complete_str'[@ptOffice, @ptRes] | 'S_Patch' = 'Idle' | 'S_Patch' = 'Idle'

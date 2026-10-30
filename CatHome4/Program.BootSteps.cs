@@ -339,6 +339,11 @@ namespace CH4
             Mau.Runtime.PyService pySvc = new Mau.Runtime.PyService(WritableRootPaths(workspace));
             pySvc.Configure(System.IO.Path.Combine(dataRoot, "Data", "runtime"));
             DataBox.Bind<IPyService>(pySvc);
+            // node 执行与 node 服务进程管理——解释器读配置 node.node_path；与 py 两侧完全独立（design-ch4-node-services §二）
+            // 运行期目录注入——锚文件落点 node_<服务名>.pid（与 py 锚 py_*.pid 分离，各自自愈）
+            Mau.Runtime.NodeService nodeSvc = new Mau.Runtime.NodeService(WritableRootPaths(workspace));
+            nodeSvc.Configure(System.IO.Path.Combine(dataRoot, "Data", "runtime"));
+            DataBox.Bind<INodeService>(nodeSvc);
             // A110 浏览器服务——系统 Edge headless + 裸 CDP（零第三方依赖 · 每猫独立 profile · timeback 域限定）
             CdpBrowserService browserSvc = new CdpBrowserService(dataRoot);
             DataBox.Bind<IBrowserService>(browserSvc);
@@ -885,6 +890,16 @@ namespace CH4
                     ReportPyAutostartDegrade(pyResult);
                 }
             }
+            // node 服务自启——与 py 两侧独立（各自实例 / 各自锚 / 各自降级码；任一侧失败不阻断另一侧）
+            {
+                INodeService nodeAutostart;
+                if (DataBox.TryResolve<INodeService>(out nodeAutostart) && nodeAutostart != null)
+                {
+                    string nodeResult = nodeAutostart.Autostart();
+                    LogStore.Add("CatHome4", 1, "node.boot | " + nodeResult, "CONFIG");
+                    ReportNodeAutostartDegrade(nodeResult);
+                }
+            }
             // 非交互模式到此为止——外观层与常驻附属（多猫 / 前端测试服务 / QQ）不启动（A74：端口零占用）
             if (ctx.Headless)
             {
@@ -962,6 +977,53 @@ namespace CH4
                         continue;
                     }
                     StartupDegradation.Report("PY_AUTOSTART_FAILED", StartupDegradation.KindExternal, "py 服务",
+                        StartupDegradation.StateUnavailable, "服务自启失败：" + name,
+                        "面板「资源」页签查看该服务错误并手动启动", "S7");
+                }
+            }
+        }
+
+        /// <summary>
+        /// node 自启结果解析——`errors` 数组非空时逐服务登记降级（与 py 分开编码，失败面按面归因）。
+        /// </summary>
+        /// <param name="result">INodeService.Autostart 返回体（JSON 或 ERR| 前缀）</param>
+        internal static void ReportNodeAutostartDegrade(string result)
+        {
+            if (result == null || result.Length == 0)
+            {
+                return;
+            }
+            if (result.StartsWith("ERR|", StringComparison.Ordinal))
+            {
+                StartupDegradation.Report("NODE_AUTOSTART_FAILED", StartupDegradation.KindExternal, "node 服务",
+                    StartupDegradation.StateUnavailable, "node 自启未执行：" + result,
+                    "配置 node.node_path 后在面板「资源」页签手动启动服务", "S7");
+                return;
+            }
+            System.Text.Json.JsonDocument doc = JsonUtil.Parse(result, "node.autostart");
+            if (doc == null)
+            {
+                StartupDegradation.Report("NODE_AUTOSTART_UNPARSED", StartupDegradation.KindInternal, "node 服务",
+                    StartupDegradation.StateUnavailable, "node 自启返回体无法解析：" + TruncateForLog(result, 120),
+                    "内部一致性缺陷（需上报）——附启动报告与日志反馈", "S7");
+                return;
+            }
+            using (doc)
+            {
+                System.Text.Json.JsonElement root = doc.RootElement;
+                System.Text.Json.JsonElement errors;
+                if (!root.TryGetProperty("errors", out errors) || errors.ValueKind != System.Text.Json.JsonValueKind.Array)
+                {
+                    return;
+                }
+                for (int i = 0; i < errors.GetArrayLength(); i = i + 1)
+                {
+                    string name = errors[i].GetString();
+                    if (name == null || name.Length == 0)
+                    {
+                        continue;
+                    }
+                    StartupDegradation.Report("NODE_AUTOSTART_FAILED", StartupDegradation.KindExternal, "node 服务",
                         StartupDegradation.StateUnavailable, "服务自启失败：" + name,
                         "面板「资源」页签查看该服务错误并手动启动", "S7");
                 }

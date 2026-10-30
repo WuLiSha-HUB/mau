@@ -29,6 +29,14 @@
     { "key": "py.service.kokoro.args", "file": "py.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=无附加启动参数", "desc": "Kokoro 服务启动参数（命令行附加串——stdio_server.py 传 --home <KOKORO_HOME>）" },
     { "key": "py.service.kokoro.out_dir", "file": "py.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=系统临时目录 cat-home4-tts", "desc": "TTS 产物目录（WAV 落点——未显式指定 out 时采用；空=系统临时目录）" },
     { "key": "py.service.kokoro.timeout_ms", "file": "py.cfg", "default": "120000", "sensitive": false, "writable": true, "type": "int", "min": "1000", "max": "120000", "desc": "Kokoro 单次调用超时毫秒（含冷启动 2.6 s 与首次 CUDA 图执行；上限与工具执行层同口径）" },
-    { "key": "py.service.kokoro.follow", "file": "py.cfg", "default": "false", "sensitive": false, "writable": true, "type": "bool", "desc": "Kokoro 随宿主启动拉起（宿主启动链调 Autostart——接线后生效；默认 false=首次调用时按需拉起）" }
+    { "key": "py.service.kokoro.follow", "file": "py.cfg", "default": "false", "sensitive": false, "writable": true, "type": "bool", "desc": "Kokoro 随宿主启动拉起（宿主启动链调 Autostart——接线后生效；默认 false=首次调用时按需拉起）" },
+    { "key": "node.node_path", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=未配置 → node 服务明示不可用（不回落 PATH 探测）", "desc": "Node.js 解释器路径（node.exe 全路径；空=未配置——node 服务不可用；获取方式 where node）" },
+    { "key": "node.service.ts.node", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=取 node.node_path", "desc": "ts 服务解释器覆盖（空=取 node.node_path）" },
+    { "key": "node.service.ts.script", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=服务未配置 → ts 服务不可用", "desc": "ts 服务入口脚本（受控根寻址 mau:tools/ts/stdio_server.js，或全路径）" },
+    { "key": "node.service.ts.home", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=不传 --home（服务脚本自行判定）", "desc": "ts 服务环境目录（起服务时以 --home 传入）" },
+    { "key": "node.service.ts.args", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=无附加启动参数", "desc": "ts 服务启动参数（命令行附加串）" },
+    { "key": "node.service.ts.out_dir", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=业务侧自行兜底", "desc": "ts 服务产物目录（业务侧消费）" },
+    { "key": "node.service.ts.timeout_ms", "file": "node.cfg", "default": "120000", "sensitive": false, "writable": true, "type": "int", "min": "1000", "max": "120000", "desc": "ts 服务单次调用超时毫秒（含冷启动；上限与工具执行层同口径）" },
+    { "key": "node.service.ts.follow", "file": "node.cfg", "default": "false", "sensitive": false, "writable": true, "type": "bool", "desc": "ts 服务随宿主启动拉起（默认 false=首次调用时按需拉起）" }
   ]
 }

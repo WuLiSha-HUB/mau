@@ -235,9 +235,12 @@ namespace CatHome4.Observe
             // [段2] 解释器与内核——路径配置 + 真跑一次读版本（运行必需）
             AddPathCommandProbe(cfg, direct, jobs, "ps.pwsh_path", LevelRequired, "PowerShell 7", "--version", TtlStaticMs, now);
             AddPathCommandProbe(cfg, direct, jobs, "py.python_path", LevelRequired, "Python", "--version", TtlStaticMs, now);
+            AddPathCommandProbe(cfg, direct, jobs, "node.node_path", LevelRequired, "Node.js", "--version", TtlStaticMs, now);
             AddPathFileVersionProbe(cfg, direct, jobs, "browser.kernel_path", LevelRequired, "浏览器内核", TtlStaticMs, now);
             // [段3] Kokoro 服务——配置完整性（不探活：探活会拉起 1.2 GB 进程，副作用不可接受）
             CollectKokoro(cfg, ws, direct, jobs, now);
+            // [段3b] node 服务——配置完整性（不探活：拉起常驻进程副作用不可接受，存活态归资源页签）
+            CollectNodeService(cfg, ws, direct, jobs, now);
             // [段4] LLM 端点池——**已移出 deps 段**（A253 扩展）：改为管理面板独立区块 + 手动探活
             //       （LlmEndpointProbe.ProbeAsync——常态只做配置完整性，真探活按需触发，见 design-ch4-pytools §七 D3）
             // [段5] 可选功能——配置完整性（未配置属正常态，不报红）
@@ -246,7 +249,6 @@ namespace CatHome4.Observe
             CollectQqBot(direct, now);
             // [段6] 开发辅助——外部命令版本（一次性档）+ 自举链文件
             AddCommandProbe(direct, jobs, "dotnet", "dotnet --version", LevelDev, "dotnet SDK", "--version", TtlOnceMs, now);
-            AddCommandProbe(direct, jobs, "node", "node --version", LevelDev, "Node.js", "--version", TtlOnceMs, now);
             AddCommandProbe(direct, jobs, "git", "git --version", LevelDev, "Git", "--version", TtlOnceMs, now);
             CollectRepoArtifacts(ws, direct, jobs, now);
         }
@@ -383,6 +385,76 @@ namespace CatHome4.Observe
             job.Kind = "paths";
             job.TtlMs = TtlStaticMs;
             job.Paths.Add(python);
+            job.Paths.Add(rr.FullPath);
+            jobs.Add(job);
+        }
+
+        /// <summary>
+        /// node 服务探测——逐实例取入口脚本与解释器（服务型档；不探活——拉起常驻进程副作用不可接受）。
+        /// </summary>
+        /// <param name="cfg">配置读面（可 null）</param>
+        /// <param name="ws">工作区配置（受控根寻址基准；可 null）</param>
+        /// <param name="direct">配置类直接结果</param>
+        /// <param name="jobs">IO 待探任务</param>
+        /// <param name="now">当前时刻</param>
+        private static void CollectNodeService(ConfigStore cfg, WorkspaceConfig ws, List<ProbeResult> direct, List<ProbeJob> jobs, long now)
+        {
+            CollectStdioService(cfg, ws, direct, jobs, now, "ts", "ts", "Node 服务（ts）");
+        }
+
+        /// <summary>
+        /// stdio 服务实例探测——入口脚本 + 解释器路径存在即可用；存活态归资源页签（design-ch4-node-services §五）。
+        /// </summary>
+        /// <param name="cfg">配置读面（可 null）</param>
+        /// <param name="ws">工作区配置（受控根寻址基准；可 null）</param>
+        /// <param name="direct">配置类直接结果</param>
+        /// <param name="jobs">IO 待探任务</param>
+        /// <param name="now">当前时刻</param>
+        /// <param name="serviceName">服务名（配置段 node.service.&lt;名&gt;.）</param>
+        /// <param name="overrideKey">解释器覆盖键名（node）</param>
+        /// <param name="displayName">页签显示名</param>
+        private static void CollectStdioService(ConfigStore cfg, WorkspaceConfig ws, List<ProbeResult> direct, List<ProbeJob> jobs, long now,
+            string serviceName, string overrideKey, string displayName)
+        {
+            string prefix = "node.service." + serviceName + ".";
+            string script = "";
+            string exe = "";
+            if (cfg != null)
+            {
+                script = cfg.Get(prefix + "script", "");
+                exe = cfg.Get(prefix + overrideKey, "");
+                if (exe.Length == 0)
+                {
+                    exe = cfg.Get("node.node_path", "");
+                }
+            }
+            if (script.Length == 0)
+            {
+                direct.Add(MakeResultAt(LevelRequired, displayName, StateUnconfigured, "未配置（" + prefix + "script 空）", TtlStaticMs, now));
+                return;
+            }
+            if (ws == null)
+            {
+                direct.Add(MakeResultAt(LevelRequired, displayName, StateUnusable, "受控根表不可用——脚本寻址无法解析", TtlStaticMs, now));
+                return;
+            }
+            RootResolveResult rr = RootPathResolver.Expand(script, ws.Roots, Environment.CurrentDirectory);
+            if (!rr.Ok)
+            {
+                direct.Add(MakeResultAt(LevelRequired, displayName, StateUnusable, "脚本寻址非法：" + rr.ErrorCode, TtlStaticMs, now));
+                return;
+            }
+            if (exe.Length == 0)
+            {
+                direct.Add(MakeResultAt(LevelRequired, displayName, StateUnconfigured, "未配置（解释器空——服务覆盖与 node.node_path 均未设）", TtlStaticMs, now));
+                return;
+            }
+            ProbeJob job = new ProbeJob();
+            job.Level = LevelRequired;
+            job.Name = displayName;
+            job.Kind = "paths";
+            job.TtlMs = TtlStaticMs;
+            job.Paths.Add(exe);
             job.Paths.Add(rr.FullPath);
             jobs.Add(job);
         }

@@ -7,6 +7,7 @@ var resInfoEl = document.getElementById('resInfo');
 var resProcEl = document.getElementById('resProc');
 var resLoopEl = document.getElementById('resLoop');
 var resPyEl = document.getElementById('resPy');
+var resNodeEl = document.getElementById('resNode');
 var resGpuEl = document.getElementById('resGpu');
 var resPauseBtn = document.getElementById('resPause');
 
@@ -135,6 +136,7 @@ function renderRes(res) {
     renderResProc(res.proc || {}, res.loop || {});
     renderResLoop(res.loop || {});
     renderResPy(res.py || []);
+    renderResNode(res.node || []);
     renderResGpu(res.gpu || {});
 
     // 曲线缓存——暂停时不追加（数字块照常更新）
@@ -214,6 +216,25 @@ function renderResPy(list) {
         var state = s.alive ? '运行中' : '未启动';
         var detail = state + (s.pid > 0 ? (' · pid=' + s.pid) : '') + ' · ' + fmtResMb(s.ws);
         resPyEl.appendChild(buildResRow(s.name || '(未命名)', detail));
+    }
+}
+
+/**
+ * node 服务块——逐服务一行（名称 / 状态 / PID / 工作集）
+ * @param {Array} list 快照 node 段（与 py 段并列独立——design-ch4-node-services §五）
+ */
+function renderResNode(list) {
+    if (!resNodeEl) { return; }
+    resNodeEl.textContent = '';
+    if (list.length === 0) {
+        resNodeEl.appendChild(buildResRow('（无）', '未声明服务或 INodeService 未注入'));
+        return;
+    }
+    for (var i = 0; i < list.length; i = i + 1) {
+        var s = list[i];
+        var state = s.alive ? '运行中' : '未启动';
+        var detail = state + (s.pid > 0 ? (' · pid=' + s.pid) : '') + ' · ' + fmtResMb(s.ws);
+        resNodeEl.appendChild(buildResRow(s.name || '(未命名)', detail));
     }
 }
 
