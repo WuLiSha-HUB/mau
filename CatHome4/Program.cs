@@ -1024,6 +1024,12 @@ namespace CH4
                 {
                     return;
                 }
+                // cwd 中立——node 的 cwd 恒为系统临时目录，永不指向 testDir：testDir 位于运行区内
+                // （MauOut\html\tests），cwd 落在那里会让 node 持住运行区目录句柄，下一次 restart-* 的
+                // 「原子切换运行区」改名必失败（判例 2026-10-18 / 2026-10-30 三轮）。
+                // server.js 全程只用 __dirname、不依赖 cwd，故脚本路径必须绝对化。
+                string neutralCwd = System.IO.Path.GetTempPath();
+                string serverJs = System.IO.Path.Combine(testDir, "server.js");
                 // node_modules 缺失 → 自动部署（npm install + playwright chromium + 启动 server.js——后台链；纯净仓库跟随 Mau 自动部署）
                 if (!System.IO.Directory.Exists(System.IO.Path.Combine(testDir, "node_modules")))
                 {
@@ -1037,8 +1043,9 @@ namespace CH4
                     System.Diagnostics.ProcessStartInfo deployPsi = new System.Diagnostics.ProcessStartInfo
                     {
                         FileName = "cmd.exe",
-                        Arguments = "/c npm install && node server.js",
-                        WorkingDirectory = testDir,
+                        // --prefix 指定安装目录（cwd 中立后 npm 不能靠 cwd 找 package.json）；node 走绝对脚本路径
+                        Arguments = "/c npm install --prefix \"" + testDir + "\" && node \"" + serverJs + "\"",
+                        WorkingDirectory = neutralCwd,
                         CreateNoWindow = true,
                         UseShellExecute = false
                     };
@@ -1052,8 +1059,8 @@ namespace CH4
                 System.Diagnostics.ProcessStartInfo nodePsi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "node",
-                    Arguments = "server.js",
-                    WorkingDirectory = testDir,
+                    Arguments = "\"" + serverJs + "\"",
+                    WorkingDirectory = neutralCwd,
                     CreateNoWindow = true,
                     UseShellExecute = false
                 };

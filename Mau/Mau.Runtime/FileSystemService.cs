@@ -933,6 +933,33 @@ namespace Mau.Runtime
             FileVersionInfo info = FileVersionInfo.GetVersionInfo(resolved);
             string product = SafeText(info.ProductVersion);
             string file = SafeText(info.FileVersion);
+            // [段3] 空值 / 全零占位归一——0.0.0.0 是 csc 直编产物的占位形态，不算版本事实（CR-1 第二向：不把零值当正常版本）
+            if (IsZeroVersionText(product))
+            {
+                product = "";
+            }
+            if (IsZeroVersionText(file))
+            {
+                file = "";
+            }
+            // [段4] Win32 回退——.NET 对 UE4 monolithic Shipping exe 整体取空（CR-1 第一向：假阴性），改按 RT_VERSION 内 Translation 表逐语言/代码页取
+            string fixedVersion = "";
+            if (product.Length == 0 && file.Length == 0)
+            {
+                bool hasVersionResource = ReadVersionFactsWin32(resolved, out product, out file, out fixedVersion);
+                if (file.Length == 0 && fixedVersion.Length > 0)
+                {
+                    file = fixedVersion;
+                }
+                if (product.Length == 0 && file.Length == 0)
+                {
+                    if (hasVersionResource)
+                    {
+                        throw new InvalidDataException("PE file has an RT_VERSION resource but no readable version facts (ProductVersion/FileVersion empty or zero placeholder, VS_FIXEDFILEINFO all-zero).");
+                    }
+                    throw new InvalidDataException("PE file has no version resource (no RT_VERSION entry).");
+                }
+            }
             FsVersionFacts facts = new FsVersionFacts();
             facts.ResolvedPath = resolved;
             facts.ProductVersion = product;
@@ -946,11 +973,7 @@ namespace Mau.Runtime
                 facts.Version = file;
                 facts.FallbackUsed = true;
             }
-            if (facts.Version.Length == 0)
-            {
-                throw new InvalidDataException("PE file has no version resource.");
-            }
-            // [段3] 元数据——修改时间与大小（同一次读取的自然产物）
+            // [段5] 元数据——修改时间与大小（同一次读取的自然产物）
             FileInfo fi = new FileInfo(resolved);
             facts.LastWrite = fi.LastWriteTime;
             facts.SizeBytes = fi.Length;
@@ -1061,6 +1084,199 @@ namespace Mau.Runtime
             facts.IgnoredDirs = ignoredDirs;
             facts.HitTotal = hitTotal;
             return facts;
+        }
+        /// <summary>
+        /// 取版本资源块字节数（只认 RT_VERSION 类型；0 = 无版本资源块）
+        /// </summary>
+        [System.Runtime.InteropServices.DllImport("version.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern int GetFileVersionInfoSizeW(string fileName, out int handle);
+        /// <summary>
+        /// 取版本资源块内容
+        /// </summary>
+        [System.Runtime.InteropServices.DllImport("version.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern bool GetFileVersionInfoW(string fileName, int handle, int size, byte[] block);
+        /// <summary>
+        /// 版本块内取值（字符串键 / Translation 表 / VS_FIXEDFILEINFO）
+        /// </summary>
+        [System.Runtime.InteropServices.DllImport("version.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern bool VerQueryValueW(byte[] block, string subBlock, out IntPtr buffer, out int length);
+        /// <summary>
+        /// 只读映射模块（LOAD_LIBRARY_AS_DATAFILE）——资源类型遍历用，不执行映像
+        /// </summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern IntPtr LoadLibraryExW(string fileName, IntPtr file, uint flags);
+        /// <summary>
+        /// 卸载模块映射
+        /// </summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool FreeLibrary(IntPtr module);
+        /// <summary>
+        /// 按资源类型枚举资源名（本类只用 RT_VERSION = 16）
+        /// </summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode, SetLastError = true)]
+        private static extern bool EnumResourceNamesW(IntPtr module, IntPtr type, EnumResNameProcW proc, IntPtr param);
+        /// <summary>
+        /// 资源枚举回调签名（EnumResourceNamesW）
+        /// </summary>
+        private delegate bool EnumResNameProcW(IntPtr module, IntPtr type, IntPtr name, IntPtr param);
+        /// <summary>
+        /// RT_VERSION 枚举回调——计数器 +1 后继续枚举
+        /// </summary>
+        private static bool CountVersionEntry(IntPtr module, IntPtr type, IntPtr name, IntPtr counter)
+        {
+            System.Runtime.InteropServices.Marshal.WriteInt32(counter, System.Runtime.InteropServices.Marshal.ReadInt32(counter) + 1);
+            return true;
+        }
+        /// <summary>
+        /// 按 RT_VERSION（资源类型 16）遍历模块资源条目并计数——仅用于错误文案区分「无版本资源」与「有资源但读不出」。
+        /// </summary>
+        /// <param name="path">已解析绝对路径</param>
+        /// <returns>RT_VERSION 资源条目数（0 = 无版本资源）</returns>
+        private static int CountVersionResourceEntries(string path)
+        {
+            IntPtr module = LoadLibraryExW(path, IntPtr.Zero, 0x00000002);
+            if (module == IntPtr.Zero)
+            {
+                return 0;
+            }
+            IntPtr counter = System.Runtime.InteropServices.Marshal.AllocHGlobal(4);
+            try
+            {
+                System.Runtime.InteropServices.Marshal.WriteInt32(counter, 0);
+                EnumResourceNamesW(module, new IntPtr(16), CountVersionEntry, counter);
+                return System.Runtime.InteropServices.Marshal.ReadInt32(counter);
+            }
+            finally
+            {
+                System.Runtime.InteropServices.Marshal.FreeHGlobal(counter);
+                FreeLibrary(module);
+            }
+        }
+        /// <summary>
+        /// Win32 版本事实读取（CR-1 回退通道）——按 RT_VERSION 资源内 VarFileInfo\\Translation 表枚举全部语言/代码页组合
+        /// （不依赖固定 0409/04b0，这是假阴性的根因），字符串键缺失时回落 VS_FIXEDFILEINFO 数值版本；全零占位一律归空。
+        /// </summary>
+        /// <param name="path">已解析绝对路径</param>
+        /// <param name="product">ProductVersion（取不到为空串）</param>
+        /// <param name="file">FileVersion（取不到为空串）</param>
+        /// <param name="fixedVersion">VS_FIXEDFILEINFO 数值版本 a.b.c.d（全零 / 缺失为空串）</param>
+        /// <returns>文件是否含 RT_VERSION 资源条目（错误文案据此区分「无资源」与「有资源但读不出」）</returns>
+        private static bool ReadVersionFactsWin32(string path, out string product, out string file, out string fixedVersion)
+        {
+            product = "";
+            file = "";
+            fixedVersion = "";
+            int handle;
+            int size = GetFileVersionInfoSizeW(path, out handle);
+            if (size <= 0)
+            {
+                return CountVersionResourceEntries(path) > 0;
+            }
+            byte[] block = new byte[size];
+            if (!GetFileVersionInfoW(path, 0, size, block))
+            {
+                return true;
+            }
+            IntPtr table;
+            int tableBytes;
+            if (VerQueryValueW(block, "\\VarFileInfo\\Translation", out table, out tableBytes) && table != IntPtr.Zero && tableBytes >= 4)
+            {
+                int groups = tableBytes / 4;
+                for (int i = 0; i < groups; i++)
+                {
+                    byte[] pair = new byte[4];
+                    System.Runtime.InteropServices.Marshal.Copy(new IntPtr(table.ToInt64() + (i * 4)), pair, 0, 4);
+                    int lang = pair[0] | (pair[1] << 8);
+                    int codePage = pair[2] | (pair[3] << 8);
+                    string prefix = "\\StringFileInfo\\" + lang.ToString("x4") + codePage.ToString("x4") + "\\";
+                    if (product.Length == 0)
+                    {
+                        product = ReadBlockString(block, prefix + "ProductVersion");
+                    }
+                    if (file.Length == 0)
+                    {
+                        file = ReadBlockString(block, prefix + "FileVersion");
+                    }
+                    if (product.Length > 0 && file.Length > 0)
+                    {
+                        break;
+                    }
+                }
+            }
+            fixedVersion = ReadBlockFixedVersion(block);
+            if (IsZeroVersionText(product))
+            {
+                product = "";
+            }
+            if (IsZeroVersionText(file))
+            {
+                file = "";
+            }
+            return true;
+        }
+        /// <summary>
+        /// 读版本资源块内的单个字符串值（UTF-16——去掉尾零；键不存在为空串）
+        /// </summary>
+        /// <param name="block">版本资源块</param>
+        /// <param name="subBlock">子块路径（\\StringFileInfo\\langcp\\键名）</param>
+        /// <returns>字符串值（取不到为空串）</returns>
+        private static string ReadBlockString(byte[] block, string subBlock)
+        {
+            IntPtr buffer;
+            int length;
+            if (!VerQueryValueW(block, subBlock, out buffer, out length) || buffer == IntPtr.Zero || length <= 0)
+            {
+                return "";
+            }
+            string value = System.Runtime.InteropServices.Marshal.PtrToStringUni(buffer) ?? "";
+            return value.TrimEnd('\0');
+        }
+        /// <summary>
+        /// 读 VS_FIXEDFILEINFO 的数值版本 a.b.c.d——全零 / 结构缺失返回空串
+        /// </summary>
+        /// <param name="block">版本资源块</param>
+        /// <returns>数值版本（全零为空串）</returns>
+        private static string ReadBlockFixedVersion(byte[] block)
+        {
+            IntPtr buffer;
+            int length;
+            if (!VerQueryValueW(block, "\\", out buffer, out length) || buffer == IntPtr.Zero || length < 52)
+            {
+                return "";
+            }
+            uint fileVersionMS = (uint)System.Runtime.InteropServices.Marshal.ReadInt32(buffer, 8);
+            uint fileVersionLS = (uint)System.Runtime.InteropServices.Marshal.ReadInt32(buffer, 12);
+            if (fileVersionMS == 0 && fileVersionLS == 0)
+            {
+                return "";
+            }
+            return ((fileVersionMS >> 16) & 0xFFFF).ToString() + "." + (fileVersionMS & 0xFFFF).ToString() + "." + ((fileVersionLS >> 16) & 0xFFFF).ToString() + "." + (fileVersionLS & 0xFFFF).ToString();
+        }
+        /// <summary>
+        /// 判定「全零占位版本」（空串 / 纯空白 / 0 / 0.0 / 0.0.0.0）——csc 直编产物的占位形态，不算版本事实
+        /// （CR-1 第二向：不把 0.0.0.0 当正常回显）。
+        /// </summary>
+        /// <param name="text">版本文本</param>
+        /// <returns>true = 空或全零占位</returns>
+        private static bool IsZeroVersionText(string text)
+        {
+            if (text.Length == 0)
+            {
+                return true;
+            }
+            for (int i = 0; i < text.Length; i++)
+            {
+                char c = text[i];
+                if (c == '.' || c == ' ' || c == '\t')
+                {
+                    continue;
+                }
+                if (c != '0')
+                {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 
