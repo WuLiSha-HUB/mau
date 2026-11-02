@@ -578,7 +578,10 @@ namespace CatHome4.Admin
             if (cfg.DisplayName != null && cfg.DisplayName.Length > 0)
             {
                 cat.DisplayName = cfg.DisplayName;
-                cat.Session.SetDisplayName(cfg.DisplayName);
+                if (cat.Session != null)
+                {
+                    cat.Session.SetDisplayName(cfg.DisplayName);
+                }
             }
             cat.Type = cfg.Type == null ? "" : cfg.Type;
             cat.InjectList = injectList;
@@ -587,11 +590,17 @@ namespace CatHome4.Admin
             cat.QqBotId = ResolveQqBotId(cfg);
             cat.QqBotEnable = cfg.QqBotEnable;
             cat.UserInjectIdleOnly = cfg.UserInjectIdleOnly;
-            cat.Session.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
+            if (cat.Session != null)
+            {
+                cat.Session.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
+            }
             cat.AppearanceId = ResolveAppearanceId(cfg);
             cat.RoundSummary = ResolveEffectiveRoundSummary(key);
-            cat.Session.SetRoundSummary(cat.RoundSummary);
-            cat.Session.SetPetKind(ResolveEffectivePetKind(key));
+            if (cat.Session != null)
+            {
+                cat.Session.SetRoundSummary(cat.RoundSummary);
+                cat.Session.SetPetKind(ResolveEffectivePetKind(key));
+            }
             // M4e 猫级白名单——运行时猫文件系统已在上方 ApplyCatRoots 重建（含本分支）
             Guid newApiId = ResolveApiConfigId(cfg);
             string newCatEffort = NormalizeReasoningEffort(cfg.ReasoningEffort);
@@ -605,7 +614,10 @@ namespace CatHome4.Admin
                     _apiStore.TryGet(newApiId, out apiConfig);
                 }
                 cat.ApiConfig = apiConfig;
-                cat.Session.SwapLlmRuntime(new DeepSeekLlmRuntime(_apiStore, newApiId, _globalConfig, newCatEffort));
+                if (cat.Session != null)
+                {
+                    cat.Session.SwapLlmRuntime(new DeepSeekLlmRuntime(_apiStore, newApiId, _globalConfig, newCatEffort));
+                }
                 LogStore.Add("CatHome4", 1, "猫「" + cat.DisplayName + "」配置生效：LLM 端点 " + newApiId.ToString("D") + "，思考强度 " + (newCatEffort.Length > 0 ? newCatEffort : "跟随全局"), "CONFIG");
             }
             return "catcfg.apply | " + cat.DisplayName + " | 已生效（前文项新会话生效）";

@@ -79,7 +79,9 @@ namespace CatHome4.Admin
             for (int i = 0; i < _cats.Count; i = i + 1)
             {
                 CatEntry cat = _cats[i];
-                if (cat.Session != null && cat.Session.ViewHasPendingContent)
+                // A297——只统计运行中的猫：已停猫的会话所属 HttpHost 已 Stop，帧泵不存在，
+                // 其待推标记永远无人取走；纳入聚合即让重启闸门永久置位（判例 2026-11-02）。
+                if (cat.Running && cat.Session != null && cat.Session.ViewHasPendingContent)
                 {
                     return true;
                 }
@@ -326,6 +328,10 @@ namespace CatHome4.Admin
                 {
                     return "cat.pause | 未找到猫: " + rest;
                 }
+                if (cat.Session == null)
+                {
+                    return "cat.pause | 猫已停机（无会话）: " + cat.DisplayName;
+                }
                 cat.Session.Pause();
                 return "cat.pause | 已投递中止: " + cat.DisplayName;
             }
@@ -345,6 +351,10 @@ namespace CatHome4.Admin
                 if (cat == null)
                 {
                     return "cat.continue | 未找到猫: " + rest;
+                }
+                if (cat.Session == null)
+                {
+                    return "cat.continue | 猫已停机（无会话）: " + cat.DisplayName;
                 }
                 cat.Session.Continue();
                 return "cat.continue | 已投递继续: " + cat.DisplayName;
@@ -372,6 +382,10 @@ namespace CatHome4.Admin
                 if (cat == null)
                 {
                     return "cat.chat | 未找到猫: " + key;
+                }
+                if (cat.Session == null)
+                {
+                    return "cat.chat | 猫已停机（无会话）: " + cat.DisplayName;
                 }
                 cat.Session.PostUserMessage(content);
                 return "cat.chat | 已投递: " + cat.DisplayName;
@@ -1075,6 +1089,17 @@ namespace CatHome4.Admin
             {
                 return "cat.start | 已在运行: " + cat.DisplayName + " :" + cat.Port.ToString();
             }
+            // A296 真停——会话随停机释放，启动时按磁盘三面重建（前文 jsonl / 视图 view.jsonl / 元数据 session.json）
+            if (cat.Session == null)
+            {
+                CatEntry rebuilt = CreateCatEntry(cat.Id, cat.DisplayName, null);
+                if (rebuilt == null || rebuilt.Session == null)
+                {
+                    return "cat.start | 会话重建失败: " + cat.DisplayName;
+                }
+                cat.Session = rebuilt.Session;
+                LogStore.Add("CatHome4", 1, "猫「" + cat.DisplayName + "」会话已按磁盘重建（前文 / 视图 / 元数据）", "CHAT");
+            }
             int port = AllocatePort(PortBand.FamilyFrom);
             if (port < 0)
             {
@@ -1126,6 +1151,11 @@ namespace CatHome4.Admin
             {
                 return "cat.stop | 已是静默态: " + cat.DisplayName;
             }
+            // A296 真停——忙时拒绝：在途轮次的内存态尚未物化，强制释放即丢在途回执
+            if (cat.Session != null && !cat.Session.IsIdle)
+            {
+                return "cat.stop | 忙——本轮未结束，请稍后再试: " + cat.DisplayName;
+            }
             try
             {
                 cat.Host.Stop();
@@ -1138,8 +1168,17 @@ namespace CatHome4.Admin
             cat.Running = false;
             cat.Port = 0;
             SetCatRuntime(cat.Id, false, 0);
-            LogStore.Add("CatHome4", 1, "已停止猫「" + cat.DisplayName + "」", "CHAT");
-            return "cat.stop | " + cat.DisplayName + " | 已停止";
+            // A296 真停——会话内存释放（磁盘三面已物化：前文 jsonl / 视图 view.jsonl / 元数据 session.json）
+            if (cat.Session != null)
+            {
+                // A297——释放前复位待推标记：本猫 HttpHost 已 Stop，帧泵不再取帧，
+                // 不复位则全局重启闸门 AnyViewPending 被本猫永久阻塞
+                cat.Session.ResetViewPending();
+                _chatBridge.RemoveSession(cat.Session);
+                cat.Session = null;
+            }
+            LogStore.Add("CatHome4", 1, "已停止猫「" + cat.DisplayName + "」（会话内存已释放）", "CHAT");
+            return "cat.stop | " + cat.DisplayName + " | 已停止（会话内存已释放）";
         }
 
         /// <summary>
@@ -1470,7 +1509,8 @@ namespace CatHome4.Admin
             for (int i = 0; i < _cats.Count; i++)
             {
                 CatEntry cat = _cats[i];
-                if (cat.QqBotId != Guid.Empty)
+                // A296 真停——停机猫会话已释放：不进 QQ 目标表（消息无处投递）
+                if (cat.QqBotId != Guid.Empty && cat.Session != null)
                 {
                     CatEntry captured = cat;
                     result.Add(new QqTarget

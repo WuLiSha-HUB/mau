@@ -240,6 +240,13 @@ namespace CatHome4.Admin
             {
                 return false;
             }
+            // [段1b] 目标会话缺失——猫已真停（A296）：会话随停机释放，指令无处投递
+            if (target.Session == null)
+            {
+                LogStore.Add("AdminService", 2, "目标会话不存在（猫已停机）——指令未受理：" + line, "SYS");
+                Console.WriteLine("[CMD] 目标会话不存在（猫已停机）——指令未受理：" + line);
+                return true;
+            }
             // [段3] 查表——首个命中生效；未命中即未识别（回执契约不变：HTTP {ok:false} / 工具桥 ERR|BAD_PREFIX）
             InputRoute route = MatchRoute(target, line);
             if (route == null)

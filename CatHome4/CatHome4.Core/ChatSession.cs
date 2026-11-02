@@ -2080,6 +2080,14 @@ namespace CH4
             }
         }
         /// <summary>
+        /// 待推标记复位——猫停机释放会话前调用（A297）：会话所属 HttpHost 已 Stop，帧泵不再运行，
+        /// 标记无人取走会让全局重启闸门永久置位。只清变更标记，不动视图内容（下次接新宿主走全量重绘）。
+        /// </summary>
+        public void ResetViewPending()
+        {
+            _viewBus.ResetPending();
+        }
+        /// <summary>
         /// 状态段整段 JSON——后端权威业务态（v2 契约：轮阶段 / 六态用时 / Note / 延迟队列 / Token 三级 / 前文长度与条数）。
         /// 前端零推断：状态位与数字就位即渲染；整段比对去重由视图出口承担（无变化零字节）。
         /// </summary>

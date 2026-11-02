@@ -115,6 +115,26 @@ namespace CatHome4.Core.Tests
             Assert.NotNull(TakeFrame(bus));
             Assert.False(bus.HasPendingContent);
         }
+        /// <summary>
+        /// 待推标记复位（A297）——猫停机后其 HttpHost 已 Stop、帧泵消失，待推标记再无人取走，
+        /// 全局重启闸门 `AnyViewPending` 因此永久置位（判例 2026-11-02：restart-incr 连续三次超时）。
+        /// 复位后内容面标记全清；复位只清标记不动内容，再次写入仍能正常置位。
+        /// </summary>
+        [Fact]
+        public void ResetPending_ClearsContentFlags()
+        {
+            CH4.ViewBus bus = new CH4.ViewBus();
+            RecordingHost host = new RecordingHost();
+            bus.Attach(host);
+            bus.SetLive("replysse", "甲");
+            bus.PushPersist(Block("text", "{\"text\":\"乙\"}", 1000, 0, 1));
+            Assert.True(bus.HasPendingContent);
+            bus.ResetPending();
+            Assert.False(bus.HasPendingContent);
+            // 复位不产生状态副作用——再次写入照常置位
+            bus.SetLive("empty", "");
+            Assert.True(bus.HasPendingContent);
+        }
 
         /// <summary>解析 JSON 根节点（独立副本——原 document 立刻释放）</summary>
         /// <param name="json">JSON 文本</param>
