@@ -235,6 +235,11 @@ function createCatCard(cat) {
     var missLine = document.createElement('div');
     missLine.className = 'cat-foot-line';
     foot.appendChild(missLine);
+    // A298——无会话提示行（真停后会话态参数不可得，四行收起后由本行说明原因）
+    var hintLine = document.createElement('div');
+    hintLine.className = 'cat-foot-hint';
+    hintLine.style.display = 'none';
+    foot.appendChild(hintLine);
     card.appendChild(foot);
     // 操作行——全部按钮预建，按状态 display 显隐（打开 / 停止 / 启动 / 配置 / 删除）
     var ops = document.createElement('div');
@@ -271,7 +276,7 @@ function createCatCard(cat) {
     ops.appendChild(delBtn);
     card.appendChild(ops);
     entry.el = card;
-    entry.refs = { name: name, rs: rs, dot: dot, id: idEl, port: portEl, ago: agoLine, ctx: ctxLine, rate: rateLine, miss: missLine, openBtn: openBtn, stopBtn: stopBtn, startBtn: startBtn, delBtn: delBtn };
+    entry.refs = { name: name, rs: rs, dot: dot, id: idEl, port: portEl, ago: agoLine, ctx: ctxLine, rate: rateLine, miss: missLine, hint: hintLine, openBtn: openBtn, stopBtn: stopBtn, startBtn: startBtn, delBtn: delBtn };
     return entry;
 }
 
@@ -286,6 +291,8 @@ function updateCatCard(entry, cat) {
     // 运行态切换——态名 / 圆点 / 按钮显隐（状态未变则整块跳过）
     var running = !!cat.running;
     if (p.running !== running) {
+        // A298——运行中底图（从下往上绿色渐变 + 提亮描边）
+        entry.el.className = 'cat-card' + (running ? ' is-running' : '');
         r.rs.style.display = running ? '' : 'none';
         r.dot.className = 'cat-dot' + (running ? ' on' : '');
         r.openBtn.style.display = running ? '' : 'none';
@@ -321,6 +328,20 @@ function updateCatCard(entry, cat) {
     // 未命中 / 输出行
     var missHtml = catStateMissHtml(cat);
     if (p.miss !== missHtml) { r.miss.innerHTML = missHtml; p.miss = missHtml; }
+    // A298 真停适配——四行参数均由会话态派生（msgCount / context / session* 同属 BuildStateEntry）：
+    // 会话缺失时整块收起并给一句说明，不让空白字段冒充「0」；会话回来即恢复
+    var hasSession = typeof cat.msgCount === 'number';
+    if (p.hasSession !== hasSession) {
+        var footShow = hasSession ? '' : 'none';
+        r.ago.style.display = footShow;
+        r.ctx.style.display = footShow;
+        r.rate.style.display = footShow;
+        r.miss.style.display = footShow;
+        r.hint.style.display = hasSession ? 'none' : '';
+        p.hasSession = hasSession;
+    }
+    var hintText = hasSession ? '' : (running ? '会话未就绪' : '已停机 · 无会话 — 启动后恢复');
+    if (p.hint !== hintText) { r.hint.textContent = hintText; p.hint = hintText; }
 }
 
 // cat.* 指令投递——POST command 后延迟刷新（指令经 HTTP 线程入队主线程泵，异步生效）
