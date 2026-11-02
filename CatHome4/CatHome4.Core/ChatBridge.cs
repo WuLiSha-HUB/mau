@@ -358,7 +358,7 @@ namespace CH4
         /// <param name="persona">角色段</param>
         /// <param name="injectList">注入清单（null=不注入）</param>
         /// <param name="specs">工具声明面</param>
-        /// <returns>摘要文本（注入文件三态 + 工具组清单）</returns>
+        /// <returns>摘要文本（清单三态 + 工具组清单）</returns>
         public string BuildInjectSummary(string persona, string[] injectList, ToolSpec[] specs)
         {
             WorkspaceConfig ws = null;
@@ -367,7 +367,7 @@ namespace CH4
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             if (injectList != null && injectList.Length > 0)
             {
-                sb.Append("注入文件 " + injectResult.Files.Count + " 个：");
+                sb.Append("清单 " + injectResult.Files.Count + " 个：");
                 for (int i = 0; i < injectResult.Files.Count; i++)
                 {
                     InjectFileResult f = injectResult.Files[i];
@@ -392,7 +392,7 @@ namespace CH4
             }
             else
             {
-                sb.Append("无注入文件");
+                sb.Append("无清单");
             }
             // 工具组——按组聚合（ToolPool 归属映射同注入报告）
             sb.Append("\n工具组：");
@@ -649,7 +649,7 @@ internal sealed class InjectPromptResult
 }
 
 /// <summary>
-/// 注入文件结果——单文件加载明细（前端注入报告视图块渲染单元）。
+/// 加载结果——单文件加载明细（前端报告视图块渲染单元）。
 /// </summary>
 internal sealed class InjectFileResult
 {

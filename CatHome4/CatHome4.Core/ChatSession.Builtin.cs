@@ -562,7 +562,7 @@ namespace CH4
             sb.Append(" 字符\n");
             for (int i = 0; i < targets.Count; i = i + 1)
             {
-                sb.Append("===== 注入文件: ");
+                sb.Append("===== ");
                 sb.Append(labels[i]);
                 sb.Append(" =====");
                 sb.Append("\n");

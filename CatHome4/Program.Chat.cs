@@ -58,14 +58,6 @@ namespace CH4
                 sb.Append("【角色设定】");
                 sb.Append(persona.Trim());
             }
-            // [段0c] 用户态段——【当前用户】身份 +【QQ 渠道】规则（design-ch4-user-state；新会话注入一次）
-            string userSegment = AdminService.BuildUserStateSegment();
-            if (userSegment.Length > 0)
-            {
-                sb.Append(System.Environment.NewLine);
-                sb.Append(System.Environment.NewLine);
-                sb.Append(userSegment);
-            }
             // [段1] 注入知识——按每猫 injectList 顺序读取（M2d：不再走全局 workspace.inject；寻址复用受控根 id: 命名空间；缺失跳过不阻断会话）
             // 问题二扩展——逐文件结果收集（ok/missing/error + 字符数），HandleSessionNew 生成注入报告
             // 目录条目展开（2026-09-14）——条目为目录时加载其一级 *.md（文件名升序），逐文件报告
@@ -73,7 +65,7 @@ namespace CH4
             {
                 sb.Append(System.Environment.NewLine);
                 sb.Append(System.Environment.NewLine);
-                sb.Append("【系统前文来源】以下知识文件由本会话注入（清单 cat.cfg injectList）：");
+                sb.Append("【系统前文来源】（清单 cat.cfg）：");
                 for (int i = 0; i < injectList.Length; i++)
                 {
                     string file = injectList[i];
@@ -133,7 +125,7 @@ namespace CH4
                             string content = File.ReadAllText(targets[t]);
                             sb.Append(System.Environment.NewLine);
                             sb.Append(System.Environment.NewLine);
-                            sb.Append("===== 注入文件: ");
+                            sb.Append("===== ");
                             sb.Append(labels[t]);
                             sb.Append(" =====");
                             sb.Append(System.Environment.NewLine);
