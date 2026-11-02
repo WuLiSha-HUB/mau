@@ -11,6 +11,7 @@
     <div id="layout">
         <nav id="sidebar">
             <button data-tab="cats" class="active">多猫</button>
+            <button data-tab="group">配队</button>
             <button data-tab="config">配置</button>
             <button data-tab="state">状态</button>
             <button data-tab="log">日志</button>
@@ -277,6 +278,19 @@
                     <div id="catsGroups"></div>
                 </div>
             </section>
+            <!-- 配队（Group）管理区（A300）——组卡片 + 新建 / 配置 / 打开 / 删除 -->
+            <section id="tab-group" class="tab">
+                <div id="groupbar" style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--ch-line-faint);align-items:center">
+                    <span style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">配队 = 一组猫 + 一条组内消息流（成员按 cat key 记录，显示名仅作展示）</span>
+                    <span style="flex:1"></span>
+                    <button id="groupNewBtn" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">新建配队</button>
+                    <button id="groupRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
+                </div>
+                <div id="groupMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag);padding:6px 12px 0 12px"></div>
+                <div style="flex:1;overflow-y:auto;padding:8px 12px">
+                    <div id="groupCards" class="cat-grid cat-grid-manage"></div>
+                </div>
+            </section>
         </main>
     </div>
 
@@ -329,12 +343,36 @@
         </div>
     </div>
 
+    <!-- 配队配置弹层（A300）——组名 / 成员勾选 / 项目绑定 -->
+    <div id="groupCfgModal" style="display:none;position:fixed;inset:0;background:var(--ch-overlay);z-index:50;align-items:center;justify-content:center">
+        <div style="width:560px;max-height:82vh;overflow-y:auto;background:var(--ch-bg-panel);border:1px solid var(--ch-line);border-radius:8px;padding:14px">
+            <div style="display:flex;align-items:center;margin-bottom:8px">
+                <span style="color:var(--ch-identity);font-weight:bold;font-size:var(--ch-fs-sub)">配队配置</span>
+                <span id="groupCfgTitle" style="color:var(--ch-identity);font-weight:bold;font-size:var(--ch-fs-sub)"></span>
+                <span style="flex:1"></span>
+                <button id="groupCfgClose" style="background:transparent;border:none;color:var(--ch-fg-weak);font-size:var(--ch-fs-title);cursor:pointer">✕</button>
+            </div>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak)">组名（字母 / 数字 / 中文 / - / _，创建后不可改名）</label>
+            <input id="groupCfgName" placeholder="如 施工队" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">项目绑定（可空——自由文本）</label>
+            <input id="groupCfgProject" placeholder="如 CH4" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">成员（勾选；落盘按 cat key）</label>
+            <div id="groupCfgMembers" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px"></div>
+            <div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end">
+                <button id="groupCfgSave" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">保存</button>
+                <button id="groupCfgCancel" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消</button>
+            </div>
+            <div id="groupCfgMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag);margin-top:6px"></div>
+        </div>
+    </div>
+
     <!-- 两页共用前端工具（loadUiVersion/applyUiConfig——js/ui-common.js 单一定义；配置接线复用 app.js loadConfig 的同一响应） -->
     <script src="js/ui-common.js?v=__V__"></script>
     <script>loadUiVersion();</script>
     <!-- 2026-09-08 体量治理——JS 四域外置（加载顺序：app 公共 → panel 多猫 → panel-apis API 池 → panel-catcfg 每猫配置/受控根；对话已迁 chat.html 独立页——F2.1 index 纯管理面）；__V__ 宿主注入版本号（cache-busting） -->
     <script src="js/app.js?v=__V__"></script>
     <script src="js/panel.js?v=__V__"></script>
+    <script src="js/panel-group.js?v=__V__"></script>
     <script src="js/panel-apis.js?v=__V__"></script>
     <script src="js/panel-appearance.js?v=__V__"></script>
     <script src="js/panel-catcfg.js?v=__V__"></script>

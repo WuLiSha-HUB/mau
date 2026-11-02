@@ -11,7 +11,7 @@ namespace CatHome4.Admin
     internal static class AdminRoutes
     {
         /// <summary>
-        /// 管理路由注册——30 端点全量（llm-apis / cat-config / cat-default / workspace / appearance-apis / packs / open-data-dir / chat-images / audio / db）。
+        /// 管理路由注册——35 端点全量（llm-apis / cat-config / cat-default / workspace / appearance-apis / packs / open-data-dir / chat-images / audio / db / groups）。
         /// </summary>
         /// <param name="sink">HTTP 路由注册面（HttpHost 实现）</param>
         public static void Register(IHttpRouteSink sink)
@@ -62,6 +62,16 @@ namespace CatHome4.Admin
             sink.MapPost("/api/v1/db/libs", (Delegate)AdminService.HandleDbLibsPost);
             sink.MapGet("/api/v1/db/libs/{lib}/entries", (Delegate)AdminService.HandleDbEntriesGet);
             sink.MapGet("/api/v1/db/libs/{lib}/entries/{entryId}", (Delegate)AdminService.HandleDbEntryGet);
+
+            // [段12] 配队（Group）数据面——组列表 / 建改 / 启停 / 删除 / 消息流（A300）
+            sink.MapGet("/api/v1/groups", (Delegate)AdminService.HandleGroupsGet);
+            sink.MapPost("/api/v1/groups", (Delegate)AdminService.HandleGroupsPost);
+            sink.MapPost("/api/v1/groups/enabled", (Delegate)AdminService.HandleGroupsEnabled);
+            sink.MapPost("/api/v1/groups/delete", (Delegate)AdminService.HandleGroupsDelete);
+            sink.MapGet("/api/v1/groups/{name}/messages", (Delegate)AdminService.HandleGroupsMessagesGet);
+            sink.MapPost("/api/v1/groups/messages", (Delegate)AdminService.HandleGroupsMessagesPost);
+            sink.MapPost("/api/v1/groups/read", (Delegate)AdminService.HandleGroupsReadPost);
+            sink.MapGet("/api/v1/groups/host", (Delegate)AdminService.HandleGroupsHostGet);
         }
     }
 }

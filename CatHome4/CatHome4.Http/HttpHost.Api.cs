@@ -358,7 +358,11 @@ namespace CatHome4.Http
         {
             string htmlRoot = _htmlRootProvider.ResolveHtmlRoot();
             string fileName = "index.html";
-            if (_serveChatPage)
+            if (_staticPage != null && _staticPage.Length > 0)
+            {
+                fileName = _staticPage;
+            }
+            else if (_serveChatPage)
             {
                 fileName = "chat.html";
             }

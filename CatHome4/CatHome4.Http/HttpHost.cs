@@ -59,8 +59,11 @@ namespace CatHome4.Http
         /// <summary>视图增量帧构建回调（可空=不推）——v2 契约：帧轮取，无变化返回 null/空（零推送）</summary>
         public Func<string> ViewFrameBuilder { get; set; }
 
-        /// <summary>静态页模式（true=chat.html / false=index.html）</summary>
+        /// <summary>静态页模式（true=chat.html / false=index.html；StaticPage 非空时以 StaticPage 为准）</summary>
         public bool ServeChatPage { get; set; }
+
+        /// <summary>静态页文件名（可空 = 按 ServeChatPage 旧口径；A301 群聊页 = "group.html"）</summary>
+        public string StaticPage { get; set; }
 
         /// <summary>管理路由注册回调（可空）</summary>
         public Action<IHttpRouteSink> RouteRegistrar { get; set; }
@@ -171,6 +174,9 @@ namespace CatHome4.Http
         /// <summary>静态页模式——true=chat.html 独立对话页 / false=index.html 主面板（P9.3 双页模式）</summary>
         private bool _serveChatPage;
 
+        /// <summary>静态页文件名——非空时优先于 _serveChatPage（A301 群聊页 group.html）</summary>
+        private string _staticPage;
+
         /// <summary>管理路由注册回调——入口壳注入（Admin 域经 IHttpRouteSink 注册 llm-apis/workspace 等；仅主端口非空）</summary>
         private Action<IHttpRouteSink> _routeRegistrar;
 
@@ -207,6 +213,7 @@ namespace CatHome4.Http
             host._viewFullBuilder = options.ViewFullBuilder;
             host._viewFrameBuilder = options.ViewFrameBuilder;
             host._serveChatPage = options.ServeChatPage;
+            host._staticPage = options.StaticPage;
             host._routeRegistrar = options.RouteRegistrar;
             host._htmlRootProvider = options.HtmlRootProvider;
             if (options.DisplayName != null && options.DisplayName.Length > 0)

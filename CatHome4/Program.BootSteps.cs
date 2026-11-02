@@ -562,6 +562,9 @@ namespace CH4
             // 延迟队列落盘接线——Data/runtime/delays.json（跨宿主重启保留；design-ch4-delay §七）
             DelayQueue.Configure(Path.Combine(dataRoot, "Data", "runtime", "delays.json"));
             DelayQueue.Load();
+            // 配队（Group）数据面接线——Data/group/<组名>/{group.json, messages.jsonl, members.json}（A300）
+            GroupStore.Configure(Path.Combine(dataRoot, "Data", "group"));
+            GroupStore.Load();
             // 待处理消息队列落盘接线——Data/runtime/pending_<catKey>.json（A232：入队即物化 · 跨宿主重启保留；须先于会话创建）
             ChatSession.ConfigurePendingStore(Path.Combine(dataRoot, "Data", "runtime"));
             // 网页资产下载接线——任务表落盘 + 产物目录（workspace 根下 Downloads）+ 完成注入回调（design-ch4-webfetch）
@@ -880,6 +883,8 @@ namespace CH4
             }
             // [段6b] 启动扫描——sessions/*/cat.cfg 中 running 猫拉起（主 HTTP 就位后——每猫 HttpHost 独立实例）
             CatHostService.LoadCatsOnBoot();
+            // [段6b-2] 群聊宿主——每组一端口（9000 起向上寻路）+ group.html + 本组运行时端点（A301）
+            CatHostService.StartEnabledGroupHosts();
             // [段6c] 前端测试服务拉起——开发流程（改前端 → 跑测试 → 刷新生效）；未监听则启动 node server.js
             EnsureFrontendTestService();
             // A260 启动健康面收口——报告落盘 + 独立提示窗（有降级才弹；关窗不改运行态）

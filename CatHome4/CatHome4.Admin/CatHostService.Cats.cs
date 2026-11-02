@@ -1045,12 +1045,10 @@ namespace CatHome4.Admin
             // A296 真停——会话随停机释放，启动时按磁盘三面重建（前文 jsonl / 视图 view.jsonl / 元数据 session.json）
             if (cat.Session == null)
             {
-                CatEntry rebuilt = CreateCatEntry(cat.Id, cat.DisplayName, null);
-                if (rebuilt == null || rebuilt.Session == null)
+                if (!BuildCatSession(cat, null, null, -1))
                 {
                     return "cat.start | 会话重建失败: " + cat.DisplayName;
                 }
-                cat.Session = rebuilt.Session;
                 LogStore.Add("CatHome4", 1, "猫「" + cat.DisplayName + "」会话已按磁盘重建（前文 / 视图 / 元数据）", "CHAT");
             }
             int port = AllocatePort(PortBand.FamilyFrom);
@@ -1175,15 +1173,12 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
-        /// 建立猫实体——上下文 + 前文恢复/注入 + ChatSession 构造 + 轮转注册（cat.new 与启动扫描共用）。
+        /// 建猫条目（轻量）——读 cat.cfg 并装配配置字段；不构造会话、不登记轮转（停机猫只到这一步）。
         /// </summary>
         /// <param name="id">会话 ID</param>
         /// <param name="displayName">显示名</param>
-        /// <param name="seedMessages">fork 播种前文（null/空=不播种——正常注入/恢复语义）</param>
-        /// <returns>猫实体；构造失败 null</returns>
-        /// <param name="forkSource">fork 源会话（空 = 常规建造路径——视图 / 元数据走读盘恢复）</param>
-        /// <param name="forkMsgIndex">fork 切点前文索引（-1 = 非 fork 路径）</param>
-        private static CatEntry CreateCatEntry(string id, string displayName, LlmMessage[] seedMessages, ChatSession forkSource = null, int forkMsgIndex = -1)
+        /// <returns>猫条目（Session 为空）；装配失败 null</returns>
+        private static CatEntry CreateCatEntryMeta(string id, string displayName)
         {
             try
             {
@@ -1278,81 +1273,26 @@ namespace CatHome4.Admin
                 }
                 // M2c 声明面裁剪——读时比对（非法名过滤/全空全量保底）
                 ToolSpec[] catSpecs = FilterToolSpecs(ResolveToolNames(toolNames, false), false);
-                // [段3] 上下文 + 前文恢复/注入
-                ChatContext context = new ChatContext();
-                SessionStore store = new SessionStore(Path.Combine(_dataRoot, "Data", "sessions", id, id + ".jsonl"));
-                store.SessionId = id;
-                LlmMessage[] restored;
-                if (store.TryLoad(out restored))
-                {
-                    context.ReplaceMessages(restored);
-                }
-                else if (seedMessages != null && seedMessages.Length > 0)
-                {
-                    // fork 播种——以源猫节点前前文为起点（含源 system——注入内容已在其中；覆盖注入分支）
-                    context.ReplaceMessages(seedMessages);
-                }
-                else
-                {
-                    // 无前文 = 新猫——按 cat.cfg injectList 清单注入（M2d：仅读 List 内文件，List 外一律不加载）
-                    WorkspaceConfig workspace = null;
-                    DataBox.TryResolve<WorkspaceConfig>(out workspace);
-                    string injectPrompt = _chatBridge.BuildPrompt(workspace, catSpecs, persona, injectList);
-                    context.SetSystemPrompt(injectPrompt);
-                }
-                // 会话标识 ≡ 猫 key（唯一标识——不再有独立"会话身份"层）；哨兵：标识被外部改写时校正并回写（常态恒等不触发）
-                if (!string.Equals(store.SessionId, id, StringComparison.Ordinal))
-                {
-                    store.SessionId = id;
-                    store.Rewrite(context.GetMessages());
-                    LogStore.Add("CatHome4", 1, "会话标识对齐猫 key: " + id, "CHAT");
-                }
-                // [段4] 会话构造——M1c 每猫独立 Runtime（API 配置池按该猫 apiConfigId 构造）；M2c 声明面按猫裁剪
-                ILlmRuntime catRuntime = new DeepSeekLlmRuntime(apiStore, apiConfigId, globalConfig, reasoningEffort);
-                SessionViewStore viewStore = new SessionViewStore(Path.Combine(_dataRoot, "Data", "sessions", id, id + ".view.jsonl"));
-                // A221 工具面解析——持久化快照优先（会话工具头与 system prompt 同命；重启不改面）
-                ToolSpec[] sessionTools = ChatSession.ResolveSessionTools(id, catSpecs);
-                ChatSession session = new ChatSession(id, displayName, context, store, catRuntime, _oa, sessionTools, ExecuteTool, viewStore);
-                // M4e 猫级白名单——多猫启用根（cat.cfg enabledRoots；缺省全量）+ 工具执行猫上下文
-                session.SetCatKey(id);
-                ApplyCatRoots(id);
-                session.AttachEnvInfo(() => BuildEnvInfoProvider());
-                session.AttachRoundNotify(NotifyBalloon);
-                session.SetUserInjectIdleOnly(userInjectIdleOnly);
-                session.SetRoundSummary(roundSummary);
-                session.SetPetKind(petKind);
-                // [段3b] 视图面 / 元数据面——fork 播种走克隆（源面保留部分），常规路径读盘恢复
-                if (forkSource != null && forkMsgIndex >= 0)
-                {
-                    session.SeedViewFrom(forkSource, forkMsgIndex);
-                    session.SeedMetaFrom(forkSource);
-                }
-                else
-                {
-                    session.LoadView();
-                    // A201 会话元数据——启动恢复（实例 ID / 创建时刻 / 两级 token 累计 + A202 请求边界态；文件缺失走首建）
-                    session.LoadMeta();
-                }
-                _chatBridge.RegisterSession(session);
-                CatEntry cat = new CatEntry();
-                cat.Id = id;
-                cat.DisplayName = displayName;
-                cat.Running = false;
-                cat.Port = 0;
-                cat.Session = session;
-                cat.Host = null;
-                cat.ApiConfigId = apiConfigId;
-                cat.ApiConfig = apiConfig;
-                cat.Persona = persona;
-                cat.Type = type;
-                cat.ToolNames = toolNames;
-                cat.InjectList = injectList;
-                cat.Packs = packs;
-                cat.UserInjectIdleOnly = userInjectIdleOnly;
-                cat.ReasoningEffort = reasoningEffort;
-                cat.AppearanceId = appearanceId;
-                cat.RoundSummary = roundSummary;
-                cat.ToolSpecs = catSpecs;
+                // [段3] 条目装配——配置字段全量（不含会话）；停机猫只到这一步
+                CatEntry meta = new CatEntry();
+                meta.Id = id;
+                meta.DisplayName = displayName;
+                meta.Running = false;
+                meta.Port = 0;
+                meta.Session = null;
+                meta.Host = null;
+                meta.ApiConfigId = apiConfigId;
+                meta.ApiConfig = apiConfig;
+                meta.Persona = persona;
+                meta.Type = type;
+                meta.ToolNames = toolNames;
+                meta.InjectList = injectList;
+                meta.Packs = packs;
+                meta.UserInjectIdleOnly = userInjectIdleOnly;
+                meta.ReasoningEffort = reasoningEffort;
+                meta.AppearanceId = appearanceId;
+                meta.RoundSummary = roundSummary;
+                meta.ToolSpecs = catSpecs;
                 // §4.3 空值语义可观测——toolNames 空=全量保底（反直觉默认）：解析结果落审计行
                 string toolSource = "子集";
                 int toolDeclared = 0;
@@ -1371,13 +1311,131 @@ namespace CatHome4.Admin
                 }
                 LogStore.Add("CatHome4", 1, "cat.tools | cat=" + id + " | 来源=" + toolSource + " | 声明=" + toolDeclared.ToString() + " | 实际=" + toolActual.ToString(), "CHAT");
                 LogStore.Add("CatHome4", 1, "猫「" + displayName + "」绑定 LLM 配置：" + (apiConfigId == Guid.Empty ? "默认端点" : apiConfigId.ToString("D")) + "，模型 " + apiConfig.DefaultModel, "CHAT");
-                return cat;
+                return meta;
             }
             catch (Exception ex)
             {
-                LogStore.Add("CatHome4", 3, "创建猫实体失败：" + ex.Message, "CHAT");
+                LogStore.Add("CatHome4", 3, "创建猫条目失败：" + ex.Message, "CHAT");
                 return null;
             }
+        }
+
+        /// <summary>
+        /// 补建会话——前文恢复 / ChatSession 构造 / 视图与元数据加载 / 轮转登记；挂到 cat.Session。
+        /// 唯一入口：cat.new / fork / cat.start / 启动扫描的 running 分支（停机猫不建会话）。
+        /// </summary>
+        /// <param name="cat">猫条目（配置字段已就绪）</param>
+        /// <param name="seedMessages">fork 播种前文（null/空 = 不播种）</param>
+        /// <param name="forkSource">fork 源会话（空 = 常规路径）</param>
+        /// <param name="forkMsgIndex">fork 切点前文索引（-1 = 非 fork）</param>
+        /// <returns>是否补齐成功</returns>
+        private static bool BuildCatSession(CatEntry cat, LlmMessage[] seedMessages, ChatSession forkSource, int forkMsgIndex)
+        {
+            if (cat == null)
+            {
+                return false;
+            }
+            string id = cat.Id;
+            try
+            {
+                // [段4] 运行期依赖——API 池 / 全局配置 / 外观生效值（与条目装配同源重取，避免跨方法传参）
+                CH_LlmApiConfigStore apiStore = null;
+                DataBox.TryResolve<CH_LlmApiConfigStore>(out apiStore);
+                if (apiStore == null)
+                {
+                    // 防御——Bootstrap 已绑定，实际不触发；空 Store 保证非空
+                    apiStore = new CH_LlmApiConfigStore(Path.Combine(_dataRoot, "Data", "config"), Path.Combine(_dataRoot, "Data", "secrets"));
+                }
+                ConfigStore globalConfig = null;
+                DataBox.TryResolve<ConfigStore>(out globalConfig);
+                string petKind = ResolveEffectivePetKind(id);
+                // [段5] 上下文 + 前文恢复/注入
+                ChatContext context = new ChatContext();
+                SessionStore store = new SessionStore(Path.Combine(_dataRoot, "Data", "sessions", id, id + ".jsonl"));
+                store.SessionId = id;
+                LlmMessage[] restored;
+                if (store.TryLoad(out restored))
+                {
+                    context.ReplaceMessages(restored);
+                }
+                else if (seedMessages != null && seedMessages.Length > 0)
+                {
+                    // fork 播种——以源猫节点前前文为起点（含源 system——注入内容已在其中；覆盖注入分支）
+                    context.ReplaceMessages(seedMessages);
+                }
+                else
+                {
+                    // 无前文 = 新猫——按 cat.cfg injectList 清单注入（M2d：仅读 List 内文件，List 外一律不加载）
+                    WorkspaceConfig workspace = null;
+                    DataBox.TryResolve<WorkspaceConfig>(out workspace);
+                    string injectPrompt = _chatBridge.BuildPrompt(workspace, cat.ToolSpecs, cat.Persona, cat.InjectList);
+                    context.SetSystemPrompt(injectPrompt);
+                }
+                // 会话标识 ≡ 猫 key（唯一标识——不再有独立"会话身份"层）；哨兵：标识被外部改写时校正并回写（常态恒等不触发）
+                if (!string.Equals(store.SessionId, id, StringComparison.Ordinal))
+                {
+                    store.SessionId = id;
+                    store.Rewrite(context.GetMessages());
+                    LogStore.Add("CatHome4", 1, "会话标识对齐猫 key: " + id, "CHAT");
+                }
+                // [段4] 会话构造——M1c 每猫独立 Runtime（API 配置池按该猫 apiConfigId 构造）；M2c 声明面按猫裁剪
+                ILlmRuntime catRuntime = new DeepSeekLlmRuntime(apiStore, cat.ApiConfigId, globalConfig, cat.ReasoningEffort);
+                SessionViewStore viewStore = new SessionViewStore(Path.Combine(_dataRoot, "Data", "sessions", id, id + ".view.jsonl"));
+                // A221 工具面解析——持久化快照优先（会话工具头与 system prompt 同命；重启不改面）
+                ToolSpec[] sessionTools = ChatSession.ResolveSessionTools(id, cat.ToolSpecs);
+                ChatSession session = new ChatSession(id, cat.DisplayName, context, store, catRuntime, _oa, sessionTools, ExecuteTool, viewStore);
+                // M4e 猫级白名单——多猫启用根（cat.cfg enabledRoots；缺省全量）+ 工具执行猫上下文
+                session.SetCatKey(id);
+                ApplyCatRoots(id);
+                session.AttachEnvInfo(() => BuildEnvInfoProvider());
+                session.AttachRoundNotify(NotifyBalloon);
+                session.SetUserInjectIdleOnly(cat.UserInjectIdleOnly);
+                session.SetRoundSummary(cat.RoundSummary);
+                session.SetPetKind(petKind);
+                // [段3b] 视图面 / 元数据面——fork 播种走克隆（源面保留部分），常规路径读盘恢复
+                if (forkSource != null && forkMsgIndex >= 0)
+                {
+                    session.SeedViewFrom(forkSource, forkMsgIndex);
+                    session.SeedMetaFrom(forkSource);
+                }
+                else
+                {
+                    session.LoadView();
+                    // A201 会话元数据——启动恢复（实例 ID / 创建时刻 / 两级 token 累计 + A202 请求边界态；文件缺失走首建）
+                    session.LoadMeta();
+                }
+                _chatBridge.RegisterSession(session);
+                cat.Session = session;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LogStore.Add("CatHome4", 3, "会话补建失败：" + ex.Message, "CHAT");
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 建立猫实体（完整）——条目装配 + 会话补建（cat.new / fork 用）。
+        /// </summary>
+        /// <param name="id">会话 ID</param>
+        /// <param name="displayName">显示名</param>
+        /// <param name="seedMessages">fork 播种前文（null/空 = 不播种）</param>
+        /// <param name="forkSource">fork 源会话（空 = 常规路径）</param>
+        /// <param name="forkMsgIndex">fork 切点前文索引（-1 = 非 fork）</param>
+        /// <returns>猫实体；构造失败 null</returns>
+        private static CatEntry CreateCatEntry(string id, string displayName, LlmMessage[] seedMessages, ChatSession forkSource = null, int forkMsgIndex = -1)
+        {
+            CatEntry cat = CreateCatEntryMeta(id, displayName);
+            if (cat == null)
+            {
+                return null;
+            }
+            if (!BuildCatSession(cat, seedMessages, forkSource, forkMsgIndex))
+            {
+                return null;
+            }
+            return cat;
         }
         /// <summary>
         /// 解析猫的有效 LLM API 配置——cat.cfg apiConfigId 零值/缺失=跟随全局默认端点，非零=按身份取（A50 端点解析同源化）。
@@ -1777,7 +1835,7 @@ namespace CatHome4.Admin
                 {
                     continue;
                 }
-                CatEntry cat = CreateCatEntry(cfg.Id, cfg.DisplayName, null);
+                CatEntry cat = CreateCatEntryMeta(cfg.Id, cfg.DisplayName);
                 if (cat == null)
                 {
                     LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 会话构造失败", "CHAT");
@@ -1800,8 +1858,17 @@ namespace CatHome4.Admin
                 }
                 if (rt == null || !rt.Running)
                 {
-                    // 静默态——注册表可见（cat.list/start 可寻址），不拉起
-                    LogStore.Add("CatHome4", 1, "启动扫描：猫「" + cat.DisplayName + "」为静默态（id " + cat.Id + "）", "CHAT");
+                    // 静默态——注册表可见（cat.list/start 可寻址），不建会话、不入轮转（A296 对齐：停机猫不占内存、不响应注入）
+                    LogStore.Add("CatHome4", 1, "启动扫描：猫「" + cat.DisplayName + "」为静默态（id " + cat.Id + "，不建会话）", "CHAT");
+                    continue;
+                }
+                // 运行态——补建会话（前文 / 视图 / 元数据 / 轮转登记）
+                if (!BuildCatSession(cat, null, null, -1))
+                {
+                    LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 会话补建失败（按静默态保留条目）", "CHAT");
+                    StartupDegradation.Report("CAT_BOOT_FAILED", StartupDegradation.KindData, "多猫（" + cfg.Id + "）",
+                        StartupDegradation.StateUnavailable, "会话补建失败：sessions/" + cfg.Id,
+                        "管理面板 → 猫管理 → 手动启动该猫", "S7");
                     continue;
                 }
                 int port = rt.Port;

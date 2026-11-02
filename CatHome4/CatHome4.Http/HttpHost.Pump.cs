@@ -88,9 +88,14 @@ namespace CatHome4.Http
                 return;
             }
             _snapshotPending = false;
-            string json = _snapshotBuilder(false);
+            string json = "";
+            if (_snapshotBuilder != null)
+            {
+                json = _snapshotBuilder(false);
+            }
             // Q6 页面标题——每猫快照注入 title 字段（displayName · Chat；前端初始化 fetch 快照直接用——前端零业务逻辑）
-            if (_pageTitle != null && _pageTitle.Length > 0)
+            // A301——无快照构建器（群聊轻宿主）时不注入、不推送
+            if (_pageTitle != null && _pageTitle.Length > 0 && json.Length > 0)
             {
                 json = InjectSnapshotTitle(json, _pageTitle);
             }
@@ -123,7 +128,7 @@ namespace CatHome4.Http
                     PushEvent("patch", patch);
                 }
             }
-            else
+            else if (json.Length > 0)
             {
                 PushEvent("snapshot", json);
             }

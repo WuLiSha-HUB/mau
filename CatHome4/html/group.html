@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CH4 群聊</title>
+    <link rel="icon" href="/favicon.ico?v=__V__">
+    <link rel="stylesheet" href="css/tokens.css?v=__V__">
+    <style>
+        html, body { margin: 0; height: 100%; background: var(--ch-bg-root, #14171c); color: var(--ch-fg, #d8dee9); font-family: "Sarasa Mono SC", Consolas, monospace; font-size: 13px; }
+        #layout { display: flex; flex-direction: column; height: 100%; }
+        header { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--ch-line, #2a2f37); }
+        #groupTitle { font-weight: bold; color: var(--ch-identity, #8fd3ff); font-size: 15px; }
+        #groupMeta { color: var(--ch-fg-weak, #7c8595); font-size: 12px; }
+        #msg { color: var(--ch-fg-weak, #7c8595); font-size: 12px; }
+        #messages { flex: 1; overflow-y: auto; padding: 12px 14px; }
+        .msg { padding: 7px 0; border-bottom: 1px solid var(--ch-line-faint, #232830); }
+        .msg-head { color: var(--ch-fg-weak, #7c8595); font-size: 11px; }
+        .msg-text { white-space: pre-wrap; margin-top: 3px; }
+        footer { display: flex; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--ch-line, #2a2f37); align-items: center; }
+        footer select, footer input { background: var(--ch-bg-panel, #1a1e25); border: 1px solid var(--ch-line, #2a2f37); color: var(--ch-fg, #d8dee9); padding: 7px 8px; font-family: inherit; font-size: 12px; }
+        #textInput { flex: 1; }
+        button { background: var(--ch-bg-raised, #1c2129); border: 1px solid var(--ch-line, #2a2f37); color: var(--ch-fg-muted, #a9b3c1); padding: 7px 14px; cursor: pointer; font-family: inherit; font-size: 12px; }
+        button.primary { background: var(--ch-bg-accent, #2b7fd4); border: none; color: var(--ch-fg-inverse, #fff); }
+        .empty { color: var(--ch-fg-weak, #7c8595); }
+    </style>
+</head>
+<body>
+    <div id="layout">
+        <header>
+            <span id="groupTitle">加载中…</span>
+            <span id="groupMeta"></span>
+            <span style="flex:1"></span>
+            <span id="msg"></span>
+            <button id="refreshBtn">刷新</button>
+        </header>
+        <div id="messages"></div>
+        <footer>
+            <select id="fromSel" title="发送身份（人 / 某只猫）"></select>
+            <input id="textInput" placeholder="输入消息（回车发送）…">
+            <button id="sendBtn" class="primary">发送</button>
+            <button id="readBtn">标记已读</button>
+        </footer>
+    </div>
+    <script src="js/group.js?v=__V__"></script>
+</body>
+</html>
