@@ -25,7 +25,7 @@ function skelInfo(tool) {
     return { tag: '', tagCls: '', segs: segs };
 }
 
-/// 摊平键值行——固定顺序：猫 / 版本 / 当前时间 / LLM / 本地端点 / 可见根 / 根路径 / 前文 / 加载包 / QQBot
+/// 摊平键值行——固定顺序：猫 / 版本 / 当前时间 / LLM / 本地端点 / 可见根 / 根路径 / 前文 / 加载包
 function ovInfoPairs(d) {
     var pairs = [];
     var cat = field(d, 'cat');
@@ -111,12 +111,6 @@ function ovInfoPairs(d) {
             packs.push(desc.length > 0 ? pk + '(' + desc + ')' : pk);
         }
         pairs.push({ k: '加载包', v: packs.join(' · ') });
-    }
-    if (d.qqbot && typeof d.qqbot === 'object') {
-        var usage = field(d.qqbot, 'usage');
-        if (usage.length > 0) {
-            pairs.push({ k: 'QQBot', v: usage });
-        }
     }
     return pairs;
 }

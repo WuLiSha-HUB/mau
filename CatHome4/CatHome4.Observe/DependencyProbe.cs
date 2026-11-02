@@ -246,7 +246,6 @@ namespace CatHome4.Observe
             // [段5] 可选功能——配置完整性（未配置属正常态，不报红）
             AddConfigPresence(cfg, direct, "search.api_config_id", LevelOptional, "搜索 API", now);
             AddConfigPresence(cfg, direct, "vision.api_config_id", LevelOptional, "视觉 API", now);
-            CollectQqBot(direct, now);
             // [段6] 开发辅助——外部命令版本（一次性档）+ 自举链文件
             AddCommandProbe(direct, jobs, "dotnet", "dotnet --version", LevelDev, "dotnet SDK", "--version", TtlOnceMs, now);
             AddCommandProbe(direct, jobs, "git", "git --version", LevelDev, "Git", "--version", TtlOnceMs, now);
@@ -457,30 +456,6 @@ namespace CatHome4.Observe
             job.Paths.Add(exe);
             job.Paths.Add(rr.FullPath);
             jobs.Add(job);
-        }
-
-        /// <summary>
-        /// QQ Bot 池探测——池非空即已配置（可选功能；未配置属正常态）。
-        /// </summary>
-        /// <param name="direct">配置类直接结果</param>
-        /// <param name="now">当前时刻</param>
-        private static void CollectQqBot(List<ProbeResult> direct, long now)
-        {
-            string name = "QQBot";
-            CH_QqBotConfigStore store = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out store);
-            if (store == null)
-            {
-                direct.Add(MakeResultAt(LevelOptional, name, StateUnconfigured, "QQ Bot 池存储不可用（未注入）", TtlStaticMs, now));
-                return;
-            }
-            CH_QqBotConfig[] all = store.GetAll();
-            if (all.Length == 0)
-            {
-                direct.Add(MakeResultAt(LevelOptional, name, StateUnconfigured, "未配置（池为空）", TtlStaticMs, now));
-                return;
-            }
-            direct.Add(MakeResultAt(LevelOptional, name, StateOk, "已配置（池 " + all.Length.ToString() + " 项）", TtlStaticMs, now));
         }
 
         /// <summary>

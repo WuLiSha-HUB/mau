@@ -29,9 +29,7 @@ function openCatCfg(catId, name) {
             catCfgDefectGroups = d.defectGroups || [];
             renderToolDefectNote(catCfgDefectGroups, d.staleToolNames || []);
             renderApiOptions(d.apiOptions || [], d.apiConfigId || '');
-            renderQqBotOptions(d.qqbotOptions || [], d.qqbotId || '');
             renderAppearanceOptions(d.appearanceOptions || [], d.appearanceId || '');
-            document.getElementById('catCfgQqEnable').checked = !!d.qqbotEnable;
             document.getElementById('catCfgIdleOnly').checked = !!d.userInjectIdleOnly;
             renderEffortOptions(d.reasoningEffort || '', d.defaultReasoningEffort || '');
             document.getElementById('catCfgName').value = d.displayName || '';
@@ -122,30 +120,6 @@ function renderEffortOptions(current, globalValue) {
         opt.value = values[i];
         opt.textContent = values[i];
         if (values[i] === current) { opt.selected = true; }
-        sel.appendChild(opt);
-    }
-}
-
-// R2.3 QQ Bot 下拉——空选项=未绑定；多猫可绑同一 Bot
-function renderQqBotOptions(options, current) {
-    var sel = document.getElementById('catCfgQqBot');
-    sel.textContent = '';
-    var none = document.createElement('option');
-    none.value = '';
-    none.textContent = '（未绑定）';
-    if (!current || current.length === 0) { none.selected = true; }
-    sel.appendChild(none);
-    for (var i = 0; i < options.length; i++) {
-        var opt = document.createElement('option');
-        opt.value = options[i].qqBotId;
-        var label = options[i].displayName + ' (' + options[i].qqBotId.substring(0, 8) + '…)';
-        // A58 1:1——一只 Bot 只能绑一只猫：已被他猫占用 → 标注并禁用（后端保存时仍显式校验）
-        if (options[i].boundCat && options[i].qqBotId !== current) {
-            label = label + '（已被 ' + options[i].boundCat + ' 绑定）';
-            opt.disabled = true;
-        }
-        opt.textContent = label;
-        if (options[i].qqBotId === current) { opt.selected = true; }
         sel.appendChild(opt);
     }
 }
@@ -385,8 +359,6 @@ function saveCatCfg() {
         toolNames: toolNames.join(','),
         injectList: catCfgInjectList,
         packs: collectPackChecks(),
-        qqbotId: document.getElementById('catCfgQqBot').value,
-        qqbotEnable: document.getElementById('catCfgQqEnable').checked,
         userInjectIdleOnly: document.getElementById('catCfgIdleOnly').checked,
         appearanceId: document.getElementById('catCfgAppearance').value,
         reasoningEffort: document.getElementById('catCfgEffort').value,

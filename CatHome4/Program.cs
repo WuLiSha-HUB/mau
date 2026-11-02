@@ -7,7 +7,6 @@ using CatHome4.Admin;
 using CatHome4.Contracts;
 using CatHome4.Core;
 using CatHome4.Http;
-using CatHome4.QQ;
 using CatHome4.Observe;
 using Mau.Runtime;
 using Mau.Providers;
@@ -63,27 +62,6 @@ namespace CH4
         private static HttpHost _httpHost;
         /// <summary>会话协调桥——S1 程序集拆分：会话注册表/默认猫配置/轮转泵/会话指令（Core 实例类）</summary>
         private static ChatBridge _chatBridge;
-        /// <summary>
-        /// qqbot 绑定目标收集适配——IQqTargetCollector 实现（S3 解耦：QQ 域经接口消费，入口壳提供——默认猫 + 多猫注册表）。
-        /// </summary>
-        private sealed class QqTargetCollector : IQqTargetCollector
-        {
-            /// <summary>收集绑定指定 qqbot 的猫——委托到 Program.CollectQqTargets</summary>
-            /// <param name="qqBotId">qqbot 配置身份</param>
-            /// <returns>绑定目标列表（空=未绑定）</returns>
-            public List<QqTarget> CollectByBot(Guid qqBotId)
-            {
-                return CatHostService.CollectQqTargets(qqBotId);
-            }
-
-            /// <summary>收集所有绑定 qqbot 的猫——委托到 Program.CollectAllQqTargets</summary>
-            /// <returns>全部绑定目标</returns>
-            public List<QqTarget> CollectAll()
-            {
-                return CatHostService.CollectAllQqTargets();
-            }
-        }
-
         /// <summary>
         /// html 根解析适配——IHtmlRootProvider 实现（S2 解耦：Http 域经接口消费 html 根，入口壳提供实现——源码区优先 + 部署区回退）。
         /// </summary>
@@ -289,7 +267,7 @@ namespace CH4
                 version = "?";
             }
             // info 返回体 = 分类 JSON 块（design-ch4-tools 附录 §info——LLM 可读优先：分类 + 缩进 + 中文直显）
-            // 分类：version(版本+编译时刻) / time(当前时间) / llm / endpoint(本地端点) / roots / tokens / packs / qqbot
+            // 分类：version(版本+编译时刻) / time(当前时间) / llm / endpoint(本地端点) / roots / tokens / packs
             string catKey = ToolCatContext.CurrentCatKey;
             if (catKey == null)
             {
@@ -397,14 +375,6 @@ namespace CH4
             if (packList.Count > 0)
             {
                 info["packs"] = packList;
-            }
-            // [段8] qqbot——渠道说明（未接入 = 不输出该键）
-            string qqbotShow = CatHostService.BuildCatQqBotInfo(catKey);
-            if (qqbotShow.Length > 0)
-            {
-                Dictionary<string, object> qqbotBlock = new Dictionary<string, object>();
-                qqbotBlock["usage"] = qqbotShow;
-                info["qqbot"] = qqbotBlock;
             }
             // [段8b] db——授权库清单（A279）：库权限（cat.cfg dbLibs）已授权时 info 必须自证可见面；
             // 判据取 DbService.ListLibs（按 catId 授权过滤 + 摘要自证全集）；服务缺失 / 读失败如实出声，不静默省略该段

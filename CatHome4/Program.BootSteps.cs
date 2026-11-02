@@ -6,7 +6,6 @@ using CatHome4.Contracts;
 using CatHome4.Core;
 using CatHome4.Http;
 using CatHome4.Observe;
-using CatHome4.QQ;
 using Mau.Development;
 using Mau.Providers;
 using Mau.Runtime;
@@ -57,9 +56,6 @@ namespace CH4
 
         /// <summary>LLM 端点池（S1 产物）</summary>
         internal CH_LlmApiConfigStore ApiConfigStore = null;
-
-        /// <summary>QQ Bot 配置池（S1 产物）</summary>
-        internal CH_QqBotConfigStore QqBotStore = null;
 
         /// <summary>外观配置池（S1 产物）</summary>
         internal CH_AppearanceConfigStore AppearanceStore = null;
@@ -314,12 +310,6 @@ namespace CH4
                 Path.Combine(dataRoot, "Data", "secrets"));
             DataBox.Bind<CH_LlmApiConfigStore>(apiConfigStore);
             ReportStorageDegrade(apiConfigStore.StorageWritable, apiConfigStore.StorageError, "配置面（LLM 端点）");
-            // R2.3 QQ Bot 配置池——qqbot.json 明文（零 secret）+ Data/secrets 独立秘密文件（对齐 LLM API 池 M1 模式）
-            CH_QqBotConfigStore qqBotStore = new CH_QqBotConfigStore(
-                Path.Combine(dataRoot, "Data", "config"),
-                Path.Combine(dataRoot, "Data", "secrets"));
-            DataBox.Bind<CH_QqBotConfigStore>(qqBotStore);
-            ReportStorageDegrade(qqBotStore.StorageWritable, qqBotStore.StorageError, "QQ 通道（Bot 配置）");
             // A244 外观配置池——appearance.json 明文（无密钥面；每猫 appearanceId 引用 + 唯一默认项）
             CH_AppearanceConfigStore appearanceStore = new CH_AppearanceConfigStore(
                 Path.Combine(dataRoot, "Data", "config"));
@@ -365,7 +355,6 @@ namespace CH4
             ctx.LlmConfig = llmConfig;
             ctx.SegmentNote = segmentNote;
             ctx.ApiConfigStore = apiConfigStore;
-            ctx.QqBotStore = qqBotStore;
             ctx.AppearanceStore = appearanceStore;
             ctx.WebFetchSvc = webFetchSvc;
             ctx.ConfigReady = true;
@@ -557,7 +546,7 @@ namespace CH4
             // S1 ChatBridge 化——会话协调实例（注入提示词构建委托——CatCfg 域静态面 BuildInjectPrompt）
             _chatBridge = new ChatBridge(BuildInjectPrompt);
             // S4 Admin 域接线——依赖注入（管理 API 处理器 + cat.* 指令族迁入 CatHome4.Admin）
-            AdminService.Configure(_chatBridge, _oa, dataRoot, _mainThreadId, ExecuteTool, ObserveService.BuildSnapshotJson, new HtmlRootProvider(), apiConfigStore, ctx.QqBotStore, ctx.AppearanceStore, llmConfig, _portBand);
+            AdminService.Configure(_chatBridge, _oa, dataRoot, _mainThreadId, ExecuteTool, ObserveService.BuildSnapshotJson, new HtmlRootProvider(), apiConfigStore, ctx.AppearanceStore, llmConfig, _portBand);
             AdminService.BuildEnvInfoProvider = BuildEnvInfo;
             // A281 分发表接线——停机态探针 + 热重载执行体（宿主级能力，Admin 域不持有实现）
             AdminService.IsRestartingProvider = IsRestarting;
@@ -661,23 +650,7 @@ namespace CH4
             _chatBridge.DefaultToolNames = defaultToolNames;
             AdminService._defaultApiConfigId = defaultApiConfigId;
             AdminService._defaultReasoningEffort = defaultCfg != null ? AdminService.NormalizeReasoningEffort(defaultCfg.ReasoningEffort) : "";
-            // R2.3 默认猫 qqbot 配置——majordomo cat.cfg 读取（缺省未绑定/禁用）
-            Guid defaultQqBotId = Guid.Empty;
-            bool defaultQqBotEnable = false;
-            if (defaultCfg != null)
-            {
-                if (defaultCfg.QqBotId != null && defaultCfg.QqBotId.Length > 0)
-                {
-                    Guid parsed;
-                    if (Guid.TryParse(defaultCfg.QqBotId, out parsed) && parsed != Guid.Empty)
-                    {
-                        defaultQqBotId = parsed;
-                    }
-                }
-                defaultQqBotEnable = defaultCfg.QqBotEnable;
-            }
-            _chatBridge.DefaultQqBotId = defaultQqBotId;
-            _chatBridge.DefaultQqBotEnable = defaultQqBotEnable;
+            // R2.3 默认猫 qqbot 配置已移除（A298）
             if (chatStore.TryLoad(out restored))
             {
                 chatCtx.ReplaceMessages(restored);
@@ -909,20 +882,8 @@ namespace CH4
             CatHostService.LoadCatsOnBoot();
             // [段6c] 前端测试服务拉起——开发流程（改前端 → 跑测试 → 刷新生效）；未监听则启动 node server.js
             EnsureFrontendTestService();
-            // R2.3 QQ 管理器启动——扫描 Bot 池建立全部连接（附属功能组件；Bot 池空 = 零连接静默）
-            // S3 解耦——注入绑定目标收集面（默认猫 + 多猫注册表实现）
-            QQBotService.SetCollector(new QqTargetCollector());
-            QQBotService.SetFileCacheRoot(Path.Combine(dataRoot, "Data", "qqbot-files"));
-            QQBotService.Start();
             // A260 启动健康面收口——报告落盘 + 独立提示窗（有降级才弹；关窗不改运行态）
-            // 配置池读取校验：QQ / 外观池在启动期未必被消费，此处主动读一次，让损坏在启动面可见
-            CH_QqBotConfigStore qqBotStore = ctx.QqBotStore;
-            if (qqBotStore != null && qqBotStore.LastLoadError.Length > 0)
-            {
-                StartupDegradation.Report("CFG_CORRUPT", StartupDegradation.KindData, "QQ 通道（Bot 配置）",
-                    StartupDegradation.StateEmpty, "qqbot.json 读取失败：" + qqBotStore.LastLoadError,
-                    "管理面板 → QQ Bot → 重建配置（坏档已备份 .broken-<ts>）", "S7");
-            }
+            // 配置池读取校验：外观池在启动期未必被消费，此处主动读一次，让损坏在启动面可见
             CH_AppearanceConfigStore appearanceStore = ctx.AppearanceStore;
             if (appearanceStore != null)
             {

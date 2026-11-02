@@ -18,7 +18,6 @@ var RES_SEG_NAMES = {
     hosts: 'Admin 宿主泵',
     sessions: '会话泵',
     catqueue: '猫队列泵',
-    qqbot: 'QQBot',
     misc: '其它（重启 / 托盘 / 自启轮询）',
     'cs.summary': '会话·轮末总结轮询',
     'cs.pause': '会话·中止收尾',

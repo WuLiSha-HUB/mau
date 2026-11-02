@@ -1,4 +1,4 @@
-// CH4 外观层——panel.js：多猫管理区（2026-08-25 拆分自 index.html；2026-09-08 体量治理：API/QQBot 池 → panel-apis.js；每猫配置/受控根 → panel-catcfg.js）
+// CH4 外观层——panel.js：多猫管理区（2026-08-25 拆分自 index.html；2026-09-08 体量治理：API 池 → panel-apis.js；每猫配置/受控根 → panel-catcfg.js）
 // 依赖：app.js 先加载（全局状态与 SSE 已就位）
 // 加载顺序：app.js → panel.js → panel-apis.js → panel-catcfg.js（index.html 引用）
 

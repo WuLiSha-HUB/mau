@@ -167,27 +167,6 @@
                             <button id="apiCancelEdit" style="display:none;background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消编辑</button>
                         </div>
                     </div>
-                    <!-- R2.3 QQ Bot 池管理——列表/新建/编辑/删除（secret 掩码；注册即建 WS 连接） -->
-                    <div style="margin-top:16px;border-top:1px solid var(--ch-line);padding-top:10px">
-                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-                            <h2 style="margin:0">QQ Bot 池</h2>
-                            <span id="qqbotsMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag)"></span>
-                            <span style="flex:1"></span>
-                            <button id="qqbotsRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
-                        </div>
-                        <table class="box-table" id="qqbotsTable"><thead><tr><th style="width:14%">名称</th><th style="width:18%">配置 ID</th><th style="width:14%">AppId</th><th style="width:10%">环境</th><th style="width:16%">Secret</th><th style="width:28%">操作</th></tr></thead><tbody></tbody></table>
-                        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-                            <input id="qqNewName" placeholder="名称" style="width:120px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                            <input id="qqNewAppId" placeholder="AppId" style="width:160px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                            <select id="qqNewSandbox" style="background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                                <option value="true">沙箱</option>
-                                <option value="false">正式</option>
-                            </select>
-                            <input id="qqNewSecret" placeholder="Secret（编辑留空=保留）" style="width:200px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                            <button id="qqAddBtn" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">新建</button>
-                            <button id="qqCancelEdit" style="display:none;background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消编辑</button>
-                        </div>
-                    </div>
                     <!-- 加载包池（R4 加载包——池 CRUD；猫级挂载在猫配置弹层） -->
                     <div style="margin-top:16px;border-top:1px solid var(--ch-line);padding-top:10px">
                         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
@@ -315,11 +294,6 @@
             <input id="catCfgName" placeholder="如 雾理莎（留空不允许）" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">LLM API 配置</label>
             <select id="catCfgApi" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px"></select>
-            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">QQ Bot 绑定（qqbotId——一只 Bot 只能绑一只猫；空=未绑定）</label>
-            <select id="catCfgQqBot" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px"></select>
-            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="checkbox" id="catCfgQqEnable"> 启用 qqbot 转发（qqbotEnable——false=不注入不转发）
-            </label>
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
                 <input type="checkbox" id="catCfgIdleOnly"> 人工输入空闲注入（userInjectIdleOnly——true=人工输入仅在空闲时推送，轮内不插；sys 注入不受影响）
             </label>
@@ -358,7 +332,7 @@
     <!-- 两页共用前端工具（loadUiVersion/applyUiConfig——js/ui-common.js 单一定义；配置接线复用 app.js loadConfig 的同一响应） -->
     <script src="js/ui-common.js?v=__V__"></script>
     <script>loadUiVersion();</script>
-    <!-- 2026-09-08 体量治理——JS 四域外置（加载顺序：app 公共 → panel 多猫 → panel-apis API/QQBot 池 → panel-catcfg 每猫配置/受控根；对话已迁 chat.html 独立页——F2.1 index 纯管理面）；__V__ 宿主注入版本号（cache-busting） -->
+    <!-- 2026-09-08 体量治理——JS 四域外置（加载顺序：app 公共 → panel 多猫 → panel-apis API 池 → panel-catcfg 每猫配置/受控根；对话已迁 chat.html 独立页——F2.1 index 纯管理面）；__V__ 宿主注入版本号（cache-busting） -->
     <script src="js/app.js?v=__V__"></script>
     <script src="js/panel.js?v=__V__"></script>
     <script src="js/panel-apis.js?v=__V__"></script>

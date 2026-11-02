@@ -11,7 +11,7 @@ namespace CatHome4.Admin
     internal static class AdminRoutes
     {
         /// <summary>
-        /// 管理路由注册——31 端点全量（llm-apis / qqbot-apis / cat-config / cat-default / workspace / appearance-apis / packs / open-data-dir / chat-images / audio / db）。
+        /// 管理路由注册——30 端点全量（llm-apis / cat-config / cat-default / workspace / appearance-apis / packs / open-data-dir / chat-images / audio / db）。
         /// </summary>
         /// <param name="sink">HTTP 路由注册面（HttpHost 实现）</param>
         public static void Register(IHttpRouteSink sink)
@@ -23,13 +23,7 @@ namespace CatHome4.Admin
             sink.MapPost("/api/v1/llm-apis/delete", (Delegate)AdminService.HandleLlmApisDelete);
             sink.MapPost("/api/v1/llm-apis/default", (Delegate)AdminService.HandleLlmApisDefault);
 
-            // [段2] QQ Bot 池 CRUD——R2.3 管理面
-            sink.MapGet("/api/v1/qqbot-apis", (Delegate)AdminService.HandleQqBotApisGet);
-            sink.MapPost("/api/v1/qqbot-apis", (Delegate)AdminService.HandleQqBotApisPost);
-            sink.MapPost("/api/v1/qqbot-apis/edit", (Delegate)AdminService.HandleQqBotApisEdit);
-            sink.MapPost("/api/v1/qqbot-apis/delete", (Delegate)AdminService.HandleQqBotApisDelete);
-
-            // [段3] 每猫配置读写——M3
+            // [段2] 每猫配置读写——M3
             sink.MapGet("/api/v1/cat-config", (Delegate)AdminService.HandleCatConfigGet);
             sink.MapPost("/api/v1/cat-config", (Delegate)AdminService.HandleCatConfigPost);
 

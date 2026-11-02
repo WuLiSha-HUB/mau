@@ -7,7 +7,6 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Mau.Runtime;
 using CatHome4.Http;
-using CatHome4.QQ;
 using CatHome4.Contracts;
 using Mau.Providers;
 using CH4;
@@ -494,8 +493,6 @@ namespace CatHome4.Admin
             sb.AppendLine("  toolNames=" + cfg.ToolNames);
             sb.AppendLine("  injectList=" + JoinArray(cfg.InjectList));
             sb.AppendLine("  packs=" + JoinArray(cfg.Packs));
-            sb.AppendLine("  qqbotId=" + cfg.QqBotId);
-            sb.AppendLine("  qqbotEnable=" + (cfg.QqBotEnable ? "true" : "false"));
             sb.AppendLine("  enabledRoots=" + JoinArray(cfg.EnabledRoots));
             sb.Append("  dbLibs=" + JoinArray(cfg.DbLibs));
             return sb.ToString();
@@ -691,46 +688,6 @@ namespace CatHome4.Admin
                 cfg.DbLibs = libIds;
                 applied = "dbLibs=" + JoinArray(libIds);
             }
-            else if (field == "qqbotId")
-            {
-                if (value.Length == 0)
-                {
-                    cfg.QqBotId = "";
-                    applied = "qqbotId=（已清空）";
-                }
-                else
-                {
-                    Guid parsed;
-                    if (!Guid.TryParse(value, out parsed) || parsed == Guid.Empty)
-                    {
-                        return "cat.cfg.set | qqbotId 非法: " + value;
-                    }
-                    string boundBy = FindQqBotBindingOwner(id, value);
-                    if (boundBy.Length > 0)
-                    {
-                        return "cat.cfg.set | 该 QQ Bot 已绑定猫「" + boundBy + "」——一只 Bot 只能绑一只猫";
-                    }
-                    cfg.QqBotId = value;
-                    applied = "qqbotId=" + value;
-                }
-            }
-            else if (field == "qqbotEnable")
-            {
-                if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
-                {
-                    cfg.QqBotEnable = true;
-                    applied = "qqbotEnable=true";
-                }
-                else if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
-                {
-                    cfg.QqBotEnable = false;
-                    applied = "qqbotEnable=false";
-                }
-                else
-                {
-                    return "cat.cfg.set | qqbotEnable 非法值: " + value + "（true/false）";
-                }
-            }
             else if (field == "userInjectIdleOnly")
             {
                 if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
@@ -806,7 +763,7 @@ namespace CatHome4.Admin
             }
             else
             {
-                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/qqbotId/qqbotEnable/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId）";
+                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId）";
             }
             // [段2] 全量写回 + 生效入队（与端点同源：写后 catcfg.apply 主线程泵消费）
             SaveCatCfgData(id, cfg);
@@ -890,7 +847,7 @@ namespace CatHome4.Admin
 
         /// <summary>
         /// session.fork——从源猫节点分支新建独立 Cat（P6b：继承配置 + 播种节点前前文；静默态待启动）。
-        /// 继承：persona/toolNames/injectList/apiConfigId/enabledRoots/qqbotId + 节点前前文；qqbot 转发默认关闭（enable=false——防双猫抢 Bot）；不继承：运行态。
+        /// 继承：persona/toolNames/injectList/apiConfigId/enabledRoots + 节点前前文；不继承：运行态。
         /// 配置源：多猫 = CatEntry 运行时实体（catcfg.apply 后真相）；majordomo = sessions/majordomo/cat.cfg（source.Id 是 Ticks——判例 fork 配置全空）。
         /// </summary>
         /// <param name="source">源会话（发起 fork 的猫）</param>
@@ -929,14 +886,12 @@ namespace CatHome4.Admin
             CatEntry srcCat = FindCat(source.Id);
             if (srcCat != null)
             {
-                // 多猫——运行时实体字段（ApiConfigId/Persona/ToolNames/InjectList/QqBotId 继承）
+                // 多猫——运行时实体字段（ApiConfigId/Persona/ToolNames/InjectList 继承）
                 cfgData = new CatCfgData();
                 cfgData.ApiConfigId = srcCat.ApiConfigId == Guid.Empty ? "" : srcCat.ApiConfigId.ToString("D");
                 cfgData.Persona = srcCat.Persona;
                 cfgData.ToolNames = srcCat.ToolNames;
                 cfgData.InjectList = srcCat.InjectList;
-                cfgData.QqBotId = srcCat.QqBotId == Guid.Empty ? "" : srcCat.QqBotId.ToString("D");
-                cfgData.QqBotEnable = srcCat.QqBotEnable;
                 cfgData.Type = srcCat.Type;
                 // EnabledRoots CatEntry 不持有——从源磁盘 cfg 补读
                 CatCfgData srcDisk = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", srcCat.Id, "cat.cfg"));
@@ -958,8 +913,6 @@ namespace CatHome4.Admin
             cfgData.DisplayName = name;
             cfgData.Running = false;
             cfgData.Port = 0;
-            // qqbotId 继承保留（防双猫抢 Bot 靠 enable=false——莎拍板：复制配置、默认不开启转发）
-            cfgData.QqBotEnable = false;
             SaveCatCfgData(id, cfgData);
             // [段3] 创建 + 播种 + 注册（CreateCatEntry 读新 cfg——克隆配置生效；视图面与会话元数据面随前文播种）
             CatEntry cat = CreateCatEntry(id, name, seed, source, msgIndex);
@@ -1267,21 +1220,6 @@ namespace CatHome4.Admin
                 }
                 ConfigStore globalConfig = null;
                 DataBox.TryResolve<ConfigStore>(out globalConfig);
-                // R2.3 每猫 qqbot 配置——qqbotId/qqbotEnable（cfg 缺失=未绑定/禁用）
-                Guid qqBotId = Guid.Empty;
-                bool qqBotEnable = false;
-                if (cfgData != null)
-                {
-                    if (cfgData.QqBotId != null && cfgData.QqBotId.Length > 0)
-                    {
-                        Guid parsed;
-                        if (Guid.TryParse(cfgData.QqBotId, out parsed) && parsed != Guid.Empty)
-                        {
-                            qqBotId = parsed;
-                        }
-                    }
-                    qqBotEnable = cfgData.QqBotEnable;
-                }
                 // [段2] 每猫配置四字段——persona/toolNames/injectList/packs（M2/R4；cfg 缺失=新猫走全局默认模板继承）
                 string persona = "";
                 string type = "";
@@ -1432,8 +1370,6 @@ namespace CatHome4.Admin
                     toolActual = catSpecs.Length;
                 }
                 LogStore.Add("CatHome4", 1, "cat.tools | cat=" + id + " | 来源=" + toolSource + " | 声明=" + toolDeclared.ToString() + " | 实际=" + toolActual.ToString(), "CHAT");
-                cat.QqBotId = qqBotId;
-                cat.QqBotEnable = qqBotEnable;
                 LogStore.Add("CatHome4", 1, "猫「" + displayName + "」绑定 LLM 配置：" + (apiConfigId == Guid.Empty ? "默认端点" : apiConfigId.ToString("D")) + "，模型 " + apiConfig.DefaultModel, "CHAT");
                 return cat;
             }
@@ -1475,168 +1411,6 @@ namespace CatHome4.Admin
             }
             return null;
         }
-
-        /// <summary>
-        /// 收集所有绑定 qqbot 的猫——默认猫（majordomo）+ 多猫（R2.3.5 输出转发轮询面；A58 的 1:1 约束在 Bot 侧——每猫各自的 Bot）。
-        /// </summary>
-        /// <returns>全部绑定目标（QqBotId 非空）</returns>
-        internal static List<QqTarget> CollectAllQqTargets()
-        {
-            List<QqTarget> result = new List<QqTarget>();
-            if (_chatBridge.DefaultQqBotId != Guid.Empty)
-            {
-                ChatSession captured = _chatBridge.DefaultSession;
-                result.Add(new QqTarget
-                {
-                    Key = "majordomo",
-                    DisplayName = "majordomo",
-                    QqBotId = _chatBridge.DefaultQqBotId,
-                    Enable = _chatBridge.DefaultQqBotEnable,
-                    Inject = delegate (string s, string origin) { return captured.PostUserMessage(s, "user", "", origin); },
-                    GetViewItems = delegate () { return ConvertQqViewItems(captured.ViewStore.GetBlocks()); },
-                    GetBlockFingerprint = delegate (int index) { return ComputeBlockFingerprint(captured.ViewStore.GetBlocks(), index); },
-                    ParseImages = ParseQqImages,
-                    IsIdle = delegate () { return captured.IsIdle; },
-                    IsTimebackActive = delegate () { return captured.TimebackActive; },
-                    NewSession = delegate ()
-                    {
-                        PostInput(MainInputTarget(), "session.new");
-                        return "新会话已请求（注入执行中）\n" + _chatBridge.BuildInjectSummary(_chatBridge.DefaultPersona, _chatBridge.DefaultInjectList, _chatBridge.DefaultToolSpecs);
-                    },
-                    GetInfo = delegate () { return captured.GetInfoText(); }
-                });
-            }
-            for (int i = 0; i < _cats.Count; i++)
-            {
-                CatEntry cat = _cats[i];
-                // A296 真停——停机猫会话已释放：不进 QQ 目标表（消息无处投递）
-                if (cat.QqBotId != Guid.Empty && cat.Session != null)
-                {
-                    CatEntry captured = cat;
-                    result.Add(new QqTarget
-                    {
-                        Key = cat.Id,
-                        DisplayName = cat.DisplayName,
-                        QqBotId = cat.QqBotId,
-                        Enable = cat.QqBotEnable,
-                        Inject = delegate (string s, string origin) { return captured.Session.PostUserMessage(s, "user", "", origin); },
-                        GetViewItems = delegate () { return ConvertQqViewItems(captured.Session.ViewStore.GetBlocks()); },
-                        GetBlockFingerprint = delegate (int index) { return ComputeBlockFingerprint(captured.Session.ViewStore.GetBlocks(), index); },
-                        ParseImages = ParseQqImages,
-                        IsIdle = delegate () { return captured.Session.IsIdle; },
-                        IsTimebackActive = delegate () { return captured.Session.TimebackActive; },
-                        NewSession = delegate ()
-                        {
-                            PostInput(CatInputTarget(captured), "session.new");
-                            return "新会话已请求（注入执行中）\n" + _chatBridge.BuildInjectSummary(captured.Persona, captured.InjectList, captured.ToolSpecs);
-                        },
-                        GetInfo = delegate () { return captured.Session.GetInfoText(); }
-                    });
-                }
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// 取绑定指定 qqbot 的猫（A58 1:1——一个 Bot 唯一对应一只猫：重复配置取首个 + L2 留痕）。
-        /// </summary>
-        /// <param name="qqBotId">qqbot 配置身份</param>
-        /// <returns>绑定目标列表（≤1 项；空=未绑定任何猫）</returns>
-        internal static List<QqTarget> CollectQqTargets(Guid qqBotId)
-        {
-            List<QqTarget> result = new List<QqTarget>();
-            List<QqTarget> all = CollectAllQqTargets();
-            for (int i = 0; i < all.Count; i = i + 1)
-            {
-                if (all[i].QqBotId != qqBotId)
-                {
-                    continue;
-                }
-                if (result.Count == 0)
-                {
-                    result.Add(all[i]);
-                    continue;
-                }
-                // 1:1 约束外（旧数据 / 手工改 cat.cfg）——取首个 + L2 留痕（可诊断）
-                LogStore.Add("QQBot", 2, "同一 Bot 被多猫绑定（取首个） | " + qqBotId.ToString("D") + " | 首个 " + result[0].Key + " · 忽略 " + all[i].Key, "QQBOT");
-                break;
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// qqbot 绑定占用者查询（A58 1:1）——返回除 catKey 自身外绑定了该 Bot 的猫显示名（空=无人占用）。
-        /// 两处消费：保存配置时查重（冲突显式拒绝）· 配置读面标注（前端禁用已绑他猫的 Bot）。
-        /// </summary>
-        /// <param name="catKey">当前猫寻址键（majordomo=默认猫；自身不计入占用）</param>
-        /// <param name="qqbotId">Bot 身份（Guid 文本）</param>
-        /// <returns>占用者显示名（空串=无占用）</returns>
-        internal static string FindQqBotBindingOwner(string catKey, string qqbotId)
-        {
-            Guid target;
-            if (!Guid.TryParse(qqbotId, out target) || target == Guid.Empty)
-            {
-                return "";
-            }
-            if (catKey != "majordomo" && _chatBridge.DefaultQqBotId == target)
-            {
-                return "majordomo";
-            }
-            for (int i = 0; i < _cats.Count; i = i + 1)
-            {
-                CatEntry cat = _cats[i];
-                if (cat.Id == catKey)
-                {
-                    continue;
-                }
-                if (cat.QqBotId == target)
-                {
-                    return cat.DisplayName;
-                }
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// QQBot 渠道说明串——info 环境信息消费（A58）：该猫已绑定且启用 qqbot 转发时给出文件发送用法；
-        /// 未绑定 / 未启用 → 空串（info 不显示任何 qqbot 相关内容）。
-        /// </summary>
-        /// <param name="catKey">猫 key（majordomo=默认猫）</param>
-        /// <returns>说明串（空=未接入 qqbot）</returns>
-        internal static string BuildCatQqBotInfo(string catKey)
-        {
-            if (catKey == null || catKey.Length == 0)
-            {
-                return "";
-            }
-            Guid botId;
-            bool enabled;
-            if (catKey == "majordomo")
-            {
-                botId = _chatBridge.DefaultQqBotId;
-                enabled = _chatBridge.DefaultQqBotEnable;
-            }
-            else
-            {
-                CatEntry cat = FindCat(catKey);
-                if (cat == null)
-                {
-                    return "";
-                }
-                botId = cat.QqBotId;
-                enabled = cat.QqBotEnable;
-            }
-            if (botId == Guid.Empty || !enabled)
-            {
-                return "";
-            }
-            string botName = ResolveQqBotDisplayName(botId);
-            if (botName.Length == 0)
-            {
-                botName = botId.ToString("D");
-            }
-            return botName + "：发本地文件=单独一行写 [QQBot发送文件:\"<真实绝对路径>\"]（≤10MB · 私聊/群聊）";
-        }
         /// <summary>
         /// 本地对话端点端口解析——info 环境信息消费（本猫实际监听端口）。
         /// majordomo = 独立对话端口；多猫 = 注册表运行态端口；未监听 / 未知 key = 0。
@@ -1663,183 +1437,6 @@ namespace CatHome4.Admin
                 return 0;
             }
             return cat.Port;
-        }
-
-        /// <summary>
-        /// Bot 显示名解析——Bot 池按身份查显示名（池内缺失 → 空串，调用方回退身份串）。
-        /// </summary>
-        /// <param name="botId">Bot 配置身份</param>
-        /// <returns>显示名（空=池内缺失）</returns>
-        internal static string ResolveQqBotDisplayName(Guid botId)
-        {
-            CH_QqBotConfigStore store = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out store);
-            if (store == null)
-            {
-                return "";
-            }
-            CH_QqBotConfig cfg;
-            if (store.TryGet(botId, out cfg) && cfg != null && cfg.DisplayName != null)
-            {
-                return cfg.DisplayName;
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// 视图块 → QQ 转发项转换——窄 DTO（QQ 域消费 RenderType / Content / Done / Origin）。
-        /// text / gap_text 块提取 payload.text；user 块提取 payload.origin（QQ 注入的轮起点锚——转发面据此绑定来源与轮）。
-        /// </summary>
-        /// <param name="blocks">视图块数组</param>
-        /// <returns>QQ 转发项数组</returns>
-        private static QqViewItem[] ConvertQqViewItems(ViewBlock[] blocks)
-        {
-            if (blocks == null)
-            {
-                return new QqViewItem[0];
-            }
-            QqViewItem[] items = new QqViewItem[blocks.Length];
-            for (int i = 0; i < blocks.Length; i = i + 1)
-            {
-                ViewBlock b = blocks[i];
-                QqViewItem item = new QqViewItem();
-                item.RenderType = b.RenderType ?? "";
-                item.Content = "";
-                item.Done = "";
-                item.Origin = "";
-                if (item.RenderType == "text" || item.RenderType == "gap_text")
-                {
-                    item.Content = ExtractTextContent(b.Payload);
-                }
-                else if (item.RenderType == "roundsum")
-                {
-                    item.Done = ExtractRoundSumDone(b.Payload);
-                }
-                else if (item.RenderType == "user")
-                {
-                    item.Origin = ExtractOrigin(b.Payload);
-                }
-                items[i] = item;
-            }
-            return items;
-        }
-
-        /// <summary>
-        /// 提取 user 块的原注入来源标记——payload.origin（空 / 缺失 = 非 QQ 注入；防御式解析失败回落空串）。
-        /// </summary>
-        /// <param name="payloadJson">块载荷 JSON</param>
-        /// <returns>origin 值（空=非 QQ 注入）</returns>
-        private static string ExtractOrigin(string payloadJson)
-        {
-            if (payloadJson == null || payloadJson.Length == 0)
-            {
-                return "";
-            }
-            try
-            {
-                using (JsonDocument d = JsonUtil.ParseStrict(payloadJson))
-                {
-                    if (d.RootElement.TryGetProperty("origin", out JsonElement c) && c.ValueKind == JsonValueKind.String)
-                    {
-                        return c.GetString() ?? "";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "载荷 origin 提取失败（回落空）: " + ex.Message, "CHAT");
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// 块内容指纹——按块下标取（A111 续接锚点）：渲染类型 + 前文索引 + 载荷全文经 SHA256 取前 16 位十六进制。
-        /// 判据：与实际产物同源（同一 ViewBlock 载荷）——重建后前缀一致则指纹一致，块序变更后仍可精确定位。
-        /// </summary>
-        /// <param name="blocks">视图块数组</param>
-        /// <param name="index">块下标（越界返回空串）</param>
-        /// <returns>指纹（空=不可作锚）</returns>
-        private static string ComputeBlockFingerprint(ViewBlock[] blocks, int index)
-        {
-            if (blocks == null || index < 0 || index >= blocks.Length)
-            {
-                return "";
-            }
-            ViewBlock b = blocks[index];
-            string raw = (b.RenderType ?? "") + "\u0001" + b.MsgIndex.ToString() + "\u0001" + (b.Payload ?? "");
-            byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            for (int i = 0; i < 8; i = i + 1)
-            {
-                sb.Append(hash[i].ToString("x2"));
-            }
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// 提取 text 块内容——payload JSON 的 text 字段（A165 v2 键名统一；防御式解析失败返回空串）。
-        /// </summary>
-        /// <param name="payloadJson">块载荷 JSON</param>
-        /// <returns>内容文本</returns>
-        private static string ExtractTextContent(string payloadJson)
-        {
-            if (payloadJson == null || payloadJson.Length == 0)
-            {
-                return "";
-            }
-            try
-            {
-                using (JsonDocument d = JsonUtil.ParseStrict(payloadJson))
-                {
-                    if (d.RootElement.TryGetProperty("text", out JsonElement c) && c.ValueKind == JsonValueKind.String)
-                    {
-                        return c.GetString() ?? "";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "载荷 text 提取失败（回落空）: " + ex.Message, "CHAT");
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// 提取 roundsum 块的 done 字段——本轮结束语义（tool=工具主动 done / stream=流式自然收尾）。
-        /// 缺失或解析失败回退 stream（保守按自然收尾：来源照常出队消费，不误留）。
-        /// </summary>
-        /// <param name="payloadJson">roundsum 载荷 JSON（{"type":"roundsum","data":{...,"done":"..."}}）</param>
-        /// <returns>done 值（tool / stream）</returns>
-        private static string ExtractRoundSumDone(string payloadJson)
-        {
-            if (payloadJson == null || payloadJson.Length == 0)
-            {
-                return "stream";
-            }
-            try
-            {
-                using (JsonDocument d = JsonUtil.ParseStrict(payloadJson))
-                {
-                    JsonElement data;
-                    if (d.RootElement.TryGetProperty("data", out data) && data.ValueKind == JsonValueKind.Object)
-                    {
-                        JsonElement done;
-                        if (data.TryGetProperty("done", out done) && done.ValueKind == JsonValueKind.String)
-                        {
-                            string got = done.GetString();
-                            if (got != null && got.Length > 0)
-                            {
-                                return got;
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "roundsum done 提取失败（按 stream 处理）: " + ex.Message, "CHAT");
-            }
-            return "stream";
         }
 
         /// <summary>

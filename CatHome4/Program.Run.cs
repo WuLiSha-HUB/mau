@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Threading;
 using Mau.Runtime;
 using CatHome4.Admin;
-using CatHome4.QQ;
 using CatHome4.Observe;
 using CatHome4.Contracts;
 using Mau.Providers;
@@ -88,9 +87,6 @@ namespace CH4
                 segTicks = Stopwatch.GetTimestamp();
                 AdminService.PumpInputQueue();
                 LoopTiming.Accumulate("catqueue", ElapsedMsSince(segTicks));
-                segTicks = Stopwatch.GetTimestamp();
-                QQBotService.Tick();
-                LoopTiming.Accumulate("qqbot", ElapsedMsSince(segTicks));
                 // 宿主自更新——启动回执注入（一次性）+ 重启闸门（停机态 + 全局 Idle → 接力拉起）
                 segTicks = Stopwatch.GetTimestamp();
                 PumpMajordomoPush();
@@ -162,7 +158,6 @@ namespace CH4
                 CatHostService.PumpAllHosts();
                 _chatBridge.PumpSessions();
                 AdminService.PumpInputQueue();
-                QQBotService.Tick();
                 if (AllIdle())
                 {
                     return;

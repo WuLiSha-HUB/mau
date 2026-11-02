@@ -143,8 +143,6 @@ describe('专属骨架——info / catinfo（逐字段摊平）', () => {
         expect(text).toContain('可见根');
         expect(text).toContain('mau(rw)');
         expect(text).toContain('加载包');
-        // 缺类不显示（无 qqbot 键 → 不出现该行）
-        expect(text).not.toContain('QQBot');
     });
 
     it('catinfo——整块 JSON → 每猫一行（运行态 / 相位 / 前文 / 活跃）', () => {

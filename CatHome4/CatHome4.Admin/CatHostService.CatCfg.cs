@@ -62,12 +62,6 @@ namespace CatHome4.Admin
             /// <summary>加载包挂载清单——cat.cfg 持久化（R4；空=未挂载任何包）</summary>
             public string[] Packs;
 
-            /// <summary>qqbot 配置身份——cat.cfg 持久化（R2.3；Guid.Empty=未绑定）</summary>
-            public Guid QqBotId;
-
-            /// <summary>qqbot 启用标志——cat.cfg 持久化（R2.3；false=不注入不转发）</summary>
-            public bool QqBotEnable;
-
             /// <summary>人工输入空闲注入开关——cat.cfg 持久化（A219-3；true=人工输入仅在 Idle 时推送）</summary>
             public bool UserInjectIdleOnly;
 
@@ -116,12 +110,6 @@ namespace CatHome4.Admin
 
             /// <summary>前文注入清单——文件寻址数组（id:相对路径；空=不注入）</summary>
             public string[] InjectList { get; set; }
-
-            /// <summary>qqbot 配置身份——缺省空串（未绑定）</summary>
-            public string QqBotId { get; set; }
-
-            /// <summary>qqbot 启用标志——缺省 false</summary>
-            public bool QqBotEnable { get; set; }
 
             /// <summary>人工输入空闲注入开关——缺省 false（=现状：人工输入可轮内插入）</summary>
             public bool UserInjectIdleOnly { get; set; }
@@ -295,8 +283,6 @@ namespace CatHome4.Admin
                     data.Persona = GetStringProp(root, "persona");
                     data.ToolNames = GetStringProp(root, "toolNames");
                     data.InjectList = GetStringArrayProp(root, "injectList");
-                    data.QqBotId = GetStringProp(root, "qqbotId");
-                    data.QqBotEnable = GetBoolProp(root, "qqbotEnable");
                     data.EnabledRoots = GetStringArrayProp(root, "enabledRoots");
                     data.Packs = GetStringArrayProp(root, "packs");
                     data.DbLibs = GetStringArrayProp(root, "dbLibs");
@@ -328,8 +314,6 @@ namespace CatHome4.Admin
             data.ToolNames = cat.ToolNames;
             data.InjectList = cat.InjectList;
             data.Packs = cat.Packs;
-            data.QqBotId = cat.QqBotId.ToString("D");
-            data.QqBotEnable = cat.QqBotEnable;
             data.UserInjectIdleOnly = cat.UserInjectIdleOnly;
             data.ReasoningEffort = cat.ReasoningEffort;
             data.AppearanceId = cat.AppearanceId.ToString("D");
@@ -489,8 +473,6 @@ namespace CatHome4.Admin
                 // M2c 写时校验——序列化前比对内置清单过滤非法名（外部损坏防御：持久化面只落合法名）
                 toolNames = ValidateToolNames(data.ToolNames),
                 injectList = data.InjectList,
-                qqbotId = data.QqBotId,
-                qqbotEnable = data.QqBotEnable,
                 enabledRoots = data.EnabledRoots,
                 packs = data.Packs,
                 dbLibs = data.DbLibs,
@@ -547,8 +529,6 @@ namespace CatHome4.Admin
                 _chatBridge.DefaultToolSpecs = specs;
                 // 授权面原始串——实时解析输入（改配置即改内存；design-ch4-tools §三·十一）
                 _chatBridge.DefaultToolNames = toolNames;
-                _chatBridge.DefaultQqBotId = ResolveQqBotId(cfg);
-                _chatBridge.DefaultQqBotEnable = cfg.QqBotEnable;
                 _chatBridge.DefaultSession.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
                 _chatBridge.DefaultSession.SetRoundSummary(ResolveEffectiveRoundSummary("majordomo"));
                 _chatBridge.DefaultSession.SetPetKind(ResolveEffectivePetKind("majordomo"));
@@ -587,8 +567,6 @@ namespace CatHome4.Admin
             cat.InjectList = injectList;
             cat.ToolNames = toolNames;
             cat.ToolSpecs = specs;
-            cat.QqBotId = ResolveQqBotId(cfg);
-            cat.QqBotEnable = cfg.QqBotEnable;
             cat.UserInjectIdleOnly = cfg.UserInjectIdleOnly;
             if (cat.Session != null)
             {
@@ -621,25 +599,6 @@ namespace CatHome4.Admin
                 LogStore.Add("CatHome4", 1, "猫「" + cat.DisplayName + "」配置生效：LLM 端点 " + newApiId.ToString("D") + "，思考强度 " + (newCatEffort.Length > 0 ? newCatEffort : "跟随全局"), "CONFIG");
             }
             return "catcfg.apply | " + cat.DisplayName + " | 已生效（前文项新会话生效）";
-        }
-
-        /// <summary>
-        /// 解析 cat.cfg 的 qqbot 配置身份——缺省 Guid.Empty=未绑定（A285 自 Handlers 迁入）。
-        /// </summary>
-        /// <param name="cfg">配置数据</param>
-        /// <returns>qqbot 配置身份</returns>
-        private static Guid ResolveQqBotId(CatCfgData cfg)
-        {
-            Guid id = Guid.Empty;
-            if (cfg != null && cfg.QqBotId != null && cfg.QqBotId.Length > 0)
-            {
-                Guid parsed;
-                if (Guid.TryParse(cfg.QqBotId, out parsed) && parsed != Guid.Empty)
-                {
-                    id = parsed;
-                }
-            }
-            return id;
         }
 
         /// <summary>
@@ -680,8 +639,6 @@ namespace CatHome4.Admin
             data.Running = false;
             data.Port = 0;
             data.ApiConfigId = "";
-            data.QqBotId = "";
-            data.QqBotEnable = false;
             data.EnabledRoots = null;
             if (tpl != null)
             {

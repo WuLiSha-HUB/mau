@@ -576,7 +576,7 @@ namespace CH4
             return ToolMetaHead.With("pack", true, packKey, targets.Count, packFields, packKey + " | " + targets.Count.ToString() + " 件 · " + totalChars.ToString() + " 字符" + "\n" + sb.ToString());
         }
 
-        /// <summary>info 执行体——本会话环境自省，返回分类 JSON 块（version / time / llm / endpoint / roots / tokens / packs / qqbot；M4e：info 是猫自省目录范围的通道）。</summary>
+        /// <summary>info 执行体——本会话环境自省，返回分类 JSON 块（version / time / llm / endpoint / roots / tokens / packs；M4e：info 是猫自省目录范围的通道）。</summary>
         /// <returns>环境信息文本</returns>
         private string ExecuteInfo()
         {
