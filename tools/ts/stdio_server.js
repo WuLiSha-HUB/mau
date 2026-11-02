@@ -296,6 +296,8 @@ function diagItem(project, diag)
 
 /**
  * 收集工程诊断（语义 + 语法；full 时含建议诊断作 warnings）
+ * 程序级一次收全——逐文件查询会让语言服务对每个文件重复做依赖检查，
+ * 实测同工程 20 倍放大（A292 压测：b1500 逐文件 35.8s vs tsc 1.8s）
  * @param {object} project 工程上下文
  * @param {boolean} full 是否含警告
  * @returns {object} { errors, warnings }
@@ -304,30 +306,51 @@ function collectDiagnostics(project, full)
 {
     var errors = [];
     var warnings = [];
-    for (var i = 0; i < project.fileNames.length; i = i + 1)
+    var program = project.service.getProgram();
+    var i;
+    var syntactic = program.getSyntacticDiagnostics() || [];
+    for (i = 0; i < syntactic.length; i = i + 1)
     {
-        var fileName = project.fileNames[i];
-        var semantic = project.service.getSemanticDiagnostics(fileName) || [];
-        var syntactic = project.service.getSyntacticDiagnostics(fileName) || [];
-        var j;
-        for (j = 0; j < syntactic.length; j = j + 1)
+        if (inProjectFileSet(project, syntactic[i]))
         {
-            errors.push(diagItem(project, syntactic[j]));
+            errors.push(diagItem(project, syntactic[i]));
         }
-        for (j = 0; j < semantic.length; j = j + 1)
+    }
+    var semantic = program.getSemanticDiagnostics() || [];
+    for (i = 0; i < semantic.length; i = i + 1)
+    {
+        if (inProjectFileSet(project, semantic[i]))
         {
-            errors.push(diagItem(project, semantic[j]));
+            errors.push(diagItem(project, semantic[i]));
         }
-        if (full)
+    }
+    if (full)
+    {
+        for (i = 0; i < project.fileNames.length; i = i + 1)
         {
-            var suggestion = project.service.getSuggestionDiagnostics(fileName) || [];
-            for (j = 0; j < suggestion.length; j = j + 1)
+            var suggestion = project.service.getSuggestionDiagnostics(project.fileNames[i]) || [];
+            for (var j = 0; j < suggestion.length; j = j + 1)
             {
                 warnings.push(diagItem(project, suggestion[j]));
             }
         }
     }
     return { errors: errors, warnings: warnings };
+}
+
+/**
+ * 诊断是否落在工程源文件集内（程序级诊断会带上库文件 / 配置面，需按工程面收窄）
+ * @param {object} project 工程上下文
+ * @param {object} diag ts.Diagnostic
+ * @returns {boolean} 属于工程源码即 true
+ */
+function inProjectFileSet(project, diag)
+{
+    if (!diag.file)
+    {
+        return false;
+    }
+    return project.fileSet[nodePath.resolve(diag.file.fileName).toLowerCase()] === true;
 }
 
 /**
@@ -665,6 +688,32 @@ function diffLines(before, after)
 var handlers = Object.create(null);
 
 /**
+ * stats — 服务自观测（内存 / 工程缓存规模；压测与资源页签诊断用，不改任何状态）
+ * @param {object} req 请求
+ * @returns {object} 回执
+ */
+handlers['stats'] = function (req)
+{
+    var mem = process.memoryUsage();
+    var keys = Object.keys(projects);
+    var files = 0;
+    for (var i = 0; i < keys.length; i = i + 1)
+    {
+        files = files + projects[keys[i]].fileNames.length;
+    }
+    return {
+        ok: true,
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+        external: mem.external,
+        projects: keys.length,
+        projectFiles: files,
+        uptimeMs: Math.round(process.uptime() * 1000)
+    };
+};
+
+/**
  * ts.check — 工程口径类型诊断
  * @param {object} req 请求
  * @returns {object} 回执
@@ -882,7 +931,10 @@ handlers['ts.findRef'] = function (req)
     {
         return fail('TS_NO_TSCONFIG', '未找到 tsconfig——引用查找需要工程口径');
     }
-    var position = hits[0].getStart();
+    // 位置取「名字」起点——声明节点 getStart() 含装饰器（@ccclass 等），
+    // 从那里查引用解析不到符号（A292：Cocos 载具自文件内查类返回 0 引用）
+    var anchorNode = hits[0].name ? hits[0].name : hits[0];
+    var position = anchorNode.getStart();
     var groups = project.service.findReferences(abs, position) || [];
     var refs = [];
     var seen = Object.create(null);

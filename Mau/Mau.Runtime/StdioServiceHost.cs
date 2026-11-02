@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.Json;
 using System.Threading;
 
 namespace Mau.Runtime
@@ -288,23 +289,47 @@ namespace Mau.Runtime
                     return "ERR|" + _errPrefix + "_WRITE|写入服务失败（" + _name + "）: " + ex.Message;
                 }
 
-                string? line;
-                if (!_lines.TryTake(out line, _timeoutMs))
+                // [段2] 收回执——id 不符即上一次调用的迟到回执（串行语义下只可能属于上一次），丢弃续读
+                string requestId = ExtractId(payload);
+                long deadlineMs = Environment.TickCount64 + _timeoutMs;
+                string? line = null;
+                while (true)
                 {
-                    // 超时不杀——清残留（本次回执迟到即弃），下次调用重来
-                    string? late;
-                    while (_lines.TryTake(out late, 0))
+                    int remainMs = (int)(deadlineMs - Environment.TickCount64);
+                    if (remainMs < 0)
                     {
+                        remainMs = 0;
                     }
-                    _failCount = _failCount + 1;
-                    return "ERR|" + _errPrefix + "_TIMEOUT|服务调用超时（" + _name + "，" + _timeoutMs.ToString() + " ms；进程未杀）";
+                    if (!_lines.TryTake(out line, remainMs))
+                    {
+                        // 超时不杀——清残留（本次回执迟到即弃），下次调用重来
+                        string? late;
+                        while (_lines.TryTake(out late, 0))
+                        {
+                        }
+                        _failCount = _failCount + 1;
+                        return "ERR|" + _errPrefix + "_TIMEOUT|服务调用超时（" + _name + "，" + _timeoutMs.ToString() + " ms；进程未杀）";
+                    }
+                    if (requestId.Length == 0)
+                    {
+                        break;
+                    }
+                    string replyId = ExtractId(line);
+                    if (replyId.Length == 0 || replyId == requestId)
+                    {
+                        break;
+                    }
+                    // 迟到回执——出声后丢弃（错配比超时更危险：调用方会把它当本次结果）
+                    LogStore.Add(_logTag, 2, "丢弃迟到回执（" + _name + "）：请求 id=" + requestId + "，回执 id=" + replyId, "SYS");
+                    line = null;
                 }
                 _failCount = 0;
+                string replyLine = line ?? string.Empty;
                 if (restarted)
                 {
-                    return MergeRestartedReply(line);
+                    return MergeRestartedReply(replyLine);
                 }
-                return line;
+                return replyLine;
             }
         }
 
@@ -421,6 +446,22 @@ namespace Mau.Runtime
             }
             _failCount = 0;
             return "";
+        }
+        /// <summary>
+        /// 取协议行里的 id 文本——非 JSON / 缺 id 返回空串（空串表示无法比对，按本次结果收下）。
+        /// </summary>
+        /// <param name="text">协议行文本</param>
+        /// <returns>id 文本</returns>
+        private static string ExtractId(string text)
+        {
+            using (JsonDocument? doc = JsonUtil.Parse(text, "StdioServiceHost.id"))
+            {
+                if (doc == null)
+                {
+                    return "";
+                }
+                return JsonUtil.GetStr(doc.RootElement, "id", "");
+            }
         }
 
         /// <summary>
