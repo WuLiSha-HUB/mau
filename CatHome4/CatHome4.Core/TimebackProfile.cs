@@ -14,8 +14,11 @@ namespace CH4
     /// </summary>
     public static class TimebackProfile
     {
-        /// <summary>域类型·浏览器识图——浏览网页 + 识图（页面取证 / 截图 / UI 验收）；名单含浏览器族 → 开锚按需预热浏览器实例。</summary>
+        /// <summary>域类型·浏览器——浏览网页取证（页面原文 / 截图 / 取 DOM / 页签）；名单含浏览器族 → 开锚按需预热浏览器实例。识图不在本域（见 <see cref="ImageVision"/>）。</summary>
         public const string BrowserVision = "browser_vision";
+
+        /// <summary>域类型·识图——直读原图取证（GUI 形态 / 图中逻辑）；回执给 ASCII 图证 + 结论，原图不常驻主干。</summary>
+        public const string ImageVision = "image_vision";
 
         /// <summary>域类型·文本检索——文本 / 文档只读检索。</summary>
         public const string TextSearch = "text_search";
@@ -41,10 +44,15 @@ namespace CH4
         /// <summary>基础读面 = 文本读面 + 文件结构面——只读类 type 的共同底座。</summary>
         private static readonly string[] ReadBaseNames = Concat(TextReadNames, FileShapeNames);
 
-        /// <summary>browser_vision 名单——浏览器族五件 + 识图两件 + 基础读面。</summary>
+        /// <summary>browser_vision 名单——浏览器族五件 + 基础读面（识图已移出本域，见 ImageVisionNames）。</summary>
         private static readonly string[] BrowserVisionNames = Concat(new string[]
         {
-            "browser-open", "browser-read", "browser-eval", "browser-shot", "browser-tabs",
+            "browser-open", "browser-read", "browser-eval", "browser-shot", "browser-tabs"
+        }, ReadBaseNames);
+
+        /// <summary>image_vision 名单——识图两件 + 基础读面（要「看见」用 image-inject；只要文字才 image-analyze）。</summary>
+        private static readonly string[] ImageVisionNames = Concat(new string[]
+        {
             "image-inject", "image-analyze"
         }, ReadBaseNames);
 
@@ -74,7 +82,7 @@ namespace CH4
         /// <returns>类型名数组</returns>
         public static string[] Types()
         {
-            return new string[] { BrowserVision, TextSearch, CodeReview, CodeWrite };
+            return new string[] { BrowserVision, ImageVision, TextSearch, CodeReview, CodeWrite };
         }
 
         /// <summary>回执类别·审查类——findings 给「位置」清单（主干按位置回读）。</summary>
@@ -82,6 +90,9 @@ namespace CH4
 
         /// <summary>回执类别·实现类——findings 给「变更 + 可复跑跑测」（主干按位置回读 + 照命令复跑）。</summary>
         public const string KindWrite = "write";
+
+        /// <summary>回执类别·识图类——findings 给「ASCII 图证 + 结论」（图无法按位置回读：证据必须随回执带回主干）。</summary>
+        public const string KindImage = "image";
 
         /// <summary>
         /// 域类型的回执类别——决定 findings 骨架形态（design-ch4-timeback-type §四）。
@@ -94,6 +105,10 @@ namespace CH4
             if (type == CodeWrite)
             {
                 return KindWrite;
+            }
+            if (type == ImageVision)
+            {
+                return KindImage;
             }
             return KindReview;
         }
@@ -122,6 +137,10 @@ namespace CH4
             if (type == BrowserVision)
             {
                 return BrowserVisionNames;
+            }
+            if (type == ImageVision)
+            {
+                return ImageVisionNames;
             }
             if (type == TextSearch)
             {

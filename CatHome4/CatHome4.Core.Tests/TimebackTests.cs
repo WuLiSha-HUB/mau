@@ -413,7 +413,7 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 域类型白名单——表级形态：四类型均含基础读面（文本读面 + 文件结构面）；系统信息类（info / host-flows）
+        /// 域类型白名单——表级形态：五类型均含基础读面（文本读面 + 文件结构面）；系统信息类（info / host-flows）
         /// 不进任何域；审查类不含写面 / 跑测面；实现类含 cs 全套十三件（含跑测件 cs-test）+ 文本写面 + mau-verify。
         /// 说明：域内名单工具均为 OA 工具——单测无工单消费者（Post 后无回执 → 批次不闭合），
         /// 故放行面在表级验证；会话级「名单外一律拒」由 `Scope_ProfileRejectsToolOutsideWhitelist` 反向覆盖。
@@ -423,7 +423,7 @@ namespace CatHome4.Core.Tests
         {
             string[] readBase = new string[] { "text-read", "text-read_lines", "text-read_between", "text-grep", "file-tree", "file-find", "file-version" };
             string[] types = CH4.TimebackProfile.Types();
-            Assert.Equal(4, types.Length);
+            Assert.Equal(5, types.Length);
             for (int t = 0; t < types.Length; t = t + 1)
             {
                 for (int i = 0; i < readBase.Length; i = i + 1)
@@ -514,6 +514,8 @@ namespace CatHome4.Core.Tests
             Assert.False(CH4.TimebackProfile.NeedsBrowser("text_search"));
             Assert.False(CH4.TimebackProfile.NeedsBrowser("code_review"));
             Assert.False(CH4.TimebackProfile.NeedsBrowser("code_write"));
+            Assert.False(CH4.TimebackProfile.NeedsBrowser("image_vision"));
+            Assert.True(CH4.TimebackProfile.IsValid("image_vision"));
             Assert.True(CH4.TimebackProfile.IsValid("code_write"));
             Assert.False(CH4.TimebackProfile.IsValid("impl"));
             Assert.False(CH4.TimebackProfile.IsValid(""));
@@ -523,9 +525,13 @@ namespace CatHome4.Core.Tests
             Assert.False(CH4.TimebackProfile.Allows("code_write", "powershell"));
             Assert.False(CH4.TimebackProfile.Allows("code_review", "cs-patch"));
             Assert.True(CH4.TimebackProfile.Allows("code_review", "cs-read"));
-            Assert.True(CH4.TimebackProfile.Allows("browser_vision", "image-inject"));
+            Assert.True(CH4.TimebackProfile.Allows("image_vision", "image-inject"));
+            Assert.True(CH4.TimebackProfile.Allows("image_vision", "image-analyze"));
+            Assert.False(CH4.TimebackProfile.Allows("image_vision", "browser-open"));
+            Assert.False(CH4.TimebackProfile.Allows("browser_vision", "image-inject"));
             Assert.False(CH4.TimebackProfile.Allows("text_search", "image-inject"));
             Assert.Equal(CH4.TimebackProfile.KindWrite, CH4.TimebackProfile.Kind("code_write"));
+            Assert.Equal(CH4.TimebackProfile.KindImage, CH4.TimebackProfile.Kind("image_vision"));
             Assert.Equal(CH4.TimebackProfile.KindReview, CH4.TimebackProfile.Kind("code_review"));
             Assert.Equal(CH4.TimebackProfile.KindReview, CH4.TimebackProfile.Kind("browser_vision"));
             Assert.Equal(CH4.TimebackProfile.KindReview, CH4.TimebackProfile.Kind("text_search"));
@@ -722,9 +728,33 @@ namespace CatHome4.Core.Tests
             PumpUntilIdle(session);
             Assert.True(HasMessage(session, LlmRole.User, "⑥ 浏览器操作（本域专属）"));
             Assert.True(HasMessage(session, LlmRole.User, "data:browser/<cat>/out/"));
-            Assert.True(HasMessage(session, LlmRole.User, "用 image-inject"));
+            Assert.True(HasMessage(session, LlmRole.User, "不含识图"));
             Assert.True(HasMessage(session, LlmRole.User, "页签：tabs"));
             Assert.True(HasMessage(session, LlmRole.User, "原图直链常 403"));
+            Assert.False(HasMessage(session, LlmRole.User, "⑦ 看图操作"), "browser_vision 卡不应含识图段");
+        }
+
+        /// <summary>
+        /// 域规范卡——image_vision 追加第⑦段看图操作指引（直读 / OCR 分流 · ASCII 图证规格 · 多图与证据位置）；
+        /// 回执骨架为识图类（图证 + 结论），且不带浏览器段（A293）。
+        /// </summary>
+        [Fact]
+        public void Card_ImageVisionCarriesImageGuide()
+        {
+            MockLlm llm = new MockLlm();
+            CH4.ChatSession session = CreateSession(llm);
+            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-start", "i1", "{\"type\":\"image_vision\",\"purpose\":\"识图指引验证\"}"));
+            session.PostUserMessage("识图指引验证");
+            PumpUntilIdle(session);
+            Assert.True(HasMessage(session, LlmRole.User, "① 本域边界：看图取证"));
+            Assert.True(HasMessage(session, LlmRole.User, "② 域内可用：image-inject · image-analyze"));
+            Assert.True(HasMessage(session, LlmRole.User, "④ 回执骨架"));
+            Assert.True(HasMessage(session, LlmRole.User, "图证："));
+            Assert.True(HasMessage(session, LlmRole.User, "证据位置："));
+            Assert.True(HasMessage(session, LlmRole.User, "⑦ 看图操作（本域专属）"));
+            Assert.True(HasMessage(session, LlmRole.User, "ASCII 画判定所需区域"));
+            Assert.False(HasMessage(session, LlmRole.User, "⑥ 浏览器操作"), "image_vision 卡不应含浏览器段");
+            Assert.False(HasMessage(session, LlmRole.User, "成果："), "识图类骨架不应含审查类成果段");
         }
 
         /// <summary>

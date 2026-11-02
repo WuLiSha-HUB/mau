@@ -11,7 +11,7 @@ namespace CH4
     /// </summary>
     internal static class TimebackCard
     {
-        /// <summary>建议长度（前文条目）——四 type 首批统一值；建议非闸门，待归档统计校准（§十一）。</summary>
+        /// <summary>建议长度（前文条目）——五 type 统一值；建议非闸门，待归档统计校准（§十一）。</summary>
         public const int SuggestedLength = 100;
 
         /// <summary>域内不可用摘要——锁定族 · 系统信息类 · 共同禁面（§二 共同禁面表的口径摘写）。</summary>
@@ -27,7 +27,11 @@ namespace CH4
         {
             if (type == TimebackProfile.BrowserVision)
             {
-                return "网页取证与识图——网页原文与截图留在域内，主干只接结论与位置";
+                return "网页取证——网页原文与截图留在域内，主干只接结论与位置";
+            }
+            if (type == TimebackProfile.ImageVision)
+            {
+                return "看图取证——原图随域回收，主干只接 ASCII 图证与结论";
             }
             if (type == TimebackProfile.TextSearch)
             {
@@ -67,12 +71,25 @@ namespace CH4
         /// <summary>
         /// findings 骨架——按域类型类别分派（原 `ChatSession.FindingsSkeletonFor` 迁入 · §十一 单一承载处）。
         /// **审查类**（browser_vision / text_search / code_review）给「成果位置」——主干按位置回读；
-        /// **实现类**（code_write）给「变更 + 可复跑跑测」——主干按位置回读改动、照命令复跑，`变更` 段须与宿主工具台账对得上。
+        /// **实现类**（code_write）给「变更 + 可复跑跑测」——主干按位置回读改动、照命令复跑，`变更` 段须与宿主工具台账对得上；
+        /// **识图类**（image_vision）给「ASCII 图证 + 结论」——图无法按位置回读（再看一眼 = 再开一域），证据只能随回执带回。
         /// </summary>
         /// <param name="type">域类型（TimebackProfile 枚举）</param>
         /// <returns>骨架文本（含引导句 / 段定义 / 硬约束句）</returns>
         public static string Findings(string type)
         {
+            if (TimebackProfile.Kind(type) == TimebackProfile.KindImage)
+            {
+                return "findings 写「看到了什么 + 证据在哪」——图不随回执回来，证据必须写进正文（段内无内容写「（无）」）：\n"
+                    + "  结论：<一句话答主干的问题>\n"
+                    + "  图证：<ASCII 图 · ≤24 行 × ≤80 列 · 只画判定所需区域 · 字符 + - | / \\ . # @>\n"
+                    + "  证据位置：<原图路径或 URL + 图中关键区域（如「左下状态条」）>\n"
+                    + "  未竟：<没看清 / 没覆盖的>\n"
+                    + "  卡点与失败：<卡在哪 · 失败原因>\n"
+                    + "每条 ≤1 行 · 每段 ≤5 条；`图证` 只承载布局 / 位置 / 状态，颜色 / 字号 / 纹理用一行文字补，不拿 ASCII 硬画。\n"
+                    + "🔴 结论必须被 `图证` 或 `证据位置` 支撑——只有结论没有证据 = 必红；图证与结论对不上时先回看原图再写。\n"
+                    + "例：结论：工具栏贴顶、状态条在左下 · 图证：+------+/| tool |/… · 证据位置：data:browser/<cat>/out/a.png（左下角）";
+            }
             if (TimebackProfile.Kind(type) == TimebackProfile.KindWrite)
             {
                 return "findings 写「改了什么 + 怎么复验」——主干按位置回读改动、照命令复跑（段内无内容写「（无）」）：\n"
@@ -103,6 +120,10 @@ namespace CH4
         /// <returns>回读规范文本</returns>
         public static string Readback(string type)
         {
+            if (TimebackProfile.Kind(type) == TimebackProfile.KindImage)
+            {
+                return "🔴 回读规范（收域第一步）——findings 是自述不是实况：核 `图证` 是否真的支撑 `结论`；要再亲眼看一眼原图 → 另开一个识图域，别拿结论当实况";
+            }
             if (TimebackProfile.Kind(type) == TimebackProfile.KindWrite)
             {
                 return "🔴 回读规范（收域第一步）——findings 是自述不是实况：按 `变更` 的位置逐条读回改动面";
@@ -120,12 +141,24 @@ namespace CH4
             + "  · 截图：shot(full) 落盘返回路径——存 data:browser/<cat>/out/（tree 自 data:browser 下扫会漏 out，给全路径才有）\n"
             + "  · 页签：tabs 保留来过哪一页，可回退对比\n"
             + "  · 流程：开列表页（query 拼进 URL 直开）→ 取下一跳 → 逐个开详情（截图 / 取值）→ 回卷\n"
-            + "  · 看图：域内要「看见」用 image-inject；要「转文字」才 image-analyze\n"
+            + "  · 看图：本域**不含识图**——截图经 back 的「成果」带回路径，要「看见」另开 image_vision 域\n"
             + "  · 扒图：eval 取 img 直链 → 出域后 powershell 落盘 → 图片包裹回主干\n"
             + "  · 边界：原图直链常 403（CDN 缩略图可取）；未登录态不影响截图；网络可达性因机而异";
 
         /// <summary>
-        /// 域规范卡全文——注入用的 systemauto user 文本（五段：边界 / 可用 / 不可用 / 骨架 / 建议长度；`browser_vision` 追加第⑥段）。
+        /// 看图操作指引——仅 `image_vision` 域追加（§十一 卡扩展 · A293 2026-11-02）。
+        /// 承载识图域的三件易错面：直读 vs OCR 分流 / ASCII 图证规格 / 多图与证据位置。
+        /// </summary>
+        private const string ImageGuideText = "⑦ 看图操作（本域专属）：\n"
+            + "  · 分流：要「亲眼看」用 image-inject（原图进前文，随域回收）；只要文字（OCR / 逐字转录）用 image-analyze\n"
+            + "  · 图证：findings 的 `图证` 用 ASCII 画判定所需区域——≤24 行 × ≤80 列，字符 + - | / \\ . # @\n"
+            + "  · 只画结构：布局 / 位置 / 状态用 ASCII；颜色 / 字号 / 纹理写一行文字，别拿字符硬凑\n"
+            + "  · 多图：一域内可连插多图对比，findings 每条对应一张，`证据位置` 写清是哪张的哪个区域\n"
+            + "  · 落点：本地路径 / http(s) URL 都吃；截图路径直接来自上一域 `成果`（data:browser/<cat>/out/——给全路径）\n"
+            + "  · 边界：单图 ≤32MiB；判断不了就说判断不了（不做模糊描述），需要更大信息量另开一域";
+
+        /// <summary>
+        /// 域规范卡全文——注入用的 systemauto user 文本（五段：边界 / 可用 / 不可用 / 骨架 / 建议长度；`browser_vision` 追加第⑥段、`image_vision` 追加第⑦段）。
         /// </summary>
         /// <param name="type">域类型</param>
         /// <param name="purpose">用途标签</param>
@@ -145,6 +178,10 @@ namespace CH4
             if (type == TimebackProfile.BrowserVision)
             {
                 text.Append("\n\n").Append(BrowserGuideText);
+            }
+            if (type == TimebackProfile.ImageVision)
+            {
+                text.Append("\n\n").Append(ImageGuideText);
             }
             return text.ToString();
         }
