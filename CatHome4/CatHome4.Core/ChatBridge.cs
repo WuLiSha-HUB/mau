@@ -30,12 +30,6 @@ namespace CH4
         /// <summary>默认猫工具名单原始串——授权面实时解析入口（design-ch4-tools §三·十一；逗号 / 空白分隔，空 = 全量保底语义）</summary>
         private string _defaultToolNames = "";
 
-        /// <summary>默认猫 qqbot 配置身份——Guid.Empty=未绑定（R2.3）</summary>
-        private Guid _defaultQqBotId = Guid.Empty;
-
-        /// <summary>默认猫 qqbot 启用标志——false=不注入不转发（R2.3）</summary>
-        private bool _defaultQqBotEnable = false;
-
         // [段2] 会话注册表与泵
         /// <summary>会话注册表——PumpSessions 轮转推进（P9.1 含默认会话一席）</summary>
         private readonly List<ChatSession> _sessions = new List<ChatSession>();
@@ -89,20 +83,6 @@ namespace CH4
         {
             get { return _defaultToolNames; }
             set { _defaultToolNames = value; }
-        }
-
-        /// <summary>默认猫 qqbot 配置身份——Guid.Empty=未绑定（R2.3）</summary>
-        public Guid DefaultQqBotId
-        {
-            get { return _defaultQqBotId; }
-            set { _defaultQqBotId = value; }
-        }
-
-        /// <summary>默认猫 qqbot 启用标志——false=不注入不转发（R2.3）</summary>
-        public bool DefaultQqBotEnable
-        {
-            get { return _defaultQqBotEnable; }
-            set { _defaultQqBotEnable = value; }
         }
 
         /// <summary>会话注册表——编排轮转面（快照/空闲判定遍历共享）</summary>
@@ -352,7 +332,7 @@ namespace CH4
         }
 
         /// <summary>
-        /// 构建注入摘要文本——QQ /new 指令同步回复面（Q5：注入前文与工具气泡同步到 qqbot）。
+        /// 构建注入摘要文本——/new 指令同步回复面（注入前文与工具气泡可回显给外部通道）。
         /// 纯构建：读 workspace + 调注入提示词构建委托（不触碰会话状态——WS 线程安全）；真正 session.new 由主线程泵异步执行。
         /// </summary>
         /// <param name="persona">角色段</param>

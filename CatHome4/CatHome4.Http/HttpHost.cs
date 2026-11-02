@@ -210,7 +210,7 @@ namespace CatHome4.Http
         /// <summary>静态页模式——true=chat.html 独立对话页 / false=index.html 主面板（P9.3 双页模式）</summary>
         private bool _serveChatPage;
 
-        /// <summary>管理路由注册回调——入口壳注入（Admin 域经 IHttpRouteSink 注册 llm-apis/qqbot-apis/workspace 等；仅主端口非空）</summary>
+        /// <summary>管理路由注册回调——入口壳注入（Admin 域经 IHttpRouteSink 注册 llm-apis/workspace 等；仅主端口非空）</summary>
         private Action<IHttpRouteSink> _routeRegistrar;
 
         /// <summary>html 根解析——入口壳注入（源码区优先 + 部署区回退——Program.ResolveHtmlRoot 适配）</summary>

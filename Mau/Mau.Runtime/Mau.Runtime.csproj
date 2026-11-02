@@ -8,5 +8,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="Mau.Runtime.Tests" />
+  </ItemGroup>
 
 </Project>

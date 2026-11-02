@@ -96,6 +96,167 @@ namespace Mau.Audio
         }
 
         /// <summary>
+        /// 多段 WAV 拼接（A265）——按顺序读入，统一重采样到 44.1 kHz / 16bit / 立体声后写成单文件。
+        /// 单声道源先转立体声再重采样；失败不中断既有播放面（返回 ERR 由调用方出声）。
+        /// </summary>
+        /// <param name="paths">源 WAV 路径（按播放顺序）</param>
+        /// <param name="outPath">目标 WAV 路径（覆盖写；目录不存在则创建）</param>
+        /// <returns>成功空串；失败 "ERR|CODE|说明"</returns>
+        public string Join(string[] paths, string outPath)
+        {
+            if (paths == null || paths.Length == 0)
+            {
+                return "ERR|BAD_ARGS|paths 为空";
+            }
+            if (outPath == null || outPath.Length == 0)
+            {
+                return "ERR|BAD_ARGS|outPath 为空";
+            }
+            List<string> resolved = new List<string>();
+            for (int i = 0; i < paths.Length; i = i + 1)
+            {
+                string one = ResolvePath(paths[i]);
+                if (!File.Exists(one))
+                {
+                    return "ERR|NOT_FOUND|源文件不存在: " + one;
+                }
+                resolved.Add(one);
+            }
+            WaveFormat target = new WaveFormat(44100, 16, 2);
+            try
+            {
+                string dir = Path.GetDirectoryName(outPath);
+                if (dir != null && dir.Length > 0 && !Directory.Exists(dir))
+                {
+                    Directory.CreateDirectory(dir);
+                }
+                WriteJoined(resolved, outPath, target);
+                return "";
+            }
+            catch (Exception ex)
+            {
+                return "ERR|JOIN_FAIL|拼接失败: " + ex.Message;
+            }
+        }
+
+        /// <summary>
+        /// 拼接写出体——逐段读入并转换到目标格式，字节直接追加（拼接的唯一 IO 落点）。
+        /// </summary>
+        /// <param name="resolved">已解析的源路径</param>
+        /// <param name="outPath">目标路径</param>
+        /// <param name="target">目标格式（44.1 kHz / 16bit / 2ch）</param>
+        private static void WriteJoined(List<string> resolved, string outPath, WaveFormat target)
+        {
+            using (WaveFileWriter writer = new WaveFileWriter(outPath, target))
+            {
+                for (int i = 0; i < resolved.Count; i = i + 1)
+                {
+                    using (WaveFileReader reader = new WaveFileReader(resolved[i]))
+                    {
+                        WaveFormat src = reader.WaveFormat;
+                        if (src.BitsPerSample != 16)
+                        {
+                            throw new InvalidOperationException("仅支持 16bit 源: " + resolved[i]);
+                        }
+                        byte[] raw = ReadAll(reader);
+                        byte[] pcm = ToStereo44100(raw, src);
+                        writer.Write(pcm, 0, pcm.Length);
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// 读完整个读取器——源文件体积小（播报音频），一次性读入便于重采样索引。
+        /// </summary>
+        /// <param name="reader">读取器</param>
+        /// <returns>原始字节</returns>
+        private static byte[] ReadAll(WaveFileReader reader)
+        {
+            long total = reader.Length;
+            if (total <= 0)
+            {
+                return new byte[0];
+            }
+            byte[] raw = new byte[total];
+            int got = 0;
+            while (got < raw.Length)
+            {
+                int n = reader.Read(raw, got, raw.Length - got);
+                if (n <= 0)
+                {
+                    break;
+                }
+                got = got + n;
+            }
+            return raw;
+        }
+
+        /// <summary>
+        /// 任意 16bit 源 → 44.1 kHz / 16bit / 2ch PCM——单声道复制到双声道，采样率线性插值重采样。
+        /// </summary>
+        /// <param name="raw">源字节</param>
+        /// <param name="src">源格式（16bit）</param>
+        /// <returns>目标 PCM 字节</returns>
+        private static byte[] ToStereo44100(byte[] raw, WaveFormat src)
+        {
+            int ch = src.Channels;
+            if (ch <= 0)
+            {
+                ch = 1;
+            }
+            int frames = (raw.Length / 2) / ch;
+            if (frames <= 0)
+            {
+                return new byte[0];
+            }
+            int dstFrames = (int)Math.Round(frames * 44100.0 / src.SampleRate);
+            byte[] outp = new byte[dstFrames * 4];
+            for (int i = 0; i < dstFrames; i = i + 1)
+            {
+                double pos = i * (double)src.SampleRate / 44100.0;
+                int i0 = (int)pos;
+                if (i0 >= frames)
+                {
+                    i0 = frames - 1;
+                }
+                int i1 = i0 + 1;
+                if (i1 >= frames)
+                {
+                    i1 = frames - 1;
+                }
+                double frac = pos - i0;
+                for (int c = 0; c < 2; c = c + 1)
+                {
+                    int sc = c < ch ? c : 0;
+                    short v0 = ReadShort(raw, i0 * ch + sc);
+                    short v1 = ReadShort(raw, i1 * ch + sc);
+                    int v = (int)Math.Round(v0 + (v1 - v0) * frac);
+                    int off = (i * 2 + c) * 2;
+                    outp[off] = (byte)(v & 0xFF);
+                    outp[off + 1] = (byte)((v >> 8) & 0xFF);
+                }
+            }
+            return outp;
+        }
+
+        /// <summary>
+        /// 读一个 16bit 小端样本。
+        /// </summary>
+        /// <param name="buf">字节缓冲</param>
+        /// <param name="sampleIndex">样本下标</param>
+        /// <returns>样本值</returns>
+        private static short ReadShort(byte[] buf, int sampleIndex)
+        {
+            int off = sampleIndex * 2;
+            if (off + 1 >= buf.Length)
+            {
+                return 0;
+            }
+            return (short)(buf[off] | (buf[off + 1] << 8));
+        }
+
+        /// <summary>
         /// 起播——构造读取器 + 播放器，注册停止回调；须在锁内调用（调用方持 _gate）
         /// </summary>
         /// <param name="key">分组键</param>

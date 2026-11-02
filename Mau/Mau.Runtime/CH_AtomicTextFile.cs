@@ -84,30 +84,65 @@ namespace Mau.Runtime
         /// <param name="recovered">是否发生恢复</param>
         /// <returns>通过验证的正文</returns>
         public static string ReadWithRecovery(string path,
-            Func<string, bool> validator, out bool recovered)
+            Func<string, bool> validator, out bool recovered, out string error)
         {
             recovered = false;
-            string fullPath = Path.GetFullPath(path);
-            string primary = File.ReadAllText(fullPath, Encoding.UTF8);
+            error = "";
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(path);
+            }
+            catch (Exception ex)
+            {
+                error = "路径非法：" + ex.Message;
+                return "";
+            }
+            string primary;
+            try
+            {
+                primary = File.ReadAllText(fullPath, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                error = "读取失败：" + ex.Message;
+                return "";
+            }
             if (IsValid(primary, validator))
             {
                 return primary;
             }
+            // 正文无效——先隔离坏原文（隔离失败不影响后续降级）
+            string stamp = DateTimeOffset.UtcNow.ToString("yyyyMMdd-HHmmss-fffffff");
+            try
+            {
+                File.Copy(fullPath, fullPath + ".broken-" + stamp, false);
+            }
+            catch (Exception)
+            {
+                // 隔离是尽力动作，失败不阻断读取降级
+            }
             string backupPath = fullPath + LastSuffix;
             if (!File.Exists(backupPath))
             {
-                throw new InvalidDataException(
-                    "Persisted text is invalid and has no last copy.");
+                error = "正文无效且无 .last 副本";
+                return "";
             }
-            string backup = File.ReadAllText(backupPath, Encoding.UTF8);
+            string backup;
+            try
+            {
+                backup = File.ReadAllText(backupPath, Encoding.UTF8);
+            }
+            catch (Exception ex)
+            {
+                error = "副本读取失败：" + ex.Message;
+                return "";
+            }
             if (!IsValid(backup, validator))
             {
-                throw new InvalidDataException(
-                    "Persisted text and last copy are invalid.");
+                error = "正文与 .last 副本均无效";
+                return "";
             }
-            string stamp = DateTimeOffset.UtcNow.ToString(
-                "yyyyMMdd-HHmmss-fffffff");
-            File.Copy(fullPath, fullPath + ".broken-" + stamp, false);
             string recoveryPath = fullPath + "."
                 + Guid.NewGuid().ToString("N") + ".recover";
             try
@@ -122,11 +157,23 @@ namespace Mau.Runtime
                 }
                 File.Move(recoveryPath, fullPath, true);
             }
+            catch (Exception ex)
+            {
+                error = "副本回写失败：" + ex.Message;
+                return "";
+            }
             finally
             {
                 if (File.Exists(recoveryPath))
                 {
-                    File.Delete(recoveryPath);
+                    try
+                    {
+                        File.Delete(recoveryPath);
+                    }
+                    catch (Exception)
+                    {
+                        // 临时文件清理失败不影响结果
+                    }
                 }
             }
             recovered = true;

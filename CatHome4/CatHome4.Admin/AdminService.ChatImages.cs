@@ -6,7 +6,6 @@ using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using CatHome4.Contracts;
-using CatHome4.QQ;
 using Mau.Runtime;
 using CH4;
 
@@ -21,7 +20,7 @@ namespace CatHome4.Admin
     internal static partial class AdminService
     {
         /// <summary>图片缓存目录白名单——Data 下相对名（换机不改配置）；首项为写入目录，其余仅参与取图查找</summary>
-        internal static readonly string[] ImageDirs = new string[] { "chat-images", "qqbot-files" };
+        internal static readonly string[] ImageDirs = new string[] { "chat-images" };
 
         /// <summary>写入目录——上传落点（ImageDirs 首项）</summary>
         internal const string ImageWriteDir = "chat-images";
@@ -438,47 +437,6 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
-        /// QQ 图片包裹解析桥（A216）——转发面经 QqTarget.ParseImages 委托调用：Core 域协议（ChatImageEnvelope.TryParse）
-        /// 解析结果投影为 QQ 域窄 DTO（QqImageScan）——QQ 域不依赖 Core（依赖注入的委托桥接）。
-        /// 包裹前后文本按原文顺序拼回正文；未命中时正文原样返回（零回归）。
-        /// </summary>
-        /// <param name="text">回复正文</param>
-        /// <returns>正文（剥离包裹）+ 图片路径列表</returns>
-        internal static QqImageScan ParseQqImages(string text)
-        {
-            QqImageScan scan = new QqImageScan();
-            if (text == null || text.Length == 0)
-            {
-                return scan;
-            }
-            if (ChatImageEnvelope.TryParse(text, out List<ChatImageItem> items, out string before, out string after))
-            {
-                string body = before;
-                if (after.Length > 0)
-                {
-                    if (body.Length > 0)
-                    {
-                        body = body + "\n" + after;
-                    }
-                    else
-                    {
-                        body = after;
-                    }
-                }
-                scan.Body = body.Trim();
-                for (int i = 0; i < items.Count; i = i + 1)
-                {
-                    scan.Images.Add(items[i].Path);
-                }
-            }
-            else
-            {
-                scan.Body = text;
-            }
-            return scan;
-        }
-
-        /// <summary>
         /// 对话页路由注册——chat.html 专用（不含管理 CRUD），可安全下发到每猫 host（RouteRegistrar 槽）。
         /// 内容：图片上传与取图。
         /// </summary>
@@ -486,6 +444,7 @@ namespace CatHome4.Admin
         internal static void RegisterChatPageRoutes(IHttpRouteSink sink)
         {
             RegisterChatImageRoutes(sink);
+            RegisterChatAudioRoutes(sink);
         }
 
         /// <summary>

@@ -6,13 +6,14 @@ using System.Text.Json;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Microsoft.CodeAnalysis.Text;
 
 namespace Mau.Development
 {
 #pragma warning disable CS8600 // 环境 SDK 对 ConcurrentDictionary/Dictionary TryXXX(out TValue) 的 MaybeNullWhen 分析异常误报——out 实参非空变量也报警（最小复现验证）
     /// <summary>
     /// MauRoslynBridge 查询与补丁面分部——cs.find_ref（全引用）+ cs.patch（方法体级替换，partial 分部）。
-    /// 写操作统一：编译验证 → 无新增错误才落盘（三态 OK/ROLLED_BACK/ERR）；落盘后内存立即 = 磁盘（写后自刷新）。
+    /// 写操作统一：磁盘为准——恒落盘，编译诊断随回执返回（不阻断）；盘面校验 + 树差异落盘，写后内存 = 磁盘。
     /// </summary>
     public sealed partial class MauRoslynBridge
     {
@@ -228,7 +229,7 @@ namespace Mau.Development
         }
 
         /// <summary>
-        /// cs.patch——方法体级替换（锚点=类+方法名；弃行号）。三态：OK 落盘 / ROLLED_BACK 未落盘+诊断 / ERR
+        /// cs.patch——方法体级替换（锚点=类+方法名；弃行号）。两态：OK 已落盘（编译诊断随回执）/ ERR 未落盘
         /// </summary>
         /// <param name="args">参数</param>
         /// <param name="result">结果</param>
@@ -341,25 +342,15 @@ namespace Mau.Development
                 SyntaxNode newRoot = root.ReplaceNode(methodNode, newMethod);
                 SyntaxTree newTree = CreateTreeFromRoot(foundTree, newRoot);
                 CSharpCompilation newCompilation = (CSharpCompilation)cache.Compilation.ReplaceSyntaxTree(foundTree, newTree);
+                string commitError;
+                string writeNote;
                 List<string> newErrors;
-                if (!ValidateNoNewErrors(cache.Compilation, newCompilation, out newErrors))
+                if (!CommitTreeChange(cache, foundTree, newTree, newCompilation, out commitError, out writeNote, out newErrors))
                 {
-                    StringBuilder sb = new StringBuilder();
-                    sb.Append("ROLLED_BACK|COMPILE_ERROR|新增编译错误 " + newErrors.Count + " 条——未落盘:");
-                    for (int i = 0; i < newErrors.Count; i = i + 1)
-                    {
-                        sb.Append(Environment.NewLine + "  " + newErrors[i]);
-                    }
-                    result = TrimResult(sb.ToString(), MaxResultChars);
+                    result = commitError;
                     return true;
                 }
                 string filePath = foundTree.FilePath;
-                string writeNote = WriteAtomicText(filePath, newRoot.ToFullString());
-                cache.Trees[filePath] = newTree;
-                cache.Compilation = newCompilation;
-                cache.Stamps[filePath] = SnapshotOf(filePath);
-                SemanticModel removed = null!;
-                cache.Semantics.TryRemove(filePath, out removed);
                 // 结构化返回（2026-09-18）：JSON 元数据头 + 正文方法段源码（H28 校验链；行尾行号给 LLM）
                 // 行号基准 = 完整文件树上的 attached 节点——替换生成的新节点未挂载，位置从自身起点起算
                 SyntaxNode patchedNode;
@@ -381,7 +372,8 @@ namespace Mau.Development
                 {
                     ptMeta["writeNote"] = writeNote;
                 }
-                result = TrimResult(MetaHead("cs-patch", true, patchTarget, patchLines, ptMeta) + Environment.NewLine + Echo(patchTarget, patchLines + " 行") + Environment.NewLine + NumberedSource(patchedNode.ToFullString(), methodStartLine), MaxResultChars);
+                NoteCompileErrors(ptMeta, newErrors);
+                result = TrimResult(MetaHead("cs-patch", true, patchTarget, patchLines, ptMeta) + Environment.NewLine + Echo(patchTarget, patchLines + " 行") + CompileDiagBlock(newErrors) + Environment.NewLine + NumberedSource(patchedNode.ToFullString(), methodStartLine), MaxResultChars);
                 return true;
             }
         }
@@ -617,6 +609,197 @@ namespace Mau.Development
             for (int i = 0; i < deadLines.Count; i = i + 1)
             {
                 sb.Append(Environment.NewLine + deadLines[i]);
+            }
+            return sb.ToString();
+        }
+        /// <summary>
+        /// 编译诊断收集——变更前后诊断键比对，取新增 error（项目既有错误不误伤）。
+        /// 语义：结果只作回执负载，不阻断落盘（写侧以磁盘为准，错误可见即可）。
+        /// </summary>
+        /// <param name="before">改动前编译</param>
+        /// <param name="after">改动后编译</param>
+        /// <returns>新增错误诊断文本行（无错为空表）</returns>
+        private static List<string> CollectNewErrors(CSharpCompilation before, CSharpCompilation after)
+        {
+            List<string> newErrors = new List<string>();
+            HashSet<string> beforeErrors = new HashSet<string>(StringComparer.Ordinal);
+            ImmutableArrayHelper.CollectErrorKeys(before, beforeErrors);
+            foreach (Diagnostic diagnostic in after.GetDiagnostics())
+            {
+                if (diagnostic.Severity != DiagnosticSeverity.Error)
+                {
+                    continue;
+                }
+                string key = diagnostic.Id + "|" + diagnostic.Location.GetLineSpan().Path + "|" + diagnostic.GetMessage();
+                if (!beforeErrors.Contains(key))
+                {
+                    newErrors.Add(diagnostic.ToString());
+                }
+            }
+            return newErrors;
+        }
+        /// <summary>
+        /// 单文件盘面刷新——外部改动（text-* / 编辑器）后重解析该文件并替换编译中的旧树。
+        /// 磁盘是唯一真相：调用后内存树与该文件盘面一致。
+        /// </summary>
+        /// <param name="cache">项目缓存</param>
+        /// <param name="filePath">文件绝对路径</param>
+        /// <returns>刷新成功（文件不存在为 false）</returns>
+        private bool RefreshFile(ProjectCache cache, string filePath)
+        {
+            if (!File.Exists(filePath))
+            {
+                return false;
+            }
+            SyntaxTree fresh = ParseFile(filePath);
+            SyntaxTree existing;
+            if (cache.Trees.TryGetValue(filePath, out existing))
+            {
+                cache.Compilation = (CSharpCompilation)cache.Compilation.ReplaceSyntaxTree(existing, fresh);
+            }
+            else
+            {
+                cache.Compilation = (CSharpCompilation)cache.Compilation.AddSyntaxTrees(fresh);
+            }
+            cache.Trees[filePath] = fresh;
+            cache.Stamps[filePath] = SnapshotOf(filePath);
+            SemanticModel removed = null!;
+            cache.Semantics.TryRemove(filePath, out removed);
+            return true;
+        }
+        /// <summary>
+        /// 变更区间应用——把树差异按 span 落到盘面原文上，未变更区原样保留（不再整文件由内存树重生成）。
+        /// </summary>
+        /// <param name="text">盘面原文（与变更前树文本一致）</param>
+        /// <param name="changes">树差异（坐标基于变更前树）</param>
+        /// <returns>应用后文本；区间重叠或越界（不可安全应用）为 null</returns>
+        private static string? ApplyChanges(string text, IEnumerable<TextChange> changes)
+        {
+            List<TextChange> ordered = new List<TextChange>(changes);
+            ordered.Sort(CompareTextChange);
+            StringBuilder sb = new StringBuilder(text.Length + 256);
+            int cursor = 0;
+            for (int i = 0; i < ordered.Count; i = i + 1)
+            {
+                TextChange change = ordered[i];
+                if (change.Span.Start < cursor || change.Span.End > text.Length)
+                {
+                    return null;
+                }
+                sb.Append(text, cursor, change.Span.Start - cursor);
+                sb.Append(change.NewText);
+                cursor = change.Span.End;
+            }
+            sb.Append(text, cursor, text.Length - cursor);
+            return sb.ToString();
+        }
+        /// <summary>
+        /// 树差异排序——按起点升序（应用顺序确定）
+        /// </summary>
+        /// <param name="a">差异甲</param>
+        /// <param name="b">差异乙</param>
+        /// <returns>比较结果</returns>
+        private static int CompareTextChange(TextChange a, TextChange b)
+        {
+            return a.Span.Start.CompareTo(b.Span.Start);
+        }
+        /// <summary>
+        /// 统一落盘出口——盘面一致性校验 + 区间替换写盘 + 树/快照同步（不动编译态，多文件写入由调用方统一提交）。
+        /// 盘面已变（内存树陈旧）→ 自动刷新该文件树并拒绝本次写入（失败可见，不静默覆写别处改动）。
+        /// </summary>
+        /// <param name="cache">项目缓存</param>
+        /// <param name="oldTree">变更前树</param>
+        /// <param name="newTree">变更后树</param>
+        /// <param name="error">失败码（空=成功）</param>
+        /// <param name="writeNote">写盘诊断（空=正常）</param>
+        /// <returns>落盘成功</returns>
+        private bool CommitTreeWrite(ProjectCache cache, SyntaxTree oldTree, SyntaxTree newTree, out string error, out string writeNote)
+        {
+            error = "";
+            writeNote = "";
+            string filePath = oldTree.FilePath;
+            string diskText;
+            try
+            {
+                diskText = ReadTextShared(filePath);
+            }
+            catch (Exception ex)
+            {
+                error = "ERR|WRITE_FAIL|盘面读取失败: " + ex.Message;
+                return false;
+            }
+            string memoryText = oldTree.GetText().ToString();
+            if (!string.Equals(diskText, memoryText, StringComparison.Ordinal))
+            {
+                RefreshFile(cache, filePath);
+                error = "ERR|STALE_TREE|盘面已被外部修改（内存树已自动刷新）——请重新调用";
+                return false;
+            }
+            string? updated = ApplyChanges(diskText, newTree.GetChanges(oldTree));
+            if (updated == null)
+            {
+                RefreshFile(cache, filePath);
+                error = "ERR|STALE_TREE|变更区间与盘面错位（内存树已自动刷新）——请重新调用";
+                return false;
+            }
+            writeNote = WriteAtomicText(filePath, updated);
+            cache.Trees[filePath] = newTree;
+            cache.Stamps[filePath] = SnapshotOf(filePath);
+            SemanticModel removed = null!;
+            cache.Semantics.TryRemove(filePath, out removed);
+            return true;
+        }
+        /// <summary>
+        /// 单文件变更提交——诊断收集 + 落盘 + 编译态更新（写侧统一出口）。
+        /// 编译错误不阻断落盘：错误随回执返回，由调用方 cs-check / cs-build 收口。
+        /// </summary>
+        /// <param name="cache">项目缓存</param>
+        /// <param name="oldTree">变更前树</param>
+        /// <param name="newTree">变更后树</param>
+        /// <param name="trial">变更后编译</param>
+        /// <param name="error">失败码（空=成功）</param>
+        /// <param name="writeNote">写盘诊断（空=正常）</param>
+        /// <param name="newErrors">新增编译错误（已落盘）</param>
+        /// <returns>落盘成功</returns>
+        private bool CommitTreeChange(ProjectCache cache, SyntaxTree oldTree, SyntaxTree newTree, CSharpCompilation trial, out string error, out string writeNote, out List<string> newErrors)
+        {
+            newErrors = CollectNewErrors(cache.Compilation, trial);
+            if (!CommitTreeWrite(cache, oldTree, newTree, out error, out writeNote))
+            {
+                return false;
+            }
+            cache.Compilation = trial;
+            return true;
+        }
+        /// <summary>
+        /// 回执元数据——编译诊断计数入头（仅新增错误非空时）
+        /// </summary>
+        /// <param name="meta">元数据字典</param>
+        /// <param name="newErrors">新增编译错误</param>
+        private static void NoteCompileErrors(Dictionary<string, object> meta, List<string> newErrors)
+        {
+            if (newErrors.Count > 0)
+            {
+                meta["compileErrors"] = newErrors.Count;
+            }
+        }
+        /// <summary>
+        /// 回执正文——编译诊断段（落盘后可见，不阻断）
+        /// </summary>
+        /// <param name="newErrors">新增编译错误</param>
+        /// <returns>诊断段（无错为空串）</returns>
+        private static string CompileDiagBlock(List<string> newErrors)
+        {
+            if (newErrors.Count == 0)
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.Append(Environment.NewLine);
+            sb.Append("编译诊断（新增 " + newErrors.Count + " 条 · 已落盘）:");
+            for (int i = 0; i < newErrors.Count; i = i + 1)
+            {
+                sb.Append(Environment.NewLine + "  " + newErrors[i]);
             }
             return sb.ToString();
         }

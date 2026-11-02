@@ -46,6 +46,28 @@ namespace Mau.Bricks
                 return false;
             }
             string voice = Clean(JsonArgs.Get(argsJson, "voice"));
+            if (voice.Length == 0)
+            {
+                // 缺省音色——全局配置 audio.voice（schema 值域四项；空则不下发，服务端兜底 zf_001）
+                ConfigStore voiceCfg = null;
+                if (DataBox.TryResolve<ConfigStore>(out voiceCfg) && voiceCfg != null)
+                {
+                    voice = Clean(voiceCfg.Get("audio.voice", ""));
+                }
+                if (voice.Length == 0)
+                {
+                    // 未落盘——回落 schema 声明的默认值（默认值不落盘是配置面设计，读面须自行兜底）
+                    ConfigSchema voiceSchema = null;
+                    if (DataBox.TryResolve<ConfigSchema>(out voiceSchema) && voiceSchema != null)
+                    {
+                        ConfigSchema.Item? voiceItem = voiceSchema.Find("audio.voice");
+                        if (voiceItem != null)
+                        {
+                            voice = Clean(voiceItem.Default);
+                        }
+                    }
+                }
+            }
             string key = Clean(JsonArgs.Get(argsJson, "key"));
             string outArg = Clean(JsonArgs.Get(argsJson, "out"));
             float speed = ParseSpeed(JsonArgs.Get(argsJson, "speed"));
@@ -204,4 +226,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:E8E3117E723A8DD0BD7609DF17F37026BB12BDCFF06090546B3931A0F009A794
+// #MAU_CHECKSUM:SHA256:84B7475D669FF2BFCA75CBAD1703C89D8649A0DF6A9E1BE632240F74C2D70EAD

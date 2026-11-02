@@ -2,7 +2,7 @@
 // 积木: text.replace
 // ID:   BRIK-TEXT-004
 // 类别: TEXT
-// 作用: 锚点替换——exact/ignore_case 唯一锚点替换，all/regex 全部匹配替换并原子写回（exact/ignore_case/all/regex；NotFound 带差异字节定位，Ambiguous 带候选行）；new 传删除标记「黑暗剑+22」按空文本落盘（等价删除，四模式通用），空 new 一律拒绝——LLM 工具 text-replace 语料执行面
+// 作用: 锚点替换——exact/ignore_case 唯一锚点替换，all/regex 全部匹配替换并原子写回（exact/ignore_case/all/regex；NotFound 带差异字节定位，Ambiguous 带候选行）；new 传删除标记「黑暗剑+22」按空文本落盘（等价删除，四模式通用），空 new 一律拒绝；成功回执附自证四件——原文摘要（行数 + 首行，被吃掉的原文必须在回执里看得见）/ 行数差（净删行 ⚠；多处替换按「每次替换」表述）/ 结构行计数（表行·分隔行·标题·分节线减少即 ⚠，告警不拒）/ 窗口范围（大文件显式说明只显示替换点前后 ≤3 行）——LLM 工具 text-replace 语料执行面
 // 依赖: 无
 // 引用: Mau.Runtime（FileSystemService/DataBox/TextAlgorithms）
 // 原理: ReadTextAuto 读 → TextAlgorithms 匹配/替换 → WriteTextAuto 写；锚点三态判定与全部文案在本积木（A227 归位——算法面只给事实）
@@ -30,6 +30,9 @@ namespace Mau.Bricks
 
         /// <summary>差异窗口切片长度（期望 / 实际 各取差异点前后 ≤ N 字符）</summary>
         private const int DiffWindow = 10;
+
+        /// <summary>原文摘要首行截断长度（回执「原文首行」——过长只留前 N 字符）</summary>
+        private const int OldScopeChars = 60;
 
         /// <summary>实体形态标记（锚点未命中出声判据——tokens 交由中性算法 ContainsAny 判定）</summary>
         private static readonly string[] EntityTokens = new string[] { "&lt;", "&gt;", "&amp;", "&quot;" };
@@ -149,7 +152,7 @@ namespace Mau.Bricks
                             maxIndex = spans[i].Index;
                         }
                     }
-                    int maxLines = CountLinesOf(replaced.Substring(maxIndex, maxChars));
+                    int maxLines = CountLinesOf(Slice(unified, maxIndex, maxChars));
                     spanNote = " · 匹配跨度 最长 " + maxLines.ToString() + " 行 / " + maxChars.ToString() + " 字符 · 命中合计 " + totalChars.ToString() + " 字符";
                     if (maxLines >= SpanWarnLines || maxChars >= SpanWarnChars)
                     {
@@ -166,8 +169,13 @@ namespace Mau.Bricks
                         lineNote = lineNote + "…（前 " + lines.Length.ToString() + " / 共 " + spans.Length.ToString() + "）";
                     }
                 }
+                // [自证面] 行数差 + 结构行计数 + 窗口范围——三件都在回执里出声（丢行 / 吃结构行必须当场可见）
+                string shiftNote = BuildLineShiftNote(target, newText, deleteMode, spans.Length);
+                string oldNote = BuildOldScopeNote(target);
+                string structNote = BuildStructMarkNote(target, newText);
                 // 结构化返回体（design-ch4-tools 附录 · A214）——首行 JSON 头（target/items）+ 正文摘要行 + 目标段
-                result = MetaHead("text-replace", true, path, spans.Length) + "\n" + path + " | 替换 " + spans.Length.ToString() + " 处" + spanNote + lineNote + deleteNote + "\n" + SnippetAround(replaced, spans[0].Index);
+                string snippet = SnippetAround(replaced, spans[0].Index);
+                result = MetaHead("text-replace", true, path, spans.Length) + "\n" + path + " | 替换 " + spans.Length.ToString() + " 处" + spanNote + lineNote + deleteNote + shiftNote + structNote + oldNote + "\n" + snippet + BuildSnippetScopeNote(replaced, snippet);
                 return true;
             }
             catch (Exception ex)
@@ -240,6 +248,14 @@ namespace Mau.Bricks
         /// <returns>行摘要文本</returns>
         private static string SnippetAround(string content, int index)
         {
+            if (index < 0)
+            {
+                index = 0;
+            }
+            if (index > content.Length)
+            {
+                index = content.Length;
+            }
             int lineStart = index;
             int lineEnd = index;
             while (lineStart > 0 && content[lineStart - 1] != '\n')
@@ -273,6 +289,149 @@ namespace Mau.Bricks
                 end = next + 1;
             }
             return content.Substring(start, end - start);
+        }
+
+        /// <summary>
+        /// 行数差自证——净删行必须出声（回执原只报「替换 N 处」，锚点吃掉的行使静默丢失）。
+        /// 判据：old 行数 N → new 行数 M；M &lt; N 给 ⚠（删除标记的显式删除除外，只标注）；M &gt; N 只报差额（插入是常态）。
+        /// 动机：2026-10-22 / 10-26 / 10-30 三起「锚点吃行」——Markdown 少行仍合法，编译 / 语法 / 渲染三验证面全绿，只有读回能抓。
+        /// </summary>
+        /// <param name="oldText">归一化锚点文本</param>
+        /// <param name="newText">替换文本（删除标记已折为空串）</param>
+        /// <param name="deleteMode">是否为显式删除标记</param>
+        /// <param name="matchCount">本次替换处数（&gt;1 时行数差按「每次替换」表述，不冒充全文变化）</param>
+        /// <returns>摘要片段（无需出声时为空串）</returns>
+        private static string BuildLineShiftNote(string oldText, string newText, bool deleteMode, int matchCount)
+        {
+            int before = CountLinesOf(oldText);
+            int after = CountLinesOf(newText);
+            if (before == after)
+            {
+                return "";
+            }
+            string scope = matchCount > 1 ? " · 每次替换 行 " : " · 行 ";
+            string note = scope + before.ToString() + "→" + after.ToString();
+            if (deleteMode)
+            {
+                return note + "（删除标记·显式删除）";
+            }
+            if (after < before)
+            {
+                return note + " ⚠ 净删 " + (before - after).ToString() + " 行——锚点吃掉的每一行都要在 new 里交代";
+            }
+            return note;
+        }
+
+        /// <summary>
+        /// 结构标记计数——表行（行首 |）· 表格分隔行（行首 |:-- 等）· 标题（行首 ##）· 分节线（整行 --- 或 ***）。
+        /// 四类覆盖 Markdown 结构与章节结构的最小判据族；分隔行优先于表行判定（分隔行亦以 | 开头）。
+        /// </summary>
+        /// <param name="text">待检文本</param>
+        /// <returns>长度 4 的计数数组（表行 / 分隔行 / 标题 / 分节线）</returns>
+        private static int[] CountStructMarks(string text)
+        {
+            int[] marks = new int[4];
+            if (text.Length == 0)
+            {
+                return marks;
+            }
+            string[] lines = text.Split('\n');
+            for (int i = 0; i < lines.Length; i = i + 1)
+            {
+                string line = lines[i].Trim();
+                if (line.Length == 0)
+                {
+                    continue;
+                }
+                if (line.StartsWith("|:--", StringComparison.Ordinal) || line.StartsWith("|-", StringComparison.Ordinal))
+                {
+                    marks[1] = marks[1] + 1;
+                }
+                else if (line[0] == '|')
+                {
+                    marks[0] = marks[0] + 1;
+                }
+                if (line.StartsWith("##", StringComparison.Ordinal))
+                {
+                    marks[2] = marks[2] + 1;
+                }
+                if (line == "---" || line == "***")
+                {
+                    marks[3] = marks[3] + 1;
+                }
+            }
+            return marks;
+        }
+
+        /// <summary>
+        /// 结构行守护——锚点内结构标记在 new 中减少即出声（告警不拒绝：改表为列表 / 删表头都是合法意图，只提示核对）。
+        /// </summary>
+        /// <param name="oldText">归一化锚点文本</param>
+        /// <param name="newText">替换文本</param>
+        /// <returns>摘要片段（无减少时为空串）</returns>
+        private static string BuildStructMarkNote(string oldText, string newText)
+        {
+            int[] before = CountStructMarks(oldText);
+            int[] after = CountStructMarks(newText);
+            string[] names = new string[] { "表行", "表格分隔行", "标题", "分节线" };
+            string parts = "";
+            for (int i = 0; i < before.Length; i = i + 1)
+            {
+                if (after[i] < before[i])
+                {
+                    if (parts.Length > 0)
+                    {
+                        parts = parts + " / ";
+                    }
+                    parts = parts + names[i] + " " + before[i].ToString() + "→" + after[i].ToString();
+                }
+            }
+            if (parts.Length == 0)
+            {
+                return "";
+            }
+            return " · 结构行 " + parts + " ⚠ 锚点吃掉结构行而未重建——请核对 new 是否漏抄（表格需分隔行、章节需标题）";
+        }
+
+        /// <summary>原文摘要——回执只显示替换后文本，被吃掉的原文完全不可见（单行整行替换时行数差为零，机械判据抓不到；2026-10-26 判例正是此形态）。</summary>
+        /// <param name="oldText">归一化锚点文本</param>
+        /// <returns>摘要片段（行数 + 首行，首行超 60 字符截断）</returns>
+        private static string BuildOldScopeNote(string oldText)
+        {
+            string first = FirstLineOf(oldText);
+            if (first.Length > OldScopeChars)
+            {
+                first = first.Substring(0, OldScopeChars) + "…";
+            }
+            return " · 原文 " + CountLinesOf(oldText).ToString() + " 行 ｜ 首行：" + first;
+        }
+
+        /// <summary>取首行——无换行则整串；空串返回空串</summary>
+        /// <param name="text">待取文本</param>
+        /// <returns>首行文本</returns>
+        private static string FirstLineOf(string text)
+        {
+            int cut = text.IndexOf('\n');
+            if (cut < 0)
+            {
+                return text;
+            }
+            return text.Substring(0, cut);
+        }
+
+        /// <summary>回执窗口自证——窗口只显示替换点前后 ≤3 行；文件更长时显式说明（集合缩水必须自证全集）</summary>
+        /// <param name="replaced">替换后全文</param>
+        /// <param name="snippet">已截取的窗口文本</param>
+        /// <returns>自证行（无需说明时为空串）</returns>
+        private static string BuildSnippetScopeNote(string replaced, string snippet)
+        {
+            int total = CountLinesOf(replaced);
+            int shown = CountLinesOf(snippet.TrimEnd('\n'));
+            if (total <= shown)
+            {
+                return "";
+            }
+            return "…（文件共 " + total.ToString() + " 行，此处只显示替换点前后 ≤3 行）\n";
         }
 
         /// <summary>匹配跨度行数——空串 0；否则换行数 + 1</summary>
@@ -320,4 +479,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:7544F5CF0A6BC343848F4AF4AEF191F1E0F710F6C09694359EACB71AF347C69A
+// #MAU_CHECKSUM:SHA256:D850EED01D96A24A776CBC22F7DDF5912E35235A5B302FBCA569993339C77178

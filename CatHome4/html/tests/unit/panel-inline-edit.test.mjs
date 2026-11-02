@@ -1,7 +1,8 @@
 // tests/unit/panel-inline-edit.test.mjs —— 配置页行内编辑（2026-10-01 行内编辑轮）
-// 覆盖：API 池 / QQ Bot 池——可编辑列格内直改、配置 ID 只读、行内「编辑」按钮撤除
+// 覆盖：API 池——可编辑列格内直改、配置 ID 只读、行内「编辑」按钮撤除
 //       · 未改动 / 清空 = 不改动（不发请求，清空回落原值）· 改动提交整行载荷（掩码列未改动送空串）
 //       · 新猫默认模板·默认前文 List——条目行内可改 + 路径校验 + 拖拽柄独占 draggable
+// A299：QQ Bot 池随 QQ 域整段撤除——相关用例同步移除
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { expect, test, beforeAll } from 'vitest';
@@ -27,15 +28,6 @@ const API_ROW = {
   isDefault: true,
   apiKey: 'sk-ab****yz',
   hasKey: true
-};
-
-const BOT_ROW = {
-  qqBotId: '22222222-2222-2222-2222-222222222222',
-  displayName: '露雪娜',
-  appId: '102000001',
-  sandbox: true,
-  secret: 'se****et',
-  hasSecret: true
 };
 
 let calls = [];
@@ -67,16 +59,13 @@ beforeAll(async () => {
   await runGlobalScript(new URL('../../js/panel-apis.js', import.meta.url));
   await runGlobalScript(new URL('../../js/panel-catcfg.js', import.meta.url));
   await runGlobalScript(new URL('../../js/panel-packs.js', import.meta.url));
-  await tick();   // 首屏加载（loadApis / loadQqBots / loadTpl）落地
+  await tick();   // 首屏加载（loadApis / loadTpl）落地
 });
 
 test('编辑模式机件已撤——取消编辑按钮与行内编辑函数都不存在', () => {
   expect(document.getElementById('apiCancelEdit')).toBeNull();
-  expect(document.getElementById('qqCancelEdit')).toBeNull();
   expect(typeof window.startApiEdit).toBe('undefined');
   expect(typeof window.cancelApiEdit).toBe('undefined');
-  expect(typeof window.startQqBotEdit).toBe('undefined');
-  expect(typeof window.cancelQqBotEdit).toBe('undefined');
 });
 
 test('API 池——可编辑列是输入框、配置 ID 是纯文本、行内无「编辑」按钮', () => {
@@ -164,41 +153,6 @@ test('API 池——Key 列真改动才送新值', async () => {
   const edits = callsTo('/api/v1/llm-apis/edit');
   expect(edits.length).toBe(1);
   expect(edits[0].body.apiKey).toBe('sk-brand-new-key');
-});
-
-test('QQ Bot 池——环境列是下拉、配置 ID 纯文本、行内无「编辑」按钮；未改动不发请求', async () => {
-  captureFetch();
-  window.renderQqBots([BOT_ROW]);
-  const tr = document.querySelector('#qqbotsTable tbody tr');
-  expect(tr.children.length).toBe(6);
-  expect(tr.children[0].querySelector('input').value).toBe('露雪娜');
-  expect(tr.children[1].querySelector('input')).toBeNull();
-  expect(tr.children[1].textContent).toBe(BOT_ROW.qqBotId);
-  expect(tr.children[2].querySelector('input').value).toBe('102000001');
-  const sel = tr.children[3].querySelector('select');
-  expect(sel).not.toBeNull();
-  expect(sel.value).toBe('true');
-  expect(tr.children[4].querySelector('input').value).toBe('se****et');
-  const labels = [];
-  for (const b of tr.querySelectorAll('button')) { labels.push(b.textContent); }
-  expect(labels.indexOf('编辑')).toBe(-1);
-
-  sel.dispatchEvent(new Event('change'));
-  await tick();
-  expect(callsTo('/api/v1/qqbot-apis/edit').length).toBe(0);
-
-  sel.value = 'false';
-  sel.dispatchEvent(new Event('change'));
-  await tick();
-  const edits = callsTo('/api/v1/qqbot-apis/edit');
-  expect(edits.length).toBe(1);
-  expect(edits[0].body).toEqual({
-    qqBotId: BOT_ROW.qqBotId,
-    displayName: '露雪娜',
-    appId: '102000001',
-    sandbox: false,
-    secret: ''
-  });
 });
 
 test('新猫默认模板·默认前文——条目行内可改；未改动 / 清空 / 非法路径都不改列表', () => {

@@ -16,4 +16,11 @@
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
+  <!-- 源码快照嵌入（A270）——自举代际自检的判据面：exe 内嵌 SetUp/ 源码内容，运行期与磁盘逐文件 SHA256 比对，
+       不再依赖写盘时刻（git 拉取同批落盘 → mtime 先后无保证，旧的 exe-vs-源码 mtime 判据每次都可能误报）。
+       排除 bin / obj 构建产物（与运行期 IsBuildArtifactPath 同构）；LogicalName 前缀 src/ 为运行期识别标记。 -->
+  <ItemGroup>
+    <EmbeddedResource Include="**/*.cs" Exclude="obj/**;bin/**" LogicalName="src/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
 </Project>

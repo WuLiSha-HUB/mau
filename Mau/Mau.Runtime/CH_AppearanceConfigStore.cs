@@ -16,6 +16,12 @@ namespace Mau.Runtime
 
         /// <summary>统一 JSON 选项。</summary>
         private readonly JsonSerializerOptions CH_AppearanceConfigStore_JsonOptions;
+        /// <summary>配置目录是否可写——false=内存态运行（调用方据此登记启动降级）</summary>
+        public bool StorageWritable = true;
+        /// <summary>配置目录不可写原因（空=可写）</summary>
+        public string StorageError = "";
+        /// <summary>最近一次读取失败原因——空=正常（损坏 / 无副本 / 反序列化失败）</summary>
+        public string LastLoadError = "";
 
         /// <summary>绑定池文件所在设置目录。</summary>
         /// <param name="settingsRoot">Data Root 内设置目录</param>
@@ -26,7 +32,17 @@ namespace Mau.Runtime
                 throw new ArgumentException("Appearance store root is empty.");
             }
             string safeSettingsRoot = Path.GetFullPath(settingsRoot);
-            Directory.CreateDirectory(safeSettingsRoot);
+            // A260 目录创建失败不阻断启动——标记只读运行，由宿主登记降级
+            try
+            {
+                Directory.CreateDirectory(safeSettingsRoot);
+                StorageWritable = true;
+            }
+            catch (Exception ex)
+            {
+                StorageWritable = false;
+                StorageError = ex.Message;
+            }
             CH_AppearanceConfigStore_ConfigPath = Path.Combine(safeSettingsRoot,
                 "appearance.json");
             CH_AppearanceConfigStore_JsonOptions = new JsonSerializerOptions();
@@ -46,14 +62,30 @@ namespace Mau.Runtime
                 return Array.Empty<CH_AppearanceConfig>();
             }
             bool ignoredRecovery;
+            string readError;
             string json = CH_AtomicTextFile.ReadWithRecovery(
                 CH_AppearanceConfigStore_ConfigPath, IsValidConfigDocument,
-                out ignoredRecovery);
-            CH_AppearanceConfig[]? loaded = JsonSerializer.Deserialize<
-                CH_AppearanceConfig[]>(json, CH_AppearanceConfigStore_JsonOptions);
+                out ignoredRecovery, out readError);
+            if (json.Length == 0)
+            {
+                LastLoadError = readError;
+                return Array.Empty<CH_AppearanceConfig>();
+            }
+            CH_AppearanceConfig[]? loaded;
+            try
+            {
+                loaded = JsonSerializer.Deserialize<
+                    CH_AppearanceConfig[]>(json, CH_AppearanceConfigStore_JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                LastLoadError = "反序列化失败：" + ex.Message;
+                return Array.Empty<CH_AppearanceConfig>();
+            }
             if (loaded == null)
             {
-                throw new InvalidDataException("Appearance config is null.");
+                LastLoadError = "配置反序列化为空";
+                return Array.Empty<CH_AppearanceConfig>();
             }
             for (int i = 0; i < loaded.Length; i = i + 1)
             {

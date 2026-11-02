@@ -5,25 +5,23 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using CatHome4.Contracts;
-using CatHome4.QQ;
 using Mau.Runtime;
 using Mau.Providers;
 using CH4;
+
+using static CatHome4.Admin.CatHostService;
 
 namespace CatHome4.Admin
 {
     /// <summary>
     /// Program 管理端点面分部——M3 前后端配置管理（LLM API 池 CRUD + 每猫配置读写）。
-    /// 端点处理器经 HttpHost.BuildApp 主端口注册（catsBuilder 非空——管理面收敛主端口）。
+    /// 端点装配表见 AdminRoutes（A284——装配与执行分离）；处理器经 HttpHost.BuildApp 主端口注册（catsBuilder 非空——管理面收敛主端口）。
     /// 线程模型：读端点 HTTP 线程直读（BuildCatsJson 同先例）；写端点落盘 HTTP 线程 + 运行时生效入队主线程泵（catcfg.apply 指令）。
     /// </summary>
     internal static partial class AdminService
     {
         /// <summary>LLM API 配置池——Bootstrap 绑定（catcfg.apply 重建 Runtime 消费）</summary>
         internal static CH_LlmApiConfigStore _apiStore;
-
-        /// <summary>QQ Bot 配置池——Bootstrap 绑定（qqbot 管理器消费）</summary>
-        internal static CH_QqBotConfigStore _qqBotStore;
 
         /// <summary>外观配置池——Bootstrap 绑定（每猫外观引用解析消费——A244）</summary>
         internal static CH_AppearanceConfigStore _appearanceStore;
@@ -77,58 +75,6 @@ namespace CatHome4.Admin
                 norm = "high";
             }
             return norm;
-        }
-
-        /// <summary>
-        /// 管理路由注册——S2 解耦：入口壳经 IHttpRouteSink 向 Http 域注册管理端点（主端口仅一次）。
-        /// 归属：Admin 域——llm-apis/qqbot-apis/cat-config/cat-default/workspace 管理面（S4 随 Admin 域迁 CatHome4.Admin）。
-        /// </summary>
-        /// <param name="sink">HTTP 路由注册面（HttpHost 实现）</param>
-        internal static void RegisterAdminRoutes(IHttpRouteSink sink)
-        {
-            // LLM API 池 CRUD——M3 管理面
-            sink.MapGet("/api/v1/llm-apis", (Delegate)HandleLlmApisGet);
-            sink.MapPost("/api/v1/llm-apis", (Delegate)HandleLlmApisPost);
-            sink.MapPost("/api/v1/llm-apis/edit", (Delegate)HandleLlmApisEdit);
-            sink.MapPost("/api/v1/llm-apis/delete", (Delegate)HandleLlmApisDelete);
-            sink.MapPost("/api/v1/llm-apis/default", (Delegate)HandleLlmApisDefault);
-            sink.MapPost("/api/v1/llm-apis/backup", (Delegate)HandleLlmApisBackup);
-            // LLM API 池连通性测试——「测试」按钮（模型清单 + 站点信息 + 定价与分组）
-            sink.MapPost("/api/v1/llm-apis/probe", (Delegate)HandleLlmApisProbe);
-            // QQ Bot 池 CRUD——R2.3 管理面
-            sink.MapGet("/api/v1/qqbot-apis", (Delegate)HandleQqBotApisGet);
-            sink.MapPost("/api/v1/qqbot-apis", (Delegate)HandleQqBotApisPost);
-            sink.MapPost("/api/v1/qqbot-apis/edit", (Delegate)HandleQqBotApisEdit);
-            sink.MapPost("/api/v1/qqbot-apis/delete", (Delegate)HandleQqBotApisDelete);
-            // 每猫配置读写——M3
-            sink.MapGet("/api/v1/cat-config", (Delegate)HandleCatConfigGet);
-            sink.MapPost("/api/v1/cat-config", (Delegate)HandleCatConfigPost);
-            // 会话状态卡详情——猫详情弹层数据源（状态 + 本会话末条 user/回复 + 会话留档）
-            sink.MapGet("/api/v1/cat-detail", (Delegate)HandleCatDetail);
-            // 新猫默认模板——全局配置管理面（M3d）
-            sink.MapGet("/api/v1/cat-default", (Delegate)HandleCatDefaultGet);
-            sink.MapPost("/api/v1/cat-default", (Delegate)HandleCatDefaultPost);
-            // 受控根编辑面——管理员面（M4d）
-            sink.MapGet("/api/v1/workspace", (Delegate)HandleWorkspaceGet);
-            sink.MapPost("/api/v1/workspace", (Delegate)HandleWorkspacePost);
-            // A244 外观配置池——全局池管理面（每猫 appearanceId 引用 + 唯一默认项）
-            sink.MapGet("/api/v1/appearance-apis", (Delegate)HandleAppearanceApisGet);
-            sink.MapPost("/api/v1/appearance-apis", (Delegate)HandleAppearanceApisPost);
-            sink.MapPost("/api/v1/appearance-apis/edit", (Delegate)HandleAppearanceApisEdit);
-            sink.MapPost("/api/v1/appearance-apis/delete", (Delegate)HandleAppearanceApisDelete);
-            sink.MapPost("/api/v1/appearance-apis/default", (Delegate)HandleAppearanceApisDefault);
-            // 加载包池——全局池管理面（R4 加载包）
-            sink.MapGet("/api/v1/packs", (Delegate)HandlePacksGet);
-            sink.MapPost("/api/v1/packs", (Delegate)HandlePacksPost);
-            sink.MapPost("/api/v1/packs/delete", (Delegate)HandlePacksDelete);
-            // 用户态——当前用户（莎 / Rushiera）+ QQ 非用户指令开关（design-ch4-user-state）
-            sink.MapGet("/api/v1/user-state", (Delegate)HandleUserStateGet);
-            sink.MapPost("/api/v1/user-state", (Delegate)HandleUserStatePost);
-            // 打开数据目录——前端按钮（explorer.exe 打开持久化 Data 目录——三级锚定解析）
-            sink.MapPost("/api/v1/open-data-dir", (Delegate)HandleOpenDataDir);
-            // A65 对话图片附件——上传 + 取图（主端口注册；每猫 / majordomo 对话页走 RegisterChatPageRoutes）
-            sink.MapPost("/api/v1/chat-images", (Delegate)HandleChatImagesUpload);
-            sink.MapGet("/api/v1/cache-image/{**file}", (Delegate)HandleCacheImageGet);
         }
 
         /// <summary>
@@ -302,7 +248,6 @@ namespace CatHome4.Admin
             LogStore.Add("CatHome4", 1, "LLM API 池已设为默认：" + apiConfigId, "CONFIG");
             return Results.Json(new { ok = true });
         }
-
         /// <summary>
         /// LLM API 池设为备用——POST /api/v1/llm-apis/backup（body: apiConfigId；空=取消备用）。
         /// 备用语义：会话遇上游异常时临时切换的候选站（唯一备用；与默认互斥——默认端点不可设为备用）。
@@ -315,7 +260,7 @@ namespace CatHome4.Admin
             string apiConfigId = "";
             try
             {
-                using (JsonDocument doc = JsonDocument.Parse(body))
+                using (JsonDocument doc = JsonUtil.ParseStrict(body))
                 {
                     JsonElement root = doc.RootElement;
                     apiConfigId = GetJsonString(root, "apiConfigId");
@@ -352,18 +297,16 @@ namespace CatHome4.Admin
             LogStore.Add("CatHome4", 1, note, "CONFIG");
             return Results.Json(new { ok = true });
         }
-
         /// <summary>端点角色信息 JSON——GET /api/v1/api-role 数据源（对话页 [API 主要[模型]｜备用[模型]] 标签）。</summary>
         /// <param name="session">目标会话</param>
-        /// <returns>端点角色信息 JSON（{"role":"主要|备用","primary":"主要站模型名","backup":"备用站模型名"}）</returns>
+        /// <returns>端点角色信息 JSON</returns>
         internal static string BuildApiRoleJson(ChatSession session)
         {
             return session.GetApiRoleJson();
         }
-
         /// <summary>思考强度信息 JSON——GET /api/v1/effort 数据源（对话页 [思考 档位] 标签；本猫覆盖 + 全局值）。</summary>
         /// <param name="catKey">猫 key（majordomo=默认猫）</param>
-        /// <returns>信息 JSON（{"effort":"low|high|max|","global":"low|high|max"}）</returns>
+        /// <returns>信息 JSON（{effort, global}）</returns>
         internal static string BuildEffortJson(string catKey)
         {
             string effort = "";
@@ -378,14 +321,13 @@ namespace CatHome4.Admin
             string global = ResolveGlobalReasoningEffort();
             return JsonUtil.Serialize(new { effort = effort, global = global });
         }
-
         /// <summary>
         /// 思考强度写入——POST /api/v1/effort 数据源（对话页 [思考 档位] 标签；仅本猫覆盖，空=清空跟随全局）。
         /// 落盘 HTTP 线程原子写；运行时生效入队主线程泵 catcfg.apply（与 cat-config 同通道）。
         /// </summary>
         /// <param name="catKey">猫 key（majordomo=默认猫）</param>
         /// <param name="value">新值（low/high/max/空）</param>
-        /// <returns>回执 JSON（{"ok":true,"effort":"..."} / {"ok":false,"error":"..."}）</returns>
+        /// <returns>回执 JSON（{ok, effort} / {ok=false, error}）</returns>
         internal static string SetEffortJson(string catKey, string value)
         {
             if (catKey == null || catKey.Length == 0 || !IsSafeCatKey(catKey))
@@ -405,20 +347,19 @@ namespace CatHome4.Admin
             }
             cfg.ReasoningEffort = norm;
             SaveCatCfgData(catKey, cfg);
-            _catQueue.Enqueue("catcfg.apply " + catKey);
+            PostInput(MainInputTarget(), "catcfg.apply " + catKey);
             LogStore.Add("CatHome4", 1, "思考强度已受理：" + catKey + "（" + (norm.Length == 0 ? "跟随全局" : norm) + "）", "CONFIG");
             return JsonUtil.Serialize(new { ok = true, effort = norm });
         }
-
         /// <summary>
         /// 手动对调端点角色——POST /api/v1/api-role/toggle 数据源（仅本会话有效；视图提示由会话侧推送）。
         /// </summary>
         /// <param name="session">目标会话</param>
-        /// <returns>回执 JSON（{"ok":true,"role":"主要|备用"}）</returns>
+        /// <returns>回执 JSON（{ok, role}）</returns>
         internal static string ToggleApiRoleJson(ChatSession session)
         {
             string role = session.ToggleApiRole();
-            return "{\"ok\":true,\"role\":\"" + role + "\"}";
+            return JsonUtil.Serialize(new { ok = true, role = role });
         }
 
         /// <summary>
@@ -524,201 +465,6 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
-        /// QQ Bot 池列表——GET /api/v1/qqbot-apis（secret 掩码展示；hasSecret 供前端判断是否已配置）。
-        /// </summary>
-        /// <returns>列表 JSON——version + items</returns>
-        internal static IResult HandleQqBotApisGet()
-        {
-            CH_QqBotConfigStore store = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out store);
-            List<object> items = new List<object>();
-            if (store != null)
-            {
-                CH_QqBotConfig[] configs = store.GetAll();
-                for (int i = 0; i < configs.Length; i++)
-                {
-                    CH_QqBotConfig c = configs[i];
-                    string secret = store.GetSecret(c.QqBotId);
-                    string secretShown;
-                    if (secret.Length > 0)
-                    {
-                        secretShown = MaskApiKey(secret);
-                    }
-                    else
-                    {
-                        secretShown = "";
-                    }
-                    items.Add(new
-                    {
-                        qqBotId = c.QqBotId.ToString("D"),
-                        displayName = c.DisplayName,
-                        appId = c.AppId,
-                        sandbox = c.Sandbox,
-                        secret = secretShown,
-                        hasSecret = secret.Length > 0
-                    });
-                }
-            }
-            var resp = new
-            {
-                version = 1,
-                items = items
-            };
-            return Results.Json(resp);
-        }
-
-        /// <summary>
-        /// QQ Bot 池新建——POST /api/v1/qqbot-apis（body: displayName/appId/secret）。
-        /// </summary>
-        /// <param name="ctx">HTTP 上下文</param>
-        /// <returns>回执 JSON</returns>
-        internal static async Task<IResult> HandleQqBotApisPost(HttpContext ctx)
-        {
-            string body = await ReadBodyText(ctx);
-            string displayName = "";
-            string appId = "";
-            string secret = "";
-            bool sandbox = true;
-            try
-            {
-                using (JsonDocument doc = JsonUtil.ParseStrict(body))
-                {
-                    JsonElement root = doc.RootElement;
-                    displayName = GetJsonString(root, "displayName");
-                    appId = GetJsonString(root, "appId");
-                    secret = GetJsonString(root, "secret");
-                    sandbox = GetBoolProp(root, "sandbox");
-                }
-            }
-            catch (Exception)
-            {
-                return Results.Json(new { ok = false, error = "body 非 JSON" });
-            }
-            if (displayName.Length == 0)
-            {
-                return Results.Json(new { ok = false, error = "displayName 为空" });
-            }
-            if (appId.Length == 0)
-            {
-                return Results.Json(new { ok = false, error = "appId 为空" });
-            }
-            CH_QqBotConfigStore store = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out store);
-            if (store == null)
-            {
-                return Results.Json(new { ok = false, error = "配置池未绑定" });
-            }
-            CH_QqBotConfig config = new CH_QqBotConfig();
-            config.QqBotId = Guid.NewGuid();
-            config.DisplayName = displayName;
-            config.AppId = appId;
-            config.Sandbox = sandbox;
-            store.Save(config, secret);
-            LogStore.Add("CatHome4", 1, "QQ Bot 池新增配置「" + displayName + "」（" + config.QqBotId.ToString("D") + "）", "CONFIG");
-            QQBotService.Refresh();
-            return Results.Json(new { ok = true, qqBotId = config.QqBotId.ToString("D") });
-        }
-
-        /// <summary>
-        /// QQ Bot 池编辑——POST /api/v1/qqbot-apis/edit（body: qqBotId + 字段；secret 空=保留原 secret）。
-        /// </summary>
-        /// <param name="ctx">HTTP 上下文</param>
-        /// <returns>回执 JSON</returns>
-        internal static async Task<IResult> HandleQqBotApisEdit(HttpContext ctx)
-        {
-            string body = await ReadBodyText(ctx);
-            string qqBotId = "";
-            string displayName = "";
-            string appId = "";
-            string secret = "";
-            bool sandbox = true;
-            try
-            {
-                using (JsonDocument doc = JsonUtil.ParseStrict(body))
-                {
-                    JsonElement root = doc.RootElement;
-                    qqBotId = GetJsonString(root, "qqBotId");
-                    displayName = GetJsonString(root, "displayName");
-                    appId = GetJsonString(root, "appId");
-                    secret = GetJsonString(root, "secret");
-                    sandbox = GetBoolProp(root, "sandbox");
-                }
-            }
-            catch (Exception)
-            {
-                return Results.Json(new { ok = false, error = "body 非 JSON" });
-            }
-            Guid id;
-            if (!Guid.TryParse(qqBotId, out id) || id == Guid.Empty)
-            {
-                return Results.Json(new { ok = false, error = "qqBotId 非法" });
-            }
-            if (displayName.Length == 0)
-            {
-                return Results.Json(new { ok = false, error = "displayName 为空" });
-            }
-            if (appId.Length == 0)
-            {
-                return Results.Json(new { ok = false, error = "appId 为空" });
-            }
-            CH_QqBotConfigStore store = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out store);
-            if (store == null)
-            {
-                return Results.Json(new { ok = false, error = "配置池未绑定" });
-            }
-            CH_QqBotConfig config = new CH_QqBotConfig();
-            config.QqBotId = id;
-            config.DisplayName = displayName;
-            config.AppId = appId;
-            config.Sandbox = sandbox;
-            store.Save(config, secret);
-            LogStore.Add("CatHome4", 1, "QQ Bot 池「" + displayName + "」已更新（" + id.ToString("D") + "），secret" + (secret.Length > 0 ? "已更换" : "保持原值"), "CONFIG");
-            QQBotService.Refresh();
-            return Results.Json(new { ok = true, qqBotId = id.ToString("D") });
-        }
-
-        /// <summary>
-        /// QQ Bot 池删除——POST /api/v1/qqbot-apis/delete（body: qqBotId；普通配置 + secret 同删）。
-        /// </summary>
-        /// <param name="ctx">HTTP 上下文</param>
-        /// <returns>回执 JSON</returns>
-        internal static async Task<IResult> HandleQqBotApisDelete(HttpContext ctx)
-        {
-            string body = await ReadBodyText(ctx);
-            string qqBotId = "";
-            try
-            {
-                using (JsonDocument doc = JsonUtil.ParseStrict(body))
-                {
-                    qqBotId = GetJsonString(doc.RootElement, "qqBotId");
-                }
-            }
-            catch (Exception)
-            {
-                return Results.Json(new { ok = false, error = "body 非 JSON" });
-            }
-            Guid id;
-            if (!Guid.TryParse(qqBotId, out id) || id == Guid.Empty)
-            {
-                return Results.Json(new { ok = false, error = "qqBotId 非法" });
-            }
-            CH_QqBotConfigStore store = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out store);
-            if (store == null)
-            {
-                return Results.Json(new { ok = false, error = "配置池未绑定" });
-            }
-            if (!store.Delete(id))
-            {
-                return Results.Json(new { ok = false, error = "配置不存在" });
-            }
-            LogStore.Add("CatHome4", 1, "QQ Bot 池配置已删除：" + id.ToString("D"), "CONFIG");
-            QQBotService.Refresh();
-            return Results.Json(new { ok = true, qqBotId = id.ToString("D") });
-        }
-
-        /// <summary>
         /// 每猫配置读取——GET /api/v1/cat-config?cat=&lt;id|majordomo&gt;。
         /// 返回：displayName/apiConfigId/persona/toolNames/injectList + allToolNames（工具勾选清单）+ apiOptions（API 下拉清单）。
         /// </summary>
@@ -758,24 +504,8 @@ namespace CatHome4.Admin
                     });
                 }
             }
-            // R2.3 QQ Bot 下拉清单——Bot 池全量（id + 显示名 + 占用者；A58 1:1）
-            CH_QqBotConfigStore qqStore = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out qqStore);
-            List<object> qqbotOptions = new List<object>();
-            if (qqStore != null)
-            {
-                CH_QqBotConfig[] qqConfigs = qqStore.GetAll();
-                for (int i = 0; i < qqConfigs.Length; i++)
-                {
-                    // A58——boundCat = 除本猫外的占用者显示名（前端据此禁用已绑他猫的 Bot；后端保存时仍显式校验）
-                    qqbotOptions.Add(new
-                    {
-                        qqBotId = qqConfigs[i].QqBotId.ToString("D"),
-                        displayName = qqConfigs[i].DisplayName,
-                        boundCat = FindQqBotBindingOwner(catKey, qqConfigs[i].QqBotId.ToString("D"))
-                    });
-                }
-            }
+            bool dbLibsAvailable = false;
+            List<object> allDbLibs = BuildAllDbLibs(out dbLibsAvailable);
             var resp = new
             {
                 ok = true,
@@ -787,9 +517,10 @@ namespace CatHome4.Admin
                 toolNames = cfg.ToolNames,
                 injectList = cfg.InjectList,
                 packs = cfg.Packs,
+                dbLibs = cfg.DbLibs,
+                allLibs = allDbLibs,
+                dbLibsAvailable = dbLibsAvailable,
                 allPacks = BuildAllPacks(),
-                qqbotId = cfg.QqBotId,
-                qqbotEnable = cfg.QqBotEnable,
                 userInjectIdleOnly = cfg.UserInjectIdleOnly,
                 reasoningEffort = cfg.ReasoningEffort,
                 appearanceId = cfg.AppearanceId,
@@ -802,7 +533,6 @@ namespace CatHome4.Admin
                 defectGroups = BuildToolDefectItems(),
                 staleToolNames = ResolveStaleToolNames(cfg.ToolNames),
                 apiOptions = apiOptions,
-                qqbotOptions = qqbotOptions,
                 appearanceOptions = BuildAppearanceOptions()
             };
             return Results.Json(resp);
@@ -839,7 +569,7 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
-        /// 每猫配置写入——POST /api/v1/cat-config（body: cat/displayName/apiConfigId/persona/type/toolNames/injectList/packs/enabledRoots/qqbotId/qqbotEnable/userInjectIdleOnly）。
+        /// 每猫配置写入——POST /api/v1/cat-config（body: cat/displayName/apiConfigId/persona/type/toolNames/injectList/packs/enabledRoots/userInjectIdleOnly）。
         /// 🔴 字段级合并写（PUT 语义 · 2026-10-02 判例蒸馏轮）——字段出现才落盘，缺省保留磁盘现值；显式空值（空数组 / 空串）= 清空。
         /// displayName 非空校验（空一律拒绝——与 cat.cfg.set 同源）。
         /// toolNames 写时校验（非法名过滤）；落盘 HTTP 线程原子写；运行时生效（字段更新 + Swap）入队主线程泵 catcfg.apply。
@@ -858,10 +588,9 @@ namespace CatHome4.Admin
             bool personaPresent = false;
             bool typePresent = false;
             bool toolNamesPresent = false;
-            bool qqbotIdPresent = false;
-            bool qqbotEnablePresent = false;
             bool injectListPresent = false;
             bool packsPresent = false;
+            bool dbLibsPresent = false;
             bool enabledRootsPresent = false;
             bool userInjectIdleOnlyPresent = false;
             bool reasoningEffortPresent = false;
@@ -870,14 +599,13 @@ namespace CatHome4.Admin
             string persona = "";
             string typeValue = "";
             string toolNames = "";
-            string qqbotId = "";
             string reasoningEffort = "";
-            bool qqbotEnable = false;
             bool userInjectIdleOnly = false;
             string appearanceIdValue = "";
             List<string> injectList = new List<string>();
             List<string> enabledRoots = new List<string>();
             List<string> packs = new List<string>();
+            List<string> dbLibs = new List<string>();
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -890,13 +618,12 @@ namespace CatHome4.Admin
                     personaPresent = root.TryGetProperty("persona", out probeEl);
                     typePresent = root.TryGetProperty("type", out probeEl);
                     toolNamesPresent = root.TryGetProperty("toolNames", out probeEl);
-                    qqbotIdPresent = root.TryGetProperty("qqbotId", out probeEl);
-                    qqbotEnablePresent = root.TryGetProperty("qqbotEnable", out probeEl);
                     enabledRootsPresent = root.TryGetProperty("enabledRoots", out probeEl);
                     userInjectIdleOnlyPresent = root.TryGetProperty("userInjectIdleOnly", out probeEl);
                     reasoningEffortPresent = root.TryGetProperty("reasoningEffort", out probeEl);
                     appearanceIdPresent = root.TryGetProperty("appearanceId", out probeEl);
                     packsPresent = root.TryGetProperty("packs", out probeEl);
+                    dbLibsPresent = root.TryGetProperty("dbLibs", out probeEl);
                     injectListPresent = root.TryGetProperty("injectList", out probeEl);
                     JsonElement apiConfigIdEl;
                     if (root.TryGetProperty("apiConfigId", out apiConfigIdEl))
@@ -908,19 +635,12 @@ namespace CatHome4.Admin
                     persona = GetJsonString(root, "persona");
                     typeValue = GetJsonString(root, "type");
                     toolNames = GetJsonString(root, "toolNames");
-                    qqbotId = GetJsonString(root, "qqbotId");
-                    qqbotEnable = GetBoolProp(root, "qqbotEnable");
                     userInjectIdleOnly = GetBoolProp(root, "userInjectIdleOnly");
                     reasoningEffort = GetJsonString(root, "reasoningEffort");
                     appearanceIdValue = GetJsonString(root, "appearanceId");
                     JsonElement rootsEl;
-                    if (root.TryGetProperty("enabledRoots", out rootsEl))
+                    if (root.TryGetProperty("enabledRoots", out rootsEl) && rootsEl.ValueKind == JsonValueKind.Array)
                     {
-                        if (rootsEl.ValueKind != JsonValueKind.Array)
-                        {
-                            return Results.Json(new { ok = false, error = "enabledRoots 非数组" });
-                        }
-                        enabledRootsPresent = true;
                         for (int i = 0; i < rootsEl.GetArrayLength(); i++)
                         {
                             JsonElement item = rootsEl[i];
@@ -935,13 +655,8 @@ namespace CatHome4.Admin
                         }
                     }
                     JsonElement packsEl;
-                    if (root.TryGetProperty("packs", out packsEl))
+                    if (root.TryGetProperty("packs", out packsEl) && packsEl.ValueKind == JsonValueKind.Array)
                     {
-                        if (packsEl.ValueKind != JsonValueKind.Array)
-                        {
-                            return Results.Json(new { ok = false, error = "packs 非数组" });
-                        }
-                        packsPresent = true;
                         for (int i = 0; i < packsEl.GetArrayLength(); i = i + 1)
                         {
                             JsonElement item = packsEl[i];
@@ -956,14 +671,26 @@ namespace CatHome4.Admin
                             }
                         }
                     }
-                    JsonElement injectEl;
-                    if (root.TryGetProperty("injectList", out injectEl))
+                    JsonElement dbLibsEl;
+                    if (root.TryGetProperty("dbLibs", out dbLibsEl) && dbLibsEl.ValueKind == JsonValueKind.Array)
                     {
-                        if (injectEl.ValueKind != JsonValueKind.Array)
+                        for (int i = 0; i < dbLibsEl.GetArrayLength(); i = i + 1)
                         {
-                            return Results.Json(new { ok = false, error = "injectList 非数组" });
+                            JsonElement item = dbLibsEl[i];
+                            if (item.ValueKind == JsonValueKind.String)
+                            {
+                                string got = item.GetString();
+                                if (got != null && got.Length > 0)
+                                {
+                                    // 库白名单——库 ID 清单；库存在性与授权校验后置（A266 首版只落字段）
+                                    dbLibs.Add(got.Trim());
+                                }
+                            }
                         }
-                        injectListPresent = true;
+                    }
+                    JsonElement injectEl;
+                    if (root.TryGetProperty("injectList", out injectEl) && injectEl.ValueKind == JsonValueKind.Array)
+                    {
                         for (int i = 0; i < injectEl.GetArrayLength(); i++)
                         {
                             JsonElement item = injectEl[i];
@@ -1008,23 +735,16 @@ namespace CatHome4.Admin
             // M2c 写时校验——池外工具名过滤（持久化面只落合法名）；A132 被剔名字随响应带回（调用方可见，不静默）
             string[] removedToolNames;
             string validToolNames = ValidateToolNames(toolNames, out removedToolNames);
-            // 落盘——读旧配置为基底，只覆盖本次提交出现的字段（保留 id/displayName/running/port）
+            // A261 启用根剔除出声——池外根 id 随响应带回（与工具名单同源，不静默）
+            string[] removedEnabledRoots = new string[0];
+            bool rootsPoolUnavailable = false;
+            // 落盘——读旧配置保留 id/displayName/running/port；apiConfigId 空=保留旧值
             CatCfgData cfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", catKey, "cat.cfg"));
             if (cfg == null)
             {
                 return Results.Json(new { ok = false, error = "cat.cfg 不存在: " + catKey });
             }
-            // [段2] 字段应用——出现即覆盖；缺省保留旧值（未出现的字段逐字保留）
-            if (displayNamePresent)
-            {
-                string trimmedName = displayName.Trim();
-                if (trimmedName.Length == 0)
-                {
-                    return Results.Json(new { ok = false, error = "displayName 不能为空" });
-                }
-                cfg.DisplayName = trimmedName;
-            }
-            // A41-3——显式清空（空串/全零）回默认端点；显式非法值拒绝
+            // A41-3——显式清空（空串/全零）回默认端点；显式非法值拒绝；字段缺省保留旧值
             if (apiConfigIdPresent)
             {
                 string trimmedApiConfigId = apiConfigId.Trim();
@@ -1043,33 +763,15 @@ namespace CatHome4.Admin
                     cfg.ApiConfigId = trimmedApiConfigId;
                 }
             }
-            if (qqbotIdPresent)
+            // 字段级合并写（2026-10-02 判例蒸馏轮）——字段出现才落盘，缺省保留磁盘现值（空数组 / 空串 = 显式清空）
+            if (displayNamePresent)
             {
-                string trimmedQqBotId = qqbotId.Trim();
-                if (trimmedQqBotId.Length == 0)
+                string trimmedName = displayName.Trim();
+                if (trimmedName.Length == 0)
                 {
-                    // 显式解绑——空串清空绑定（与 cat.cfg.set 同规：空值 = 清空语义）
-                    cfg.QqBotId = "";
+                    return Results.Json(new { ok = false, error = "displayName 不能为空" });
                 }
-                else
-                {
-                    Guid parsed;
-                    if (!Guid.TryParse(trimmedQqBotId, out parsed) || parsed == Guid.Empty)
-                    {
-                        return Results.Json(new { ok = false, error = "qqbotId 非法" });
-                    }
-                    // A58 1:1 查重——同一 Bot 不得被两只猫绑定（入口面显式拒绝；运行时不做去重）
-                    string boundBy = FindQqBotBindingOwner(catKey, trimmedQqBotId);
-                    if (boundBy.Length > 0)
-                    {
-                        return Results.Json(new { ok = false, error = "该 QQ Bot 已绑定猫「" + boundBy + "」——一只 Bot 只能绑一只猫" });
-                    }
-                    cfg.QqBotId = trimmedQqBotId;
-                }
-            }
-            if (qqbotEnablePresent)
-            {
-                cfg.QqBotEnable = qqbotEnable;
+                cfg.DisplayName = trimmedName;
             }
             if (userInjectIdleOnlyPresent)
             {
@@ -1120,7 +822,6 @@ namespace CatHome4.Admin
             }
             if (toolNamesPresent)
             {
-                // M2c 写时校验已在段前完成（validToolNames）——此处落校验结果，不重复过滤
                 cfg.ToolNames = validToolNames;
             }
             if (injectListPresent)
@@ -1131,18 +832,22 @@ namespace CatHome4.Admin
             {
                 cfg.Packs = packs.ToArray();
             }
+            if (dbLibsPresent)
+            {
+                cfg.DbLibs = dbLibs.ToArray();
+            }
             if (enabledRootsPresent)
             {
-                // 启用根校验——workspace 强制 + 全局池子集；非法 id 剔除
-                cfg.EnabledRoots = ValidateEnabledRoots(enabledRoots.ToArray());
+                // 启用根校验——workspace 强制 + 全局池子集；池外 id 剔除并出声（A261）
+                cfg.EnabledRoots = ValidateEnabledRoots(enabledRoots.ToArray(), out removedEnabledRoots, out rootsPoolUnavailable);
             }
             SaveCatCfgData(catKey, cfg);
             // 运行时生效——入队主线程泵（注册表/会话面仅主线程触碰）
-            _catQueue.Enqueue("catcfg.apply " + catKey);
+            PostInput(MainInputTarget(), "catcfg.apply " + catKey);
             LogStore.Add("CatHome4", 1, "猫配置已受理：" + catKey + "（工具面 " + cfg.ToolNames + "）", "CONFIG");
             // A132 剔除出声——被剔名字随响应带回（调用方可见；明细已记日志，不静默）
             // 字段级合并写——回执取落盘实况（cfg.ToolNames），不取本次提交值（字段缺省时二者不同）
-            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames });
+            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames, dbLibs = cfg.DbLibs, enabledRoots = cfg.EnabledRoots, removedEnabledRoots = removedEnabledRoots, rootsPoolUnavailable = rootsPoolUnavailable });
         }
 
         /// <summary>
@@ -1159,7 +864,6 @@ namespace CatHome4.Admin
             string defaultToolNames = "";
             string[] defaultInjectList = new string[0];
             string[] defaultPacks = new string[0];
-            string[] defaultEnabledRoots = new string[0];
             bool defaultUserInjectIdleOnly = false;
             if (tpl != null)
             {
@@ -1183,10 +887,6 @@ namespace CatHome4.Admin
                 {
                     defaultPacks = tpl.DefaultPacks;
                 }
-                if (tpl.DefaultEnabledRoots != null)
-                {
-                    defaultEnabledRoots = tpl.DefaultEnabledRoots;
-                }
                 defaultUserInjectIdleOnly = tpl.DefaultUserInjectIdleOnly;
             }
             var resp = new
@@ -1197,8 +897,6 @@ namespace CatHome4.Admin
                 defaultToolNames = defaultToolNames,
                 defaultInjectList = defaultInjectList,
                 defaultPacks = defaultPacks,
-                defaultEnabledRoots = defaultEnabledRoots,
-                allRoots = BuildAllRootsJson(),
                 defaultUserInjectIdleOnly = defaultUserInjectIdleOnly,
                 allToolNames = GetConfigurableToolNames(),
                 allTools = GetToolsWithGroupForConfig(),
@@ -1224,7 +922,6 @@ namespace CatHome4.Admin
             string defaultToolNames = "";
             List<string> defaultInjectList = new List<string>();
             List<string> defaultPacks = new List<string>();
-            List<string> defaultEnabledRoots = new List<string>();
             bool defaultUserInjectIdleOnly = false;
             try
             {
@@ -1247,22 +944,6 @@ namespace CatHome4.Admin
                                 if (gotPack != null && gotPack.Length > 0)
                                 {
                                     defaultPacks.Add(gotPack.Trim());
-                                }
-                            }
-                        }
-                    }
-                    JsonElement rootsEl;
-                    if (root.TryGetProperty("defaultEnabledRoots", out rootsEl) && rootsEl.ValueKind == JsonValueKind.Array)
-                    {
-                        for (int i = 0; i < rootsEl.GetArrayLength(); i = i + 1)
-                        {
-                            JsonElement item = rootsEl[i];
-                            if (item.ValueKind == JsonValueKind.String)
-                            {
-                                string gotRoot = item.GetString();
-                                if (gotRoot != null && gotRoot.Length > 0)
-                                {
-                                    defaultEnabledRoots.Add(gotRoot.Trim());
                                 }
                             }
                         }
@@ -1305,8 +986,6 @@ namespace CatHome4.Admin
             data.DefaultToolNames = ValidateToolNames(defaultToolNames, out removedDefaultToolNames);
             data.DefaultInjectList = defaultInjectList.ToArray();
             data.DefaultPacks = defaultPacks.ToArray();
-            // 目录白名单——与猫配置同规（workspace 强制 + 全局池子集；空=物化常驻根）
-            data.DefaultEnabledRoots = ValidateEnabledRoots(defaultEnabledRoots.ToArray());
             data.DefaultUserInjectIdleOnly = defaultUserInjectIdleOnly;
             SaveCatDefaultCfg(data);
             LogStore.Add("CatHome4", 1, "全局默认模板已保存（注入 " + defaultInjectList.Count.ToString() + " 条）", "CONFIG");
@@ -1315,7 +994,7 @@ namespace CatHome4.Admin
         }
 
         /// <summary>受控根写入输入条目——POST /api/v1/workspace body 解析形态</summary>
-        private sealed class WorkspaceRootInput
+        internal sealed class WorkspaceRootInput
         {
             /// <summary>根标识</summary>
             public string Id;
@@ -1347,7 +1026,15 @@ namespace CatHome4.Admin
             List<object> roots = new List<object>();
             for (int i = 0; i < ws.Roots.Length; i++)
             {
-                roots.Add(BuildRootJson(ws.Roots[i]));
+                FixedRootDef rdef = FindFixedRoot(ws.Roots[i].Id);
+                roots.Add(new
+                {
+                    id = ws.Roots[i].Id,
+                    path = ws.Roots[i].Path,
+                    writable = rdef != null ? rdef.Writable : ws.Roots[i].Writable,
+                    note = rdef != null ? rdef.Note : ws.Roots[i].Note,
+                    fixedRoot = rdef != null
+                });
             }
             return Results.Json(new { ok = true, roots = roots });
         }
@@ -1365,7 +1052,15 @@ namespace CatHome4.Admin
             {
                 for (int i = 0; i < ws.Roots.Length; i++)
                 {
-                    roots.Add(BuildRootJson(ws.Roots[i]));
+                    FixedRootDef rdef = FindFixedRoot(ws.Roots[i].Id);
+                    roots.Add(new
+                    {
+                        id = ws.Roots[i].Id,
+                        path = ws.Roots[i].Path,
+                        writable = rdef != null ? rdef.Writable : ws.Roots[i].Writable,
+                        note = rdef != null ? rdef.Note : ws.Roots[i].Note,
+                        fixedRoot = rdef != null
+                    });
                 }
             }
             return roots.ToArray();
@@ -1377,8 +1072,12 @@ namespace CatHome4.Admin
         /// </summary>
         /// <param name="ids">前端提交的启用根 id 数组（空=仅常驻根）</param>
         /// <returns>合法启用根 id 数组（至少含常驻根；池不可用时为空）</returns>
-        internal static string[] ValidateEnabledRoots(string[] ids)
+        /// <param name="removed">被剔除的池外根 id 清单（根池中不存在；空 = 无剔除）</param>
+        /// <param name="poolUnavailable">全局根池不可用（此时整份白名单按空处理——调用方须出声）</param>
+        internal static string[] ValidateEnabledRoots(string[] ids, out string[] removed, out bool poolUnavailable)
         {
+            removed = new string[0];
+            poolUnavailable = false;
             // 空白名单（未配置/全不勾）= 仅常驻根——物化落盘，消除"未配置"二义（前端已如实渲染）
             if (ids == null || ids.Length == 0)
             {
@@ -1393,9 +1092,13 @@ namespace CatHome4.Admin
             DataBox.TryResolve<WorkspaceConfig>(out ws);
             if (ws == null || ws.Roots == null || ws.Roots.Length == 0)
             {
+                // A261 降级出声——池不可用时整份白名单会被置空，绝不静默回落（失败必须可见）
+                poolUnavailable = true;
+                LogStore.Add("CatHome4", 3, "猫配置：全局根池不可用，启用根白名单按空处理（该猫仅常驻根可用）", "CONFIG");
                 return new string[0];
             }
             List<string> result = new List<string>();
+            List<string> dropped = new List<string>();
             // 全局池合法 id 集合
             List<string> pool = new List<string>();
             for (int i = 0; i < ws.Roots.Length; i++)
@@ -1432,7 +1135,7 @@ namespace CatHome4.Admin
             {
                 result.Add(wsId);
             }
-            // 用户选择子集——只保留全局池内 id，去重
+            // 用户选择子集——只保留全局池内 id，去重；池外 id 剔除并收集（A261 出声不静默）
             for (int i = 0; i < ids.Length; i++)
             {
                 string id = ids[i];
@@ -1462,10 +1165,19 @@ namespace CatHome4.Admin
                         break;
                     }
                 }
-                if (inPool && !already)
+                if (!inPool)
+                {
+                    dropped.Add(id);
+                }
+                else if (!already)
                 {
                     result.Add(id);
                 }
+            }
+            if (dropped.Count > 0)
+            {
+                removed = dropped.ToArray();
+                LogStore.Add("CatHome4", 2, "启用根写时剔除 " + dropped.Count.ToString() + " 个池外根 id：" + string.Join(",", dropped.ToArray()) + "（根池中不存在——名单以根池为准）", "CONFIG");
             }
             return result.ToArray();
         }
@@ -1588,248 +1300,23 @@ namespace CatHome4.Admin
             // [段2a] 现存根 path 映射——存量容留判定（不可达根可原样提交以移除或改路径，不构成改根死锁）
             Dictionary<string, string> existingPaths = LoadExistingRootPaths();
             // [段2] 校验——字符集（小写字母数字）+ 重名（忽略大小写）+ path 绝对且存在（存量容留）+ 固定命名根齐备
-            string rootErr = ValidateRootsInput(rootsIn, existingPaths);
+            string rootErr = ValidateRootsInput(rootsIn, existingPaths, _dataRoot);
             if (rootErr.Length > 0)
             {
                 return Results.Json(new { ok = false, error = rootErr });
             }
-            // [段3] 落盘——保留 inject 字段（读旧文件；M2 后宿主不消费但结构保留）
+            // [段3] 落盘——统一出口 WriteWorkspaceRoots（保留 inject 段；与 db 根自愈同源）
             string wsPath = Path.Combine(_dataRoot, "Data", "config", "workspace.json");
-            string injectJson = "[]";
-            if (File.Exists(wsPath))
+            string writeErr = WriteWorkspaceRoots(wsPath, rootsIn);
+            if (writeErr.Length > 0)
             {
-                try
-                {
-                    using (JsonDocument old = JsonUtil.ParseStrict(File.ReadAllText(wsPath)))
-                    {
-                        JsonElement injectEl;
-                        if (old.RootElement.TryGetProperty("inject", out injectEl))
-                        {
-                            injectJson = injectEl.GetRawText();
-                        }
-                    }
-                }
-                catch (Exception ex)
-                {
-                    LogStore.Add("CatHome4", 2, "注入清单读取失败（按空清单）: " + ex.Message, "CONFIG");
-                    injectJson = "[]";
-                }
-            }
-            System.Collections.Generic.List<string> rootItems = new System.Collections.Generic.List<string>();
-            for (int i = 0; i < rootsIn.Count; i++)
-            {
-                WorkspaceRootInput input = rootsIn[i];
-                string norm = WorkspaceConfig.NormalizeRoot(input.Path);
-                if (input.Note.Length > 0)
-                {
-                    rootItems.Add(JsonUtil.Object(("id", input.Id), ("path", norm.Replace('\\', '/')), ("writable", input.Writable), ("note", input.Note)));
-                }
-                else
-                {
-                    rootItems.Add(JsonUtil.Object(("id", input.Id), ("path", norm.Replace('\\', '/')), ("writable", input.Writable)));
-                }
-            }
-            string wsJson = JsonUtil.Object(("roots", JsonUtil.RawArray(rootItems.ToArray())), ("inject", JsonUtil.Raw(injectJson)));
-            try
-            {
-                ConfigStore.AtomicWrite(wsPath, wsJson);
-            }
-            catch (Exception ex)
-            {
-                return Results.Json(new { ok = false, error = "落盘失败: " + ex.Message });
+                return Results.Json(new { ok = false, error = writeErr });
             }
             LogStore.Add("CatHome4", 1, "工作区已保存：" + rootsIn.Count.ToString() + " 个根（重启生效）", "CONFIG");
             return Results.Json(new { ok = true, roots = rootsIn.Count });
         }
 
-        /// <summary>
-        /// catcfg.apply 执行体——主线程泵消费：重读 cat.cfg → 更新注册表字段 + 重裁剪声明面 + apiConfigId 变更 SwapLlmRuntime。
-        /// </summary>
-        /// <param name="key">猫寻址键（majordomo=默认猫）</param>
-        /// <returns>结果文本</returns>
-        internal static string HandleCatCfgApply(string key)
-        {
-            CatCfgData cfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", key, "cat.cfg"));
-            if (cfg == null)
-            {
-                return "catcfg.apply | cat.cfg 不存在: " + key;
-            }
-            string persona = "";
-            if (cfg.Persona != null)
-            {
-                persona = cfg.Persona;
-            }
-            string[] injectList = cfg.InjectList;
-            if (injectList == null)
-            {
-                injectList = new string[0];
-            }
-            string toolNames = "";
-            if (cfg.ToolNames != null)
-            {
-                toolNames = cfg.ToolNames;
-            }
-            bool includePrivileged = IsDefaultCatKey(key);
-            ToolSpec[] specs = FilterToolSpecs(ResolveToolNames(toolNames, includePrivileged), includePrivileged);
-            // M4e 猫级白名单——配置变更后重建猫文件系统（启用根子集）
-            ApplyCatRoots(key);
-            if (key == "majordomo")
-            {
-                // 默认猫——静态面更新（session.new 重注入消费）
-                _chatBridge.DefaultPersona = persona;
-                _chatBridge.DefaultInjectList = injectList;
-                _chatBridge.DefaultToolSpecs = specs;
-                // 授权面原始串——实时解析输入（改配置即改内存；design-ch4-tools §三·十一）
-                _chatBridge.DefaultToolNames = toolNames;
-                _chatBridge.DefaultQqBotId = ResolveQqBotId(cfg);
-                _chatBridge.DefaultQqBotEnable = cfg.QqBotEnable;
-                _chatBridge.DefaultSession.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
-                _chatBridge.DefaultSession.SetRoundSummary(ResolveEffectiveRoundSummary("majordomo"));
-                _chatBridge.DefaultSession.SetPetKind(ResolveEffectivePetKind("majordomo"));
-                // A230 显示名立即刷新（改配置即改内存；空值保持原值）
-                if (cfg.DisplayName != null && cfg.DisplayName.Length > 0)
-                {
-                    _chatBridge.DefaultSession.SetDisplayName(cfg.DisplayName);
-                }
-                Guid newApi = ResolveApiConfigId(cfg);
-                string newEffort = NormalizeReasoningEffort(cfg.ReasoningEffort);
-                if (_defaultApiConfigId != newApi || _defaultReasoningEffort != newEffort)
-                {
-                    _defaultApiConfigId = newApi;
-                    _defaultReasoningEffort = newEffort;
-                    _chatBridge.DefaultSession.SwapLlmRuntime(new DeepSeekLlmRuntime(_apiStore, newApi, _globalConfig, _defaultApiRole, newEffort));
-                    LogStore.Add("CatHome4", 1, "majordomo 配置生效：LLM 端点 " + newApi.ToString("D") + "，思考强度 " + (newEffort.Length > 0 ? newEffort : "跟随全局"), "CONFIG");
-                }
-                return "catcfg.apply | majordomo | 已生效（前文项新会话生效）";
-            }
-            CatEntry cat = FindCat(key);
-            if (cat == null)
-            {
-                return "catcfg.apply | 猫不存在: " + key;
-            }
-            // 改名生效——displayName 同步注册表（主面板列表与日志读 cat.DisplayName）
-            if (cfg.DisplayName != null && cfg.DisplayName.Length > 0)
-            {
-                cat.DisplayName = cfg.DisplayName;
-            }
-            cat.Persona = persona;
-            // A230 显示名立即刷新（改配置即改内存；空值保持原值）
-            if (cfg.DisplayName != null && cfg.DisplayName.Length > 0)
-            {
-                cat.DisplayName = cfg.DisplayName;
-                cat.Session.SetDisplayName(cfg.DisplayName);
-            }
-            cat.Type = cfg.Type == null ? "" : cfg.Type;
-            cat.InjectList = injectList;
-            cat.ToolNames = toolNames;
-            cat.ToolSpecs = specs;
-            cat.QqBotId = ResolveQqBotId(cfg);
-            cat.QqBotEnable = cfg.QqBotEnable;
-            cat.UserInjectIdleOnly = cfg.UserInjectIdleOnly;
-            cat.Session.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
-            cat.AppearanceId = ResolveAppearanceId(cfg);
-            cat.RoundSummary = ResolveEffectiveRoundSummary(key);
-            cat.Session.SetRoundSummary(cat.RoundSummary);
-            cat.Session.SetPetKind(ResolveEffectivePetKind(key));
-            // M4e 猫级白名单——运行时猫文件系统已在上方 ApplyCatRoots 重建（含本分支）
-            Guid newApiId = ResolveApiConfigId(cfg);
-            string newCatEffort = NormalizeReasoningEffort(cfg.ReasoningEffort);
-            if (cat.ApiConfigId != newApiId || cat.ReasoningEffort != newCatEffort)
-            {
-                cat.ApiConfigId = newApiId;
-                cat.Session.SetApiConfigId(newApiId);
-                cat.ReasoningEffort = newCatEffort;
-                CH_LlmApiConfig apiConfig = new CH_LlmApiConfig();
-                if (_apiStore != null)
-                {
-                    _apiStore.TryGet(newApiId, out apiConfig);
-                }
-                cat.ApiConfig = apiConfig;
-                if (cat.ApiRole == null)
-                {
-                    cat.ApiRole = new LlmEndpointRole();
-                    cat.Session.AttachApiRole(cat.ApiRole);
-                }
-                cat.Session.SwapLlmRuntime(new DeepSeekLlmRuntime(_apiStore, newApiId, _globalConfig, cat.ApiRole, newCatEffort));
-                LogStore.Add("CatHome4", 1, "猫「" + cat.DisplayName + "」配置生效：LLM 端点 " + newApiId.ToString("D") + "，思考强度 " + (newCatEffort.Length > 0 ? newCatEffort : "跟随全局"), "CONFIG");
-            }
-            return "catcfg.apply | " + cat.DisplayName + " | 已生效（前文项新会话生效）";
-        }
 
-        /// <summary>
-        /// 解析 cat.cfg 的 qqbot 配置身份——缺省 Guid.Empty=未绑定。
-        /// </summary>
-        /// <param name="cfg">配置数据</param>
-        /// <returns>qqbot 配置身份</returns>
-        private static Guid ResolveQqBotId(CatCfgData cfg)
-        {
-            Guid id = Guid.Empty;
-            if (cfg != null && cfg.QqBotId != null && cfg.QqBotId.Length > 0)
-            {
-                Guid parsed;
-                if (Guid.TryParse(cfg.QqBotId, out parsed) && parsed != Guid.Empty)
-                {
-                    id = parsed;
-                }
-            }
-            return id;
-        }
-
-        /// <summary>
-        /// 解析 cat.cfg 的 API 配置身份——缺省 Guid.Empty=默认端点语义（Cat 可选配置；未配置走默认端点）。
-        /// </summary>
-        /// <param name="cfg">配置数据</param>
-        /// <returns>API 配置身份</returns>
-        private static Guid ResolveApiConfigId(CatCfgData cfg)
-        {
-            Guid id = Guid.Empty;
-            if (cfg != null && cfg.ApiConfigId != null && cfg.ApiConfigId.Length > 0)
-            {
-                Guid parsed;
-                if (Guid.TryParse(cfg.ApiConfigId, out parsed) && parsed != Guid.Empty)
-                {
-                    id = parsed;
-                }
-            }
-            return id;
-        }
-
-        /// <summary>
-        /// cat.cfg 原子写——按配置数据落盘（M3 端点写面；与 SaveCatCfg(CatEntry) 同源）。
-        /// </summary>
-        /// <param name="id">会话 ID（majordomo=默认猫）</param>
-        /// <param name="data">配置数据（用户配置面——运行态 running/port 不在此落盘）</param>
-        private static void SaveCatCfgData(string id, CatCfgData data)
-        {
-            string dir = Path.Combine(_dataRoot, "Data", "sessions", id);
-            string path = Path.Combine(dir, "cat.cfg");
-            var payload = new
-            {
-                id = data.Id,
-                displayName = data.DisplayName,
-                type = data.Type,
-                apiConfigId = data.ApiConfigId,
-                persona = data.Persona,
-                // M2c 写时校验——序列化前比对内置清单过滤非法名（外部损坏防御：持久化面只落合法名）
-                toolNames = ValidateToolNames(data.ToolNames),
-                injectList = data.InjectList,
-                qqbotId = data.QqBotId,
-                qqbotEnable = data.QqBotEnable,
-                enabledRoots = data.EnabledRoots,
-                packs = data.Packs,
-                userInjectIdleOnly = data.UserInjectIdleOnly,
-                appearanceId = data.AppearanceId,
-                reasoningEffort = data.ReasoningEffort
-            };
-            try
-            {
-                ConfigStore.AtomicWrite(path, JsonUtil.Serialize(payload));
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "cat.cfg 写入失败：" + ex.Message, "CHAT");
-            }
-        }
 
         /// <summary>
         /// 读取请求 body 全文。
@@ -1876,48 +1363,6 @@ namespace CatHome4.Admin
                 return "****";
             }
             return key.Substring(0, 4) + "****" + key.Substring(key.Length - 4);
-        }
-        /// <summary>
-        /// majordomo 默认猫 cat.cfg 补建——缺失时按全局默认模板创建（新用户无 cfg 是必然态；模板值 = 初次部署状态权威）。
-        /// 已存在不覆盖——尊重用户已保存配置；模板缺失回退空默认（与运行时缺省回退语义一致）。
-        /// </summary>
-        internal static void EnsureMajordomoCfg()
-        {
-            string path = Path.Combine(_dataRoot, "Data", "sessions", "majordomo", "cat.cfg");
-            if (File.Exists(path))
-            {
-                return;
-            }
-
-            CatDefaultCfgData tpl = LoadCatDefaultCfg();
-            CatCfgData data = new CatCfgData();
-            data.Id = "majordomo";
-            data.DisplayName = "majordomo";
-            data.Running = false;
-            data.Port = 0;
-            data.ApiConfigId = "";
-            data.QqBotId = "";
-            data.QqBotEnable = false;
-            data.EnabledRoots = null;
-            if (tpl != null)
-            {
-                data.Persona = tpl.DefaultPersona != null ? tpl.DefaultPersona : "";
-                data.ToolNames = tpl.DefaultToolNames != null ? tpl.DefaultToolNames : "";
-                data.InjectList = tpl.DefaultInjectList != null ? tpl.DefaultInjectList : new string[0];
-            }
-            else
-            {
-                data.Persona = "";
-                data.ToolNames = "";
-                data.InjectList = new string[0];
-            }
-
-            if (tpl != null)
-            {
-                data.UserInjectIdleOnly = tpl.DefaultUserInjectIdleOnly;
-            }
-            SaveCatCfgData("majordomo", data);
-            LogStore.Add("CatHome4", 1, "majordomo cat.cfg 缺失——已按默认模板补建", "CONFIG");
         }
     }
 }

@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using Mau.Runtime;
 using CH4;
+using CatHome4.Contracts;
 
 namespace CatHome4.Observe
 {
@@ -236,6 +237,7 @@ namespace CatHome4.Observe
                     timeout = oa.TimeoutCount
                 },
                 tools = BuildToolsJson(),
+                boot = BuildBootSegment(),
                 boxes = boxes,
                 deps = BuildDepsJson(out _),
                 res = ResProbe.Capture(),
@@ -251,6 +253,61 @@ namespace CatHome4.Observe
             }
             return snapshotJson;
         }
+
+        /// <summary>
+        /// 启动健康段（A260）——降级清单 + 早期 sink 落点 + 报告路径（与日志 / 弹窗同源）。
+        /// </summary>
+        /// <returns>匿名对象（System.Text.Json 正常序列化）</returns>
+        private static object BuildBootSegment()
+        {
+            StartupDegradeEntry[] entries = StartupDegradation.Snapshot();
+            List<object> items = new List<object>();
+            for (int i = 0; i < entries.Length; i = i + 1)
+            {
+                StartupDegradeEntry entry = entries[i];
+                items.Add(new
+                {
+                    code = entry.Code,
+                    kind = entry.Kind,
+                    ability = entry.Ability,
+                    state = entry.State,
+                    detail = entry.Detail,
+                    fix = entry.Fix,
+                    stage = entry.Stage,
+                    at = entry.At,
+                    count = entry.Count
+                });
+            }
+            string sink = "";
+            if (BootSinkProvider != null)
+            {
+                sink = BootSinkProvider();
+            }
+            string reportPath = "";
+            if (BootReportPathProvider != null)
+            {
+                reportPath = BootReportPathProvider();
+            }
+            return new
+            {
+                ok = entries.Length == 0,
+                count = entries.Length,
+                summary = StartupDegradation.BuildSummaryLine(),
+                sink = sink,
+                reportPath = reportPath,
+                degraded = items
+            };
+        }
+
+        /// <summary>
+        /// 早期诊断 sink 落点提供者——宿主注入（快照 boot 段显示实际落点）。
+        /// </summary>
+        public static Func<string> BootSinkProvider { get; set; }
+
+        /// <summary>
+        /// 启动报告路径提供者——宿主注入（报告落盘后取值）。
+        /// </summary>
+        public static Func<string> BootReportPathProvider { get; set; }
 
         /// <summary>
         /// deps 段——外部依赖探测结果（A253；DependencyProbe 后端统一快照 · D1）。

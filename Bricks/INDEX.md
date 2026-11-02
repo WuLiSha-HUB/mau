@@ -1,6 +1,6 @@
 ﻿# Mau 积木索引 — INDEX
 
-> 版本：v3.3 | 更新：2026-10-30（mau bricks index --update 源码驱动重建）
+> 版本：v3.3 | 更新：2026-11-02（mau bricks index --update 源码驱动重建）
 > 全量积木登记——一行一条。ID 永不重用。
 
 ## 全部积木
@@ -17,6 +17,14 @@
 | BRIK-BROWSER-006 | browser.headful | BROWSER | BROWSER/BRIK-BROWSER-006_browser.headful.cs | 无 | active |  |
 | BRIK-DATA-001 | data.box_set_str | DATA | DATA/BRIK-DATA-001_data.box_set_str.cs | 无 | active |  |
 | BRIK-DATA-002 | data.box_get_str | DATA | DATA/BRIK-DATA-002_data.box_get_str.cs | 无 | active |  |
+| BRIK-DB-002 | db.put | DB | DB/BRIK-DB-002_db.put.cs | 无 | active |  |
+| BRIK-DB-003 | db.query | DB | DB/BRIK-DB-003_db.query.cs | 无 | active |  |
+| BRIK-DB-004 | db.get | DB | DB/BRIK-DB-004_db.get.cs | 无 | active |  |
+| BRIK-DB-005 | db.update | DB | DB/BRIK-DB-005_db.update.cs | 无 | active |  |
+| BRIK-DB-006 | db.delete | DB | DB/BRIK-DB-006_db.delete.cs | 无 | active |  |
+| BRIK-DB-007 | dbAdmin.libs | DB | DB/BRIK-DB-007_dbAdmin.libs.cs | 无 | active |  |
+| BRIK-DB-008 | dbAdmin.create | DB | DB/BRIK-DB-008_dbAdmin.create.cs | 无 | active |  |
+| BRIK-DB-009 | dbAdmin.drop | DB | DB/BRIK-DB-009_dbAdmin.drop.cs | 无 | active |  |
 | BRIK-FILE-001 | file.tree | FILE | FILE/BRIK-FILE-001_file.tree.cs | 无 | active |  |
 | BRIK-FILE-002 | file.find | FILE | FILE/BRIK-FILE-002_file.find.cs | 无 | active |  |
 | BRIK-FILE-003 | file.move | FILE | FILE/BRIK-FILE-003_file.move.cs | 无 | active |  |
@@ -83,6 +91,14 @@
 | BRIK-TOOLS-014 | tools.llmsimplerequest | TOOLS | TOOLS/BRIK-TOOLS-014_tools.llmsimplerequest.cs | 无 | active |  |
 | BRIK-TOOLS-015 | tools.audiocat | TOOLS | TOOLS/BRIK-TOOLS-015_tools.audiocat.cs | 无 | active |  |
 | BRIK-TOOLS-016 | tools.pycat | TOOLS | TOOLS/BRIK-TOOLS-016_tools.pycat.cs | 无 | active |  |
+| BRIK-TOOLS-017 | tools.dbcat | TOOLS | TOOLS/BRIK-TOOLS-017_tools.dbcat.cs | 无 | active |  |
+| BRIK-TOOLS-018 | tools.dbadmin | TOOLS | TOOLS/BRIK-TOOLS-018_tools.dbadmin.cs | 无 | active |  |
+| BRIK-TOOLS-019 | tools.tscat | TOOLS | TOOLS/BRIK-TOOLS-019_tools.tscat.cs | 无 | active |  |
+| BRIK-TS-001 | ts.check | TS | TS/BRIK-TS-001_ts.check.cs | 无 | active |  |
+| BRIK-TS-002 | ts.list | TS | TS/BRIK-TS-002_ts.list.cs | 无 | active |  |
+| BRIK-TS-003 | ts.read | TS | TS/BRIK-TS-003_ts.read.cs | 无 | active |  |
+| BRIK-TS-004 | ts.findRef | TS | TS/BRIK-TS-004_ts.findRef.cs | 无 | active |  |
+| BRIK-TS-005 | ts.patch | TS | TS/BRIK-TS-005_ts.patch.cs | 无 | active |  |
 | BRIK-VISION-001 | vision.analyze | VISION | VISION/BRIK-VISION-001_vision.analyze.cs | 无 | active |  |
 | BRIK-VISION-002 | image.inject | VISION | VISION/BRIK-VISION-002_image.inject.cs | 无 | active |  |
 | BRIK-WEB-001 | web.search | WEB | WEB/BRIK-WEB-001_web.search.cs | 无 | active |  |
@@ -92,4 +108,4 @@
 
 ---
 
-_版本：v3.3 | 2026-10-30 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_
+_版本：v3.3 | 2026-11-02 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_

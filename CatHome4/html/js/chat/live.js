@@ -42,6 +42,10 @@ function liveApply(seg) {
     var type = seg ? (seg.type || 'empty') : 'empty';
     var ctx = seg ? ((seg.context === undefined || seg.context === null) ? '' : String(seg.context)) : '';
     liveMarkType(type);
+    // 流式工具计时锚清零（A263）——离开 toolrun 面（空 / 其它类型）即让下一轮同名同序工具重新起算
+    if (type !== 'toolrun' && typeof toolRunForgetAll === 'function') {
+        toolRunForgetAll();
+    }
     if (streamWanted(type)) {
         try {
             streamApply(box, type, ctx);

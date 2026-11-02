@@ -7,22 +7,26 @@ using System.Net.Sockets;
 using System.Text.Json;
 using Mau.Runtime;
 using CatHome4.Http;
-using CatHome4.QQ;
 using CatHome4.Contracts;
 using Mau.Providers;
 using CH4;
+using static CatHome4.Admin.AdminService;
 
 namespace CatHome4.Admin
 {
     /// <summary>
-    /// Program 多猫管理面分部——CatEntry 注册表 + PortAllocator + cat.* 指令族 + cat.cfg 持久化（P9.3b）。
+    /// 猫宿主管理域（A285：自 AdminService 抽出）——CatEntry 注册表 + PortAllocator + cat.* 指令族 + cat.cfg 持久化（P9.3b）。
     /// 两态：静默（持久化未运行）/ 启动（运行 + 端口监听）；删除 = 本地销毁 + 目录删除。
     /// 线程模型：处理函数仅主线程调用（HTTP 线程经 P9.3c PumpCatQueues 入队泵消费）。
     /// </summary>
-    internal static partial class AdminService
+    internal static partial class CatHostService
     {
-        /// <summary>数据根——Bootstrap 赋值（P9.3c 静态化条目提前落地一行；cat.cfg/前文路径构造依赖）</summary>
-        internal static string _dataRoot;
+        /// <summary>端口段——经 AdminService 注入面转发（同名单字段遮蔽 using static 导入，消除与类型名的二义）。</summary>
+        private static PortBand PortBand
+        {
+            get { return AdminService.PortBand; }
+        }
+
         /// <summary>
         /// info 系返回体序列化选项——缩进 + 中文直显（LLM 可读优先）。
         /// 消费面：info 内置工具（Program.BuildEnvInfo）与 cat.info（本类 HandleCatInfo）——单一定义两处共用。
@@ -36,8 +40,6 @@ namespace CatHome4.Admin
         /// <summary>多猫注册表——cat.* 指令族管理面（默认 majordomo 会话不在此列——主端口对话区专属）</summary>
         private static readonly List<CatEntry> _cats = new List<CatEntry>();
 
-        /// <summary>cat.* 指令队列——HTTP 线程投递 / 主线程泵消费（ThreadGuard：注册表仅主线程触碰）</summary>
-        internal static readonly ConcurrentQueue<string> _catQueue = new ConcurrentQueue<string>();
 
         /// <summary>majordomo 独立对话端口 HttpHost——serveChatPage=true（F2.2 方案 A：与多猫同构；主端口保留管理面板）</summary>
         private static HttpHost _majorHost;
@@ -76,7 +78,9 @@ namespace CatHome4.Admin
             for (int i = 0; i < _cats.Count; i = i + 1)
             {
                 CatEntry cat = _cats[i];
-                if (cat.Session != null && cat.Session.ViewHasPendingContent)
+                // A297——只统计运行中的猫：已停猫的会话所属 HttpHost 已 Stop，帧泵不存在，
+                // 其待推标记永远无人取走；纳入聚合即让重启闸门永久置位（判例 2026-11-02）。
+                if (cat.Running && cat.Session != null && cat.Session.ViewHasPendingContent)
                 {
                     return true;
                 }
@@ -155,17 +159,12 @@ namespace CatHome4.Admin
             get { return _majorPort; }
         }
 
-        /// <summary>majordomo Chat 指令入队面——HTTP 线程投递 / 主线程泵消费（F2.2 DispatchCommandForMajor）</summary>
-        private static readonly ConcurrentQueue<string> _majorPendingChat = new ConcurrentQueue<string>();
+        /// <summary>majordomo 独立对话端口宿主是否在监听——详情/状态面判运行态用（_majorHost 私有，不对外开放句柄）。</summary>
+        internal static bool MajorHostRunning
+        {
+            get { return _majorHost != null; }
+        }
 
-        /// <summary>majordomo Note 指令入队面——HTTP 线程投递 / 主线程泵消费（F2.2）</summary>
-        private static readonly ConcurrentQueue<string> _majorPendingNote = new ConcurrentQueue<string>();
-
-        /// <summary>majordomo 会话指令入队面——HTTP 线程投递 / 主线程泵消费（P6b session.rollback/fork）</summary>
-        private static readonly ConcurrentQueue<string> _majorPendingSessionCmd = new ConcurrentQueue<string>();
-
-        /// <summary>majordomo session.new 请求标志——HTTP 线程置位/主线程泵消费（F2.2 同多猫 M2d）</summary>
-        private static bool _majorSessionNewRequested;
 
         /// <summary>
         /// 解析猫启用根条目——cat.cfg enabledRoots → 全局池子集（空/缺失=空白名单——仅常驻 workspace 可用；失败默认收紧，不回落全量）。
@@ -186,15 +185,6 @@ namespace CatHome4.Admin
             if (cfg != null && cfg.EnabledRoots != null && cfg.EnabledRoots.Length > 0)
             {
                 enabled = cfg.EnabledRoots;
-            }
-            else
-            {
-                // 未声明（新猫 cat.cfg 落 null）——继承新猫默认模板的目录白名单（模板空=空白名单）
-                CatDefaultCfgData tpl = LoadCatDefaultCfg();
-                if (tpl != null && tpl.DefaultEnabledRoots != null && tpl.DefaultEnabledRoots.Length > 0)
-                {
-                    enabled = tpl.DefaultEnabledRoots;
-                }
             }
             List<WorkspaceConfig.RootEntry> entries = new List<WorkspaceConfig.RootEntry>();
             for (int i = 0; i < ws.Roots.Length; i++)
@@ -250,12 +240,26 @@ namespace CatHome4.Admin
                 rootIds.Add(entries[i].Id);
             }
             LogStore.Add("CatHome4", 1, "cat.roots | cat=" + catKey + " | 来源=" + rootSource + " | 声明=" + rootDeclared.ToString() + " | 实际=" + entries.Length.ToString() + " | [" + string.Join(",", rootIds) + "]", "CHAT");
+            // [段2] 库级授权登记（A277）——默认猫全放；其余按 cat.cfg dbLibs 白名单（空集合 = 无库权限）
+            bool allDbLibs = string.Equals(catKey, "majordomo", StringComparison.OrdinalIgnoreCase);
+            string[] dbLibs = new string[0];
+            if (catCfg != null && catCfg.DbLibs != null)
+            {
+                dbLibs = catCfg.DbLibs;
+            }
+            DbAccessPolicy.Register(catKey, allDbLibs, dbLibs);
+            string allFlag = "0";
+            if (allDbLibs)
+            {
+                allFlag = "1";
+            }
+            LogStore.Add("CatHome4", 1, "cat.dblibs | cat=" + catKey + " | allLibs=" + allFlag + " | 声明=" + dbLibs.Length.ToString() + " | [" + string.Join(",", dbLibs) + "]", "CHAT");
             if (entries.Length == 0)
             {
                 ToolCatContext.UpdateCatFileSystem(catKey, null, "");
                 return;
             }
-            string recycleRoot = Path.Combine(Path.Combine(WorkspaceRecycleRootFor(entries, _dataRoot), "tools"), "CatTemp", "fs_recycle");
+            string recycleRoot = Path.Combine(WorkspaceRecycleRootFor(entries, _dataRoot), "CatTemp", "fs_recycle");
             ToolCatContext.UpdateCatFileSystem(catKey, entries, recycleRoot);
         }
 
@@ -330,6 +334,10 @@ namespace CatHome4.Admin
                 {
                     return "cat.pause | 未找到猫: " + rest;
                 }
+                if (cat.Session == null)
+                {
+                    return "cat.pause | 猫已停机（无会话）: " + cat.DisplayName;
+                }
                 cat.Session.Pause();
                 return "cat.pause | 已投递中止: " + cat.DisplayName;
             }
@@ -349,6 +357,10 @@ namespace CatHome4.Admin
                 if (cat == null)
                 {
                     return "cat.continue | 未找到猫: " + rest;
+                }
+                if (cat.Session == null)
+                {
+                    return "cat.continue | 猫已停机（无会话）: " + cat.DisplayName;
                 }
                 cat.Session.Continue();
                 return "cat.continue | 已投递继续: " + cat.DisplayName;
@@ -377,12 +389,17 @@ namespace CatHome4.Admin
                 {
                     return "cat.chat | 未找到猫: " + key;
                 }
+                if (cat.Session == null)
+                {
+                    return "cat.chat | 猫已停机（无会话）: " + cat.DisplayName;
+                }
                 cat.Session.PostUserMessage(content);
                 return "cat.chat | 已投递: " + cat.DisplayName;
             }
             if (line.StartsWith("cat.new-session", StringComparison.Ordinal))
             {
-                // 猫详情弹层预设 /new——按猫请求新会话（等价该猫前端 session.new；HTTP 线程置位/主线程泵消费）
+                // 猫详情弹层预设 /new——按猫请求新会话（等价该猫端口前端 session.new）
+                // A281 统一输入分发：session.new 路由自带 WaitIdle 语义——目标忙则入该目标队列，下帧重试
                 string rest = line.Substring(15).Trim();
                 if (rest.Length == 0)
                 {
@@ -390,7 +407,7 @@ namespace CatHome4.Admin
                 }
                 if (string.Equals(rest, "majordomo", StringComparison.Ordinal))
                 {
-                    _majorSessionNewRequested = true;
+                    DispatchInput(MajorInputTarget(), "session.new");
                     return "cat.new-session | 已请求新会话: majordomo";
                 }
                 CatEntry cat = FindCat(rest);
@@ -398,7 +415,11 @@ namespace CatHome4.Admin
                 {
                     return "cat.new-session | 未找到猫: " + rest;
                 }
-                cat.SessionNewRequested = true;
+                if (cat.Session == null)
+                {
+                    return "cat.new-session | 猫已停机（无会话）: " + cat.DisplayName;
+                }
+                DispatchInput(CatInputTarget(cat), "session.new");
                 return "cat.new-session | 已请求新会话: " + cat.DisplayName;
             }
             if (line.StartsWith("session.rollback ", StringComparison.Ordinal) || line.StartsWith("session.fork ", StringComparison.Ordinal))
@@ -506,9 +527,8 @@ namespace CatHome4.Admin
             sb.AppendLine("  toolNames=" + cfg.ToolNames);
             sb.AppendLine("  injectList=" + JoinArray(cfg.InjectList));
             sb.AppendLine("  packs=" + JoinArray(cfg.Packs));
-            sb.AppendLine("  qqbotId=" + cfg.QqBotId);
-            sb.AppendLine("  qqbotEnable=" + (cfg.QqBotEnable ? "true" : "false"));
-            sb.Append("  enabledRoots=" + JoinArray(cfg.EnabledRoots));
+            sb.AppendLine("  enabledRoots=" + JoinArray(cfg.EnabledRoots));
+            sb.Append("  dbLibs=" + JoinArray(cfg.DbLibs));
             return sb.ToString();
         }
         /// <summary>
@@ -695,45 +715,12 @@ namespace CatHome4.Admin
                 cfg.Packs = packKeys;
                 applied = "packs=" + JoinArray(packKeys);
             }
-            else if (field == "qqbotId")
+            else if (field == "dbLibs")
             {
-                if (value.Length == 0)
-                {
-                    cfg.QqBotId = "";
-                    applied = "qqbotId=（已清空）";
-                }
-                else
-                {
-                    Guid parsed;
-                    if (!Guid.TryParse(value, out parsed) || parsed == Guid.Empty)
-                    {
-                        return "cat.cfg.set | qqbotId 非法: " + value;
-                    }
-                    string boundBy = FindQqBotBindingOwner(id, value);
-                    if (boundBy.Length > 0)
-                    {
-                        return "cat.cfg.set | 该 QQ Bot 已绑定猫「" + boundBy + "」——一只 Bot 只能绑一只猫";
-                    }
-                    cfg.QqBotId = value;
-                    applied = "qqbotId=" + value;
-                }
-            }
-            else if (field == "qqbotEnable")
-            {
-                if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
-                {
-                    cfg.QqBotEnable = true;
-                    applied = "qqbotEnable=true";
-                }
-                else if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
-                {
-                    cfg.QqBotEnable = false;
-                    applied = "qqbotEnable=false";
-                }
-                else
-                {
-                    return "cat.cfg.set | qqbotEnable 非法值: " + value + "（true/false）";
-                }
+                // A266——库白名单（库 ID 清单；空=清空授权；库存在性校验后置到工具面）
+                string[] libIds = SplitList(value);
+                cfg.DbLibs = libIds;
+                applied = "dbLibs=" + JoinArray(libIds);
             }
             else if (field == "userInjectIdleOnly")
             {
@@ -793,17 +780,28 @@ namespace CatHome4.Admin
             }
             else if (field == "enabledRoots")
             {
-                string[] roots = ValidateEnabledRoots(SplitList(value));
+                string[] removedRoots;
+                bool poolUnavailable;
+                string[] roots = ValidateEnabledRoots(SplitList(value), out removedRoots, out poolUnavailable);
                 cfg.EnabledRoots = roots;
                 applied = "enabledRoots=" + JoinArray(roots);
+                // A261 剔除出声——被剔根 id 随回执带回（调用方可见；明细已记日志，不静默）
+                if (removedRoots.Length > 0)
+                {
+                    applied = applied + "｜⚠️ 已剔除池外根 id " + removedRoots.Length.ToString() + " 个：" + JoinArray(removedRoots);
+                }
+                if (poolUnavailable)
+                {
+                    applied = applied + "｜⚠️ 全局根池不可用——白名单按空处理（仅常驻根可用）";
+                }
             }
             else
             {
-                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/qqbotId/qqbotEnable/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId）";
+                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId）";
             }
             // [段2] 全量写回 + 生效入队（与端点同源：写后 catcfg.apply 主线程泵消费）
             SaveCatCfgData(id, cfg);
-            _catQueue.Enqueue("catcfg.apply " + id);
+            PostInput(MainInputTarget(), "catcfg.apply " + id);
             // [段3] 落盘实况——写后读回对照（非"已提交"）
             CatCfgData after = LoadCatCfg(path);
             if (after == null)
@@ -823,90 +821,6 @@ namespace CatHome4.Admin
             }
             sb.Append(FormatCatCfg(id, after));
             return sb.ToString();
-        }
-
-        /// <summary>
-        /// 泵多猫队列——主线程消费（P9.3c 主循环 + DriveUntilIdle 接入）。
-        /// 顺序保证：cat.* 指令泵在前（delete 可能移除注册表条目）→ 再遍历剩余猫的 PendingChat。
-        /// </summary>
-        internal static void PumpCatQueues()
-        {
-            // [段1] cat.* 指令泵消费（HTTP 线程投递 / 主线程执行）
-            string catCmd;
-            while (_catQueue.TryDequeue(out catCmd))
-            {
-                LogStore.Add("CatHome4", 1, "cat 指令: " + HandleCatCommand(catCmd), "CMD", "", "", 200);
-            }
-            // [段2] 每猫 Chat 指令泵消费（每猫 HttpHost HTTP 线程投递 / 主线程投递会话）
-            for (int i = 0; i < _cats.Count; i++)
-            {
-                CatEntry cat = _cats[i];
-                // M2d session.new 按猫重注入——忙时保留标志下帧重判（同默认猫排队语义）
-                if (cat.SessionNewRequested)
-                {
-                    if (cat.Session.IsIdle)
-                    {
-                        cat.SessionNewRequested = false;
-                        _chatBridge.HandleSessionNew(cat.Session, cat.Persona, cat.InjectList, cat.ToolSpecs);
-                    }
-                }
-                string job;
-                while (cat.PendingChat.TryDequeue(out job))
-                {
-                    cat.Session.PostUserMessage(job);
-                }
-                // M4c Note 指令泵消费（HTTP 线程投递 / 主线程执行）
-                string noteText;
-                while (cat.PendingNote.TryDequeue(out noteText))
-                {
-                    if (noteText == "\u0001start")
-                    {
-                        cat.Session.NoteStart();
-                    }
-                    else
-                    {
-                        cat.Session.NoteAdd(noteText);
-                    }
-                }
-                // P6b 会话指令泵消费（session.rollback/fork——HTTP 线程投递 / 主线程执行）
-                string scmd;
-                while (cat.PendingSessionCmd.TryDequeue(out scmd))
-                {
-                    LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(cat.Session, scmd), "CMD", "", "", 200);
-                }
-            }
-            // [段3] majordomo 独立对话端口指令泵（F2.2——独立端口 serve chat.html；HTTP 线程投递 / 主线程直投 DefaultSession）
-            if (_majorSessionNewRequested)
-            {
-                if (_chatBridge.DefaultSession.IsIdle)
-                {
-                    _majorSessionNewRequested = false;
-                    _chatBridge.HandleSessionNew(_chatBridge.DefaultSession, _chatBridge.DefaultPersona, _chatBridge.DefaultInjectList, _chatBridge.DefaultToolSpecs);
-                }
-            }
-            string majorJob;
-            while (_majorPendingChat.TryDequeue(out majorJob))
-            {
-                _chatBridge.DefaultSession.PostUserMessage(majorJob);
-            }
-            string majorNote;
-            while (_majorPendingNote.TryDequeue(out majorNote))
-            {
-                if (majorNote == "\u0001start")
-                {
-                    _chatBridge.DefaultSession.NoteStart();
-                }
-                else
-                {
-                    _chatBridge.DefaultSession.NoteAdd(majorNote);
-                }
-            }
-            // P6b majordomo 会话指令泵消费（session.rollback/fork——HTTP 线程投递 / 主线程执行）
-            string mcmd;
-            while (_majorPendingSessionCmd.TryDequeue(out mcmd))
-            {
-                LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(_chatBridge.DefaultSession, mcmd), "CMD", "", "", 200);
-            }
         }
 
         /// <summary>
@@ -932,6 +846,7 @@ namespace CatHome4.Admin
             LogStore.Add("CatHome4", 1, "已创建猫「" + name + "」（id " + id + "），静默待启动", "CHAT");
             return "cat.new | id=" + id + " | name=" + name + " | 静默态（cat.start 启动）";
         }
+
         /// <summary>
         /// 默认猫名生成——「默认小猫」占用时依次「默认小猫(1)」「默认小猫(2)」…（注册表内已用名比对，大小写不敏感）。
         /// </summary>
@@ -1002,7 +917,7 @@ namespace CatHome4.Admin
 
         /// <summary>
         /// session.fork——从源猫节点分支新建独立 Cat（P6b：继承配置 + 播种节点前前文；静默态待启动）。
-        /// 继承：persona/toolNames/injectList/apiConfigId/enabledRoots/qqbotId + 节点前前文；qqbot 转发默认关闭（enable=false——防双猫抢 Bot）；不继承：运行态。
+        /// 继承：persona/toolNames/injectList/apiConfigId/enabledRoots + 节点前前文；不继承：运行态。
         /// 配置源：多猫 = CatEntry 运行时实体（catcfg.apply 后真相）；majordomo = sessions/majordomo/cat.cfg（source.Id 是 Ticks——判例 fork 配置全空）。
         /// </summary>
         /// <param name="source">源会话（发起 fork 的猫）</param>
@@ -1041,14 +956,12 @@ namespace CatHome4.Admin
             CatEntry srcCat = FindCat(source.Id);
             if (srcCat != null)
             {
-                // 多猫——运行时实体字段（ApiConfigId/Persona/ToolNames/InjectList/QqBotId 继承）
+                // 多猫——运行时实体字段（ApiConfigId/Persona/ToolNames/InjectList 继承）
                 cfgData = new CatCfgData();
                 cfgData.ApiConfigId = srcCat.ApiConfigId == Guid.Empty ? "" : srcCat.ApiConfigId.ToString("D");
                 cfgData.Persona = srcCat.Persona;
                 cfgData.ToolNames = srcCat.ToolNames;
                 cfgData.InjectList = srcCat.InjectList;
-                cfgData.QqBotId = srcCat.QqBotId == Guid.Empty ? "" : srcCat.QqBotId.ToString("D");
-                cfgData.QqBotEnable = srcCat.QqBotEnable;
                 cfgData.Type = srcCat.Type;
                 // EnabledRoots CatEntry 不持有——从源磁盘 cfg 补读
                 CatCfgData srcDisk = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", srcCat.Id, "cat.cfg"));
@@ -1070,8 +983,6 @@ namespace CatHome4.Admin
             cfgData.DisplayName = name;
             cfgData.Running = false;
             cfgData.Port = 0;
-            // qqbotId 继承保留（防双猫抢 Bot 靠 enable=false——莎拍板：复制配置、默认不开启转发）
-            cfgData.QqBotEnable = false;
             SaveCatCfgData(id, cfgData);
             // [段3] 创建 + 播种 + 注册（CreateCatEntry 读新 cfg——克隆配置生效；视图面与会话元数据面随前文播种）
             CatEntry cat = CreateCatEntry(id, name, seed, source, msgIndex);
@@ -1163,7 +1074,7 @@ namespace CatHome4.Admin
         /// <param name="special">是否主干特殊会话（禁停禁删）</param>
         /// <param name="session">会话实体（可空）</param>
         /// <returns>状态条目字典</returns>
-        private static Dictionary<string, object> BuildCatInfoEntry(string id, string name, bool running, int port, bool special, ChatSession session, string type)
+        internal static Dictionary<string, object> BuildCatInfoEntry(string id, string name, bool running, int port, bool special, ChatSession session, string type)
         {
             Dictionary<string, object> entry = new Dictionary<string, object>();
             entry["id"] = id;
@@ -1200,6 +1111,17 @@ namespace CatHome4.Admin
             if (cat.Running)
             {
                 return "cat.start | 已在运行: " + cat.DisplayName + " :" + cat.Port.ToString();
+            }
+            // A296 真停——会话随停机释放，启动时按磁盘三面重建（前文 jsonl / 视图 view.jsonl / 元数据 session.json）
+            if (cat.Session == null)
+            {
+                CatEntry rebuilt = CreateCatEntry(cat.Id, cat.DisplayName, null);
+                if (rebuilt == null || rebuilt.Session == null)
+                {
+                    return "cat.start | 会话重建失败: " + cat.DisplayName;
+                }
+                cat.Session = rebuilt.Session;
+                LogStore.Add("CatHome4", 1, "猫「" + cat.DisplayName + "」会话已按磁盘重建（前文 / 视图 / 元数据）", "CHAT");
             }
             int port = AllocatePort(PortBand.FamilyFrom);
             if (port < 0)
@@ -1252,6 +1174,11 @@ namespace CatHome4.Admin
             {
                 return "cat.stop | 已是静默态: " + cat.DisplayName;
             }
+            // A296 真停——忙时拒绝：在途轮次的内存态尚未物化，强制释放即丢在途回执
+            if (cat.Session != null && !cat.Session.IsIdle)
+            {
+                return "cat.stop | 忙——本轮未结束，请稍后再试: " + cat.DisplayName;
+            }
             try
             {
                 cat.Host.Stop();
@@ -1264,8 +1191,17 @@ namespace CatHome4.Admin
             cat.Running = false;
             cat.Port = 0;
             SetCatRuntime(cat.Id, false, 0);
-            LogStore.Add("CatHome4", 1, "已停止猫「" + cat.DisplayName + "」", "CHAT");
-            return "cat.stop | " + cat.DisplayName + " | 已停止";
+            // A296 真停——会话内存释放（磁盘三面已物化：前文 jsonl / 视图 view.jsonl / 元数据 session.json）
+            if (cat.Session != null)
+            {
+                // A297——释放前复位待推标记：本猫 HttpHost 已 Stop，帧泵不再取帧，
+                // 不复位则全局重启闸门 AnyViewPending 被本猫永久阻塞
+                cat.Session.ResetViewPending();
+                _chatBridge.RemoveSession(cat.Session);
+                cat.Session = null;
+            }
+            LogStore.Add("CatHome4", 1, "已停止猫「" + cat.DisplayName + "」（会话内存已释放）", "CHAT");
+            return "cat.stop | " + cat.DisplayName + " | 已停止（会话内存已释放）";
         }
 
         /// <summary>
@@ -1354,21 +1290,6 @@ namespace CatHome4.Admin
                 }
                 ConfigStore globalConfig = null;
                 DataBox.TryResolve<ConfigStore>(out globalConfig);
-                // R2.3 每猫 qqbot 配置——qqbotId/qqbotEnable（cfg 缺失=未绑定/禁用）
-                Guid qqBotId = Guid.Empty;
-                bool qqBotEnable = false;
-                if (cfgData != null)
-                {
-                    if (cfgData.QqBotId != null && cfgData.QqBotId.Length > 0)
-                    {
-                        Guid parsed;
-                        if (Guid.TryParse(cfgData.QqBotId, out parsed) && parsed != Guid.Empty)
-                        {
-                            qqBotId = parsed;
-                        }
-                    }
-                    qqBotEnable = cfgData.QqBotEnable;
-                }
                 // [段2] 每猫配置四字段——persona/toolNames/injectList/packs（M2/R4；cfg 缺失=新猫走全局默认模板继承）
                 string persona = "";
                 string type = "";
@@ -1470,7 +1391,7 @@ namespace CatHome4.Admin
                 session.AttachFullContext(Path.Combine(_dataRoot, "Data", "sessions_ctx"));
                 // M4e 猫级白名单——多猫启用根（cat.cfg enabledRoots；缺省全量）+ 工具执行猫上下文
                 session.SetCatKey(id);
-                AdminService.ApplyCatRoots(id);
+                ApplyCatRoots(id);
                 session.AttachEnvInfo(() => BuildEnvInfoProvider());
                 session.AttachRoundNotify(NotifyBalloon);
                 session.SetUserInjectIdleOnly(userInjectIdleOnly);
@@ -1496,9 +1417,6 @@ namespace CatHome4.Admin
                 cat.Port = 0;
                 cat.Session = session;
                 cat.Host = null;
-                cat.PendingChat = new ConcurrentQueue<string>();
-                cat.PendingNote = new ConcurrentQueue<string>();
-                cat.PendingSessionCmd = new ConcurrentQueue<string>();
                 cat.ApiConfigId = apiConfigId;
                 cat.ApiConfig = apiConfig;
                 cat.ApiRole = apiRole;
@@ -1529,8 +1447,6 @@ namespace CatHome4.Admin
                     toolActual = catSpecs.Length;
                 }
                 LogStore.Add("CatHome4", 1, "cat.tools | cat=" + id + " | 来源=" + toolSource + " | 声明=" + toolDeclared.ToString() + " | 实际=" + toolActual.ToString(), "CHAT");
-                cat.QqBotId = qqBotId;
-                cat.QqBotEnable = qqBotEnable;
                 LogStore.Add("CatHome4", 1, "猫「" + displayName + "」绑定 LLM 配置：" + (apiConfigId == Guid.Empty ? "默认端点" : apiConfigId.ToString("D")) + "，模型 " + apiConfig.DefaultModel, "CHAT");
                 return cat;
             }
@@ -1572,167 +1488,6 @@ namespace CatHome4.Admin
             }
             return null;
         }
-
-        /// <summary>
-        /// 收集所有绑定 qqbot 的猫——默认猫（majordomo）+ 多猫（R2.3.5 输出转发轮询面；A58 的 1:1 约束在 Bot 侧——每猫各自的 Bot）。
-        /// </summary>
-        /// <returns>全部绑定目标（QqBotId 非空）</returns>
-        internal static List<QqTarget> CollectAllQqTargets()
-        {
-            List<QqTarget> result = new List<QqTarget>();
-            if (_chatBridge.DefaultQqBotId != Guid.Empty)
-            {
-                ChatSession captured = _chatBridge.DefaultSession;
-                result.Add(new QqTarget
-                {
-                    Key = "majordomo",
-                    DisplayName = "majordomo",
-                    QqBotId = _chatBridge.DefaultQqBotId,
-                    Enable = _chatBridge.DefaultQqBotEnable,
-                    Inject = delegate (string s, string origin) { return captured.PostUserMessage(s, "user", "", origin); },
-                    GetViewItems = delegate () { return ConvertQqViewItems(captured.ViewStore.GetBlocks()); },
-                    GetBlockFingerprint = delegate (int index) { return ComputeBlockFingerprint(captured.ViewStore.GetBlocks(), index); },
-                    ParseImages = ParseQqImages,
-                    IsIdle = delegate () { return captured.IsIdle; },
-                    IsTimebackActive = delegate () { return captured.TimebackActive; },
-                    NewSession = delegate ()
-                    {
-                        _majorSessionNewRequested = true;
-                        return "新会话已请求（注入执行中）\n" + _chatBridge.BuildInjectSummary(_chatBridge.DefaultPersona, _chatBridge.DefaultInjectList, _chatBridge.DefaultToolSpecs);
-                    },
-                    GetInfo = delegate () { return captured.GetInfoText(); }
-                });
-            }
-            for (int i = 0; i < _cats.Count; i++)
-            {
-                CatEntry cat = _cats[i];
-                if (cat.QqBotId != Guid.Empty)
-                {
-                    CatEntry captured = cat;
-                    result.Add(new QqTarget
-                    {
-                        Key = cat.Id,
-                        DisplayName = cat.DisplayName,
-                        QqBotId = cat.QqBotId,
-                        Enable = cat.QqBotEnable,
-                        Inject = delegate (string s, string origin) { return captured.Session.PostUserMessage(s, "user", "", origin); },
-                        GetViewItems = delegate () { return ConvertQqViewItems(captured.Session.ViewStore.GetBlocks()); },
-                        GetBlockFingerprint = delegate (int index) { return ComputeBlockFingerprint(captured.Session.ViewStore.GetBlocks(), index); },
-                        ParseImages = ParseQqImages,
-                        IsIdle = delegate () { return captured.Session.IsIdle; },
-                        IsTimebackActive = delegate () { return captured.Session.TimebackActive; },
-                        NewSession = delegate ()
-                        {
-                            captured.SessionNewRequested = true;
-                            return "新会话已请求（注入执行中）\n" + _chatBridge.BuildInjectSummary(captured.Persona, captured.InjectList, captured.ToolSpecs);
-                        },
-                        GetInfo = delegate () { return captured.Session.GetInfoText(); }
-                    });
-                }
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// 取绑定指定 qqbot 的猫（A58 1:1——一个 Bot 唯一对应一只猫：重复配置取首个 + L2 留痕）。
-        /// </summary>
-        /// <param name="qqBotId">qqbot 配置身份</param>
-        /// <returns>绑定目标列表（≤1 项；空=未绑定任何猫）</returns>
-        internal static List<QqTarget> CollectQqTargets(Guid qqBotId)
-        {
-            List<QqTarget> result = new List<QqTarget>();
-            List<QqTarget> all = CollectAllQqTargets();
-            for (int i = 0; i < all.Count; i = i + 1)
-            {
-                if (all[i].QqBotId != qqBotId)
-                {
-                    continue;
-                }
-                if (result.Count == 0)
-                {
-                    result.Add(all[i]);
-                    continue;
-                }
-                // 1:1 约束外（旧数据 / 手工改 cat.cfg）——取首个 + L2 留痕（可诊断）
-                LogStore.Add("QQBot", 2, "同一 Bot 被多猫绑定（取首个） | " + qqBotId.ToString("D") + " | 首个 " + result[0].Key + " · 忽略 " + all[i].Key, "QQBOT");
-                break;
-            }
-            return result;
-        }
-
-        /// <summary>
-        /// qqbot 绑定占用者查询（A58 1:1）——返回除 catKey 自身外绑定了该 Bot 的猫显示名（空=无人占用）。
-        /// 两处消费：保存配置时查重（冲突显式拒绝）· 配置读面标注（前端禁用已绑他猫的 Bot）。
-        /// </summary>
-        /// <param name="catKey">当前猫寻址键（majordomo=默认猫；自身不计入占用）</param>
-        /// <param name="qqbotId">Bot 身份（Guid 文本）</param>
-        /// <returns>占用者显示名（空串=无占用）</returns>
-        internal static string FindQqBotBindingOwner(string catKey, string qqbotId)
-        {
-            Guid target;
-            if (!Guid.TryParse(qqbotId, out target) || target == Guid.Empty)
-            {
-                return "";
-            }
-            if (catKey != "majordomo" && _chatBridge.DefaultQqBotId == target)
-            {
-                return "majordomo";
-            }
-            for (int i = 0; i < _cats.Count; i = i + 1)
-            {
-                CatEntry cat = _cats[i];
-                if (cat.Id == catKey)
-                {
-                    continue;
-                }
-                if (cat.QqBotId == target)
-                {
-                    return cat.DisplayName;
-                }
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// QQBot 渠道说明串——info 环境信息消费（A58）：该猫已绑定且启用 qqbot 转发时给出文件发送用法；
-        /// 未绑定 / 未启用 → 空串（info 不显示任何 qqbot 相关内容）。
-        /// </summary>
-        /// <param name="catKey">猫 key（majordomo=默认猫）</param>
-        /// <returns>说明串（空=未接入 qqbot）</returns>
-        internal static string BuildCatQqBotInfo(string catKey)
-        {
-            if (catKey == null || catKey.Length == 0)
-            {
-                return "";
-            }
-            Guid botId;
-            bool enabled;
-            if (catKey == "majordomo")
-            {
-                botId = _chatBridge.DefaultQqBotId;
-                enabled = _chatBridge.DefaultQqBotEnable;
-            }
-            else
-            {
-                CatEntry cat = FindCat(catKey);
-                if (cat == null)
-                {
-                    return "";
-                }
-                botId = cat.QqBotId;
-                enabled = cat.QqBotEnable;
-            }
-            if (botId == Guid.Empty || !enabled)
-            {
-                return "";
-            }
-            string botName = ResolveQqBotDisplayName(botId);
-            if (botName.Length == 0)
-            {
-                botName = botId.ToString("D");
-            }
-            return botName + "：发本地文件=单独一行写 [QQBot发送文件:\"<真实绝对路径>\"]（≤10MB · 私聊/群聊）";
-        }
         /// <summary>
         /// 本地对话端点端口解析——info 环境信息消费（本猫实际监听端口）。
         /// majordomo = 独立对话端口；多猫 = 注册表运行态端口；未监听 / 未知 key = 0。
@@ -1762,188 +1517,11 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
-        /// Bot 显示名解析——Bot 池按身份查显示名（池内缺失 → 空串，调用方回退身份串）。
-        /// </summary>
-        /// <param name="botId">Bot 配置身份</param>
-        /// <returns>显示名（空=池内缺失）</returns>
-        internal static string ResolveQqBotDisplayName(Guid botId)
-        {
-            CH_QqBotConfigStore store = null;
-            DataBox.TryResolve<CH_QqBotConfigStore>(out store);
-            if (store == null)
-            {
-                return "";
-            }
-            CH_QqBotConfig cfg;
-            if (store.TryGet(botId, out cfg) && cfg != null && cfg.DisplayName != null)
-            {
-                return cfg.DisplayName;
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// 视图块 → QQ 转发项转换——窄 DTO（QQ 域消费 RenderType / Content / Done / Origin）。
-        /// text / gap_text 块提取 payload.text；user 块提取 payload.origin（QQ 注入的轮起点锚——转发面据此绑定来源与轮）。
-        /// </summary>
-        /// <param name="blocks">视图块数组</param>
-        /// <returns>QQ 转发项数组</returns>
-        private static QqViewItem[] ConvertQqViewItems(ViewBlock[] blocks)
-        {
-            if (blocks == null)
-            {
-                return new QqViewItem[0];
-            }
-            QqViewItem[] items = new QqViewItem[blocks.Length];
-            for (int i = 0; i < blocks.Length; i = i + 1)
-            {
-                ViewBlock b = blocks[i];
-                QqViewItem item = new QqViewItem();
-                item.RenderType = b.RenderType ?? "";
-                item.Content = "";
-                item.Done = "";
-                item.Origin = "";
-                if (item.RenderType == "text" || item.RenderType == "gap_text")
-                {
-                    item.Content = ExtractTextContent(b.Payload);
-                }
-                else if (item.RenderType == "roundsum")
-                {
-                    item.Done = ExtractRoundSumDone(b.Payload);
-                }
-                else if (item.RenderType == "user")
-                {
-                    item.Origin = ExtractOrigin(b.Payload);
-                }
-                items[i] = item;
-            }
-            return items;
-        }
-
-        /// <summary>
-        /// 提取 user 块的原注入来源标记——payload.origin（空 / 缺失 = 非 QQ 注入；防御式解析失败回落空串）。
-        /// </summary>
-        /// <param name="payloadJson">块载荷 JSON</param>
-        /// <returns>origin 值（空=非 QQ 注入）</returns>
-        private static string ExtractOrigin(string payloadJson)
-        {
-            if (payloadJson == null || payloadJson.Length == 0)
-            {
-                return "";
-            }
-            try
-            {
-                using (JsonDocument d = JsonUtil.ParseStrict(payloadJson))
-                {
-                    if (d.RootElement.TryGetProperty("origin", out JsonElement c) && c.ValueKind == JsonValueKind.String)
-                    {
-                        return c.GetString() ?? "";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "载荷 origin 提取失败（回落空）: " + ex.Message, "CHAT");
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// 块内容指纹——按块下标取（A111 续接锚点）：渲染类型 + 前文索引 + 载荷全文经 SHA256 取前 16 位十六进制。
-        /// 判据：与实际产物同源（同一 ViewBlock 载荷）——重建后前缀一致则指纹一致，块序变更后仍可精确定位。
-        /// </summary>
-        /// <param name="blocks">视图块数组</param>
-        /// <param name="index">块下标（越界返回空串）</param>
-        /// <returns>指纹（空=不可作锚）</returns>
-        private static string ComputeBlockFingerprint(ViewBlock[] blocks, int index)
-        {
-            if (blocks == null || index < 0 || index >= blocks.Length)
-            {
-                return "";
-            }
-            ViewBlock b = blocks[index];
-            string raw = (b.RenderType ?? "") + "\u0001" + b.MsgIndex.ToString() + "\u0001" + (b.Payload ?? "");
-            byte[] hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            for (int i = 0; i < 8; i = i + 1)
-            {
-                sb.Append(hash[i].ToString("x2"));
-            }
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// 提取 text 块内容——payload JSON 的 text 字段（A165 v2 键名统一；防御式解析失败返回空串）。
-        /// </summary>
-        /// <param name="payloadJson">块载荷 JSON</param>
-        /// <returns>内容文本</returns>
-        private static string ExtractTextContent(string payloadJson)
-        {
-            if (payloadJson == null || payloadJson.Length == 0)
-            {
-                return "";
-            }
-            try
-            {
-                using (JsonDocument d = JsonUtil.ParseStrict(payloadJson))
-                {
-                    if (d.RootElement.TryGetProperty("text", out JsonElement c) && c.ValueKind == JsonValueKind.String)
-                    {
-                        return c.GetString() ?? "";
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "载荷 text 提取失败（回落空）: " + ex.Message, "CHAT");
-            }
-            return "";
-        }
-
-        /// <summary>
-        /// 提取 roundsum 块的 done 字段——本轮结束语义（tool=工具主动 done / stream=流式自然收尾）。
-        /// 缺失或解析失败回退 stream（保守按自然收尾：来源照常出队消费，不误留）。
-        /// </summary>
-        /// <param name="payloadJson">roundsum 载荷 JSON（{"type":"roundsum","data":{...,"done":"..."}}）</param>
-        /// <returns>done 值（tool / stream）</returns>
-        private static string ExtractRoundSumDone(string payloadJson)
-        {
-            if (payloadJson == null || payloadJson.Length == 0)
-            {
-                return "stream";
-            }
-            try
-            {
-                using (JsonDocument d = JsonUtil.ParseStrict(payloadJson))
-                {
-                    JsonElement data;
-                    if (d.RootElement.TryGetProperty("data", out data) && data.ValueKind == JsonValueKind.Object)
-                    {
-                        JsonElement done;
-                        if (data.TryGetProperty("done", out done) && done.ValueKind == JsonValueKind.String)
-                        {
-                            string got = done.GetString();
-                            if (got != null && got.Length > 0)
-                            {
-                                return got;
-                            }
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "roundsum done 提取失败（按 stream 处理）: " + ex.Message, "CHAT");
-            }
-            return "stream";
-        }
-
-        /// <summary>
         /// 猫寻址——id 精确 / 显示名精确 / id 前缀唯一（歧义返回 null 要求更精确）。
         /// </summary>
         /// <param name="key">寻址键</param>
         /// <returns>猫实体；未找到/歧义 null</returns>
-        private static CatEntry FindCat(string key)
+        internal static CatEntry FindCat(string key)
         {
             if (key == null || key.Length == 0)
             {
@@ -2133,7 +1711,7 @@ namespace CatHome4.Admin
                 FrontendTestPort = PortBand.FrontendTestPort,
                 SessionId = cat.Session.Id,
                 SnapshotBuilder = BuildSnapshotJson,
-                Dispatcher = (string line) => DispatchCommandForCat(cat, line),
+                Dispatcher = (string line) => DispatchInput(CatInputTarget(cat), line),
                 EnvelopeBuilder = MakeChatEnvelopeBuilder(cat.Session),
                 FrameBuilder = null,
                 ContextBuilder = (int max) => _chatBridge.BuildContextView(cat.Session, max),
@@ -2170,219 +1748,56 @@ namespace CatHome4.Admin
             if (port < 0)
             {
                 LogStore.Add("CatHome4", 2, "majordomo 独立端口启动失败：端口段 " + PortBand.FamilyFrom.ToString() + "-" + PortBand.FamilyTo.ToString() + " 全占用", "CHAT");
+                StartupDegradation.Report("MAJOR_PORT_EXHAUSTED", StartupDegradation.KindEnv, "默认猫对话页",
+                    StartupDegradation.StateUnavailable,
+                    "端口段 " + PortBand.FamilyFrom.ToString() + "-" + PortBand.FamilyTo.ToString() + " 全占用",
+                    "关闭占用端口的进程后重启", "S6");
                 return false;
             }
-            HttpHost host = HttpHost.Start(new HttpHostOptions
+            HttpHost host;
+            try
             {
-                Port = port,
-                FrontendTestPort = PortBand.FrontendTestPort,
-                SessionId = _chatBridge.DefaultSession.Id,
-                SnapshotBuilder = BuildSnapshotJson,
-                Dispatcher = (string line) => DispatchCommandForMajor(line),
-                EnvelopeBuilder = MakeChatEnvelopeBuilder(_chatBridge.DefaultSession),
-                FrameBuilder = null,
-                ContextBuilder = (int max) => _chatBridge.BuildContextView(_chatBridge.DefaultSession, max),
-                KeyInfoBuilder = (int max) => _chatBridge.BuildKeyInfoView(_chatBridge.DefaultSession, max),
-                FullContextBuilder = (int max) => _chatBridge.BuildFullContextView(_chatBridge.DefaultSession, max),
-                CatsBuilder = null,
-                PatchBuilder = null,
-                ApiRoleBuilder = () => BuildApiRoleJson(_chatBridge.DefaultSession),
-                ApiRoleToggler = () => ToggleApiRoleJson(_chatBridge.DefaultSession),
-                EffortBuilder = () => BuildEffortJson(_chatBridge.DefaultSession.Id),
-                EffortSetter = (string value) => SetEffortJson(_chatBridge.DefaultSession.Id, value),
-                ViewFullBuilder = () => _chatBridge.DefaultSession.BuildViewFullJson(),
-                ViewFrameBuilder = () => _chatBridge.DefaultSession.TakeViewFrameJson(),
-                ServeChatPage = true,
-                RouteRegistrar = RegisterChatPageRoutes,
-                HtmlRootProvider = HtmlRoot,
-                DisplayName = _chatBridge.DefaultSession.DisplayName
-            });
+                host = HttpHost.Start(new HttpHostOptions
+                {
+                    Port = port,
+                    FrontendTestPort = PortBand.FrontendTestPort,
+                    SessionId = _chatBridge.DefaultSession.Id,
+                    SnapshotBuilder = BuildSnapshotJson,
+                    Dispatcher = (string line) => DispatchInput(MajorInputTarget(), line),
+                    EnvelopeBuilder = MakeChatEnvelopeBuilder(_chatBridge.DefaultSession),
+                    FrameBuilder = null,
+                    ContextBuilder = (int max) => _chatBridge.BuildContextView(_chatBridge.DefaultSession, max),
+                    KeyInfoBuilder = (int max) => _chatBridge.BuildKeyInfoView(_chatBridge.DefaultSession, max),
+                    FullContextBuilder = (int max) => _chatBridge.BuildFullContextView(_chatBridge.DefaultSession, max),
+                    CatsBuilder = null,
+                    PatchBuilder = null,
+                    ApiRoleBuilder = () => BuildApiRoleJson(_chatBridge.DefaultSession),
+                    ApiRoleToggler = () => ToggleApiRoleJson(_chatBridge.DefaultSession),
+                    EffortBuilder = () => BuildEffortJson(_chatBridge.DefaultSession.Id),
+                    EffortSetter = (string value) => SetEffortJson(_chatBridge.DefaultSession.Id, value),
+                    ViewFullBuilder = () => _chatBridge.DefaultSession.BuildViewFullJson(),
+                    ViewFrameBuilder = () => _chatBridge.DefaultSession.TakeViewFrameJson(),
+                    ServeChatPage = true,
+                    RouteRegistrar = RegisterChatPageRoutes,
+                    HtmlRootProvider = HtmlRoot,
+                    DisplayName = _chatBridge.DefaultSession.DisplayName
+                });
+            }
+            catch (System.Exception ex)
+            {
+                // A260：默认猫对话页不可用不得阻断宿主启动（管理面板仍可用）
+                LogStore.Add("CatHome4", 2, "majordomo 独立对话端口启动失败：" + ex.Message, "CHAT");
+                StartupDegradation.Report("MAJOR_HOST_FAILED", StartupDegradation.KindEnv, "默认猫对话页",
+                    StartupDegradation.StateUnavailable, "独立端口 " + port.ToString() + " 启动失败：" + ex.Message,
+                    "关闭占用端口的进程后重启", "S6");
+                return false;
+            }
             _majorHost = host;
             _majorPort = port;
             // 会话事件推送改绑 majordomo 独立对话端口（主端口 index.html 管理面板不再消费 chat 事件——F2.1）
             AttachSessionHost(_chatBridge.DefaultSession, host);
             LogStore.Add("CatHome4", 1, "majordomo 独立对话端口已启动：" + port.ToString(), "CHAT");
             return true;
-        }
-
-        /// <summary>
-        /// majordomo 独立端口指令投递——Chat/session.new/note.* 路由 DefaultSession（主线程直投 / HTTP 线程入队泵）。
-        /// F2.2 与 DispatchCommandForCat 同构——目标固定 DefaultSession；队列走 _majorPendingChat/_majorPendingNote。
-        /// </summary>
-        /// <param name="line">指令行</param>
-        /// <returns>true=识别并投递</returns>
-        private static bool DispatchCommandForMajor(string line)
-        {
-            if (line.StartsWith("Chat ", StringComparison.Ordinal))
-            {
-                string content = line.Substring(5).Trim();
-                if (content.Length == 0)
-                {
-                    return false;
-                }
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.PostUserMessage(content);
-                }
-                else
-                {
-                    _majorPendingChat.Enqueue(content);
-                }
-                return true;
-            }
-            if (line == "cat.pause")
-            {
-                // P6 中止——HTTP 线程直接调用（内部仅置位 + 取消令牌——线程安全；相位推进主线程 Pump 消费）
-                _chatBridge.DefaultSession.Pause();
-                return true;
-            }
-            if (line == "cat.continue")
-            {
-                // 继续——HTTP 线程直接调用（内部仅前文非空校验 + 入队——线程安全；相位推进主线程 Pump 消费）
-                _chatBridge.DefaultSession.Continue();
-                return true;
-            }
-            if (line == "session.new")
-            {
-                // F2.2 按 DefaultSession 重注入——HTTP 线程置位/主线程泵消费（PumpCatQueues 段3）
-                _majorSessionNewRequested = true;
-                return true;
-            }
-            if (line.StartsWith("session.rollback ", StringComparison.Ordinal) || line.StartsWith("session.fork ", StringComparison.Ordinal))
-            {
-                // P6b 回滚/分支——主线程直执 / HTTP 线程入队泵消费（ThreadGuard：上下文仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(_chatBridge.DefaultSession, line), "CMD", "", "", 200);
-                }
-                else
-                {
-                    _majorPendingSessionCmd.Enqueue(line);
-                }
-                return true;
-            }
-            if (line == "note.start")
-            {
-                // M4c Note 启动——主线程直执 / HTTP 线程入队泵
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.NoteStart();
-                }
-                else
-                {
-                    _majorPendingNote.Enqueue("\u0001start");
-                }
-                return true;
-            }
-            if (line.StartsWith("note.add ", StringComparison.Ordinal))
-            {
-                // M4c Note 手动新增——主线程直执 / HTTP 线程入队泵
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.NoteAdd(line.Substring(9).Trim());
-                }
-                else
-                {
-                    _majorPendingNote.Enqueue(line.Substring(9).Trim());
-                }
-                return true;
-            }
-            // 延迟指令族——delay.*（design-ch4-delay §5.1；调度器内部锁保护——HTTP 线程可直执）
-            if (DelayCommand.Handle(_chatBridge.DefaultSession.Id, line))
-            {
-                return true;
-            }
-            return false;
-        }
-
-        /// <summary>
-        /// 每猫指令投递——Chat 指令路由本猫会话（主线程直投 / HTTP 线程入队泵）。
-        /// </summary>
-        /// <param name="cat">猫实体</param>
-        /// <param name="line">指令行</param>
-        /// <returns>true=识别并投递</returns>
-        private static bool DispatchCommandForCat(CatEntry cat, string line)
-        {
-            if (line.StartsWith("Chat ", StringComparison.Ordinal))
-            {
-                string content = line.Substring(5).Trim();
-                if (content.Length == 0)
-                {
-                    return false;
-                }
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    cat.Session.PostUserMessage(content);
-                }
-                else
-                {
-                    cat.PendingChat.Enqueue(content);
-                }
-                return true;
-            }
-            if (line == "cat.pause")
-            {
-                // P6 中止——HTTP 线程直接调用（内部仅置位 + 取消令牌——线程安全；相位推进主线程 Pump 消费）
-                cat.Session.Pause();
-                return true;
-            }
-            if (line == "cat.continue")
-            {
-                // 继续——HTTP 线程直接调用（内部仅前文非空校验 + 入队——线程安全；相位推进主线程 Pump 消费）
-                cat.Session.Continue();
-                return true;
-            }
-            if (line == "session.new")
-            {
-                // M2d 按猫重注入——HTTP 线程置位/主线程泵消费（会话忙时排队语义同默认猫）
-                cat.SessionNewRequested = true;
-                return true;
-            }
-            if (line.StartsWith("session.rollback ", StringComparison.Ordinal) || line.StartsWith("session.fork ", StringComparison.Ordinal))
-            {
-                // P6b 回滚/分支——主线程直执 / HTTP 线程入队泵消费（ThreadGuard：上下文仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    LogStore.Add("CatHome4", 1, "会话指令: " + ExecuteSessionCmd(cat.Session, line), "CMD", "", "", 200);
-                }
-                else
-                {
-                    cat.PendingSessionCmd.Enqueue(line);
-                }
-                return true;
-            }
-            if (line == "note.start")
-            {
-                // M4c Note 启动——拼接计划+进度推给 LLM（主线程直执 / HTTP 线程入队泵）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    cat.Session.NoteStart();
-                }
-                else
-                {
-                    cat.PendingNote.Enqueue("\u0001start");
-                }
-                return true;
-            }
-            if (line.StartsWith("note.add ", StringComparison.Ordinal))
-            {
-                // M4c Note 手动新增——主线程直执 / HTTP 线程入队泵（Note 状态仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    cat.Session.NoteAdd(line.Substring(9).Trim());
-                }
-                else
-                {
-                    cat.PendingNote.Enqueue(line.Substring(9).Trim());
-                }
-                return true;
-            }
-            // 延迟指令族——delay.*（design-ch4-delay §5.1；调度器内部锁保护——HTTP 线程可直执）
-            if (DelayCommand.Handle(cat.Session.Id, line))
-            {
-                return true;
-            }
-            return false;
         }
 
         /// <summary>
@@ -2394,13 +1809,12 @@ namespace CatHome4.Admin
         {
             List<object> list = new List<object>();
             // F2.2 majordomo 特殊会话——置顶 + special 标记（前端不视为多猫；无停止/删除）
-            // 主面板数据面扩展——补 apiConfigId / qqbotId / enabledRoots（行内编辑与目录白名单展示用）
-            // 会话状态扩展（2026-10-01）——复用 BuildCatInfoEntry（与 cat.info / 快照 sessions 段同源，不另起数据面）
+            // 主面板数据面扩展——补 apiConfigId / enabledRoots / reasoningEffort（行内编辑与目录白名单展示用）
             CatCfgData majorCfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", "majordomo", "cat.cfg"));
             string majorName = "majordomo";
             string majorApi = "";
-            string majorQq = "";
             string[] majorRoots = new string[0];
+            string majorEffort = "";
             if (majorCfg != null)
             {
                 if (majorCfg.DisplayName != null && majorCfg.DisplayName.Length > 0)
@@ -2411,30 +1825,19 @@ namespace CatHome4.Admin
                 {
                     majorApi = majorCfg.ApiConfigId;
                 }
-                if (majorCfg.QqBotId != null)
-                {
-                    majorQq = majorCfg.QqBotId;
-                }
                 if (majorCfg.EnabledRoots != null)
                 {
                     majorRoots = majorCfg.EnabledRoots;
                 }
+                if (majorCfg.ReasoningEffort != null)
+                {
+                    majorEffort = majorCfg.ReasoningEffort;
+                }
             }
-            ChatSession majorSession = null;
-            if (_chatBridge != null)
-            {
-                majorSession = _chatBridge.DefaultSession;
-            }
-            Dictionary<string, object> majorEntry = BuildCatInfoEntry("majordomo", majorName, _majorHost != null, _majorPort, true, majorSession, "");
+            Dictionary<string, object> majorEntry = BuildCatInfoEntry("majordomo", majorName, _majorHost != null, _majorPort, true, _chatBridge != null ? _chatBridge.DefaultSession : null, "");
             majorEntry["apiConfigId"] = majorApi;
-            majorEntry["qqbotId"] = majorQq;
             // 目录白名单实况——前端列展示（无权目录差集）以此为准；缺此字段前端恒按「空白名单」渲染（显示与实际不符）
             majorEntry["enabledRoots"] = majorRoots;
-            string majorEffort = "";
-            if (majorCfg != null && majorCfg.ReasoningEffort != null)
-            {
-                majorEffort = majorCfg.ReasoningEffort;
-            }
             majorEntry["reasoningEffort"] = majorEffort;
             list.Add(majorEntry);
             for (int i = 0; i < _cats.Count; i++)
@@ -2442,33 +1845,27 @@ namespace CatHome4.Admin
                 CatEntry cat = _cats[i];
                 CatCfgData cfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", cat.Id, "cat.cfg"));
                 string apiConfigId = "";
-                string qqbotId = "";
                 string[] enabledRoots = new string[0];
+                string reasoningEffort = "";
                 if (cfg != null)
                 {
                     if (cfg.ApiConfigId != null)
                     {
                         apiConfigId = cfg.ApiConfigId;
                     }
-                    if (cfg.QqBotId != null)
-                    {
-                        qqbotId = cfg.QqBotId;
-                    }
                     if (cfg.EnabledRoots != null)
                     {
                         enabledRoots = cfg.EnabledRoots;
                     }
+                    if (cfg.ReasoningEffort != null)
+                    {
+                        reasoningEffort = cfg.ReasoningEffort;
+                    }
                 }
                 Dictionary<string, object> entry = BuildCatInfoEntry(cat.Id, cat.DisplayName, cat.Running, cat.Port, false, cat.Session, cat.Type);
                 entry["apiConfigId"] = apiConfigId;
-                entry["qqbotId"] = qqbotId;
                 // 目录白名单实况——前端列展示（无权目录差集）以此为准；缺此字段前端恒按「空白名单」渲染（显示与实际不符）
                 entry["enabledRoots"] = enabledRoots;
-                string reasoningEffort = "";
-                if (cfg != null && cfg.ReasoningEffort != null)
-                {
-                    reasoningEffort = cfg.ReasoningEffort;
-                }
                 entry["reasoningEffort"] = reasoningEffort;
                 list.Add(entry);
             }
@@ -2498,6 +1895,10 @@ namespace CatHome4.Admin
             catch (Exception ex)
             {
                 LogStore.Add("CatHome4", 2, "启动扫描目录枚举失败（跳过加载）: " + ex.Message, "CHAT");
+                // A260 二期——多猫拉起失败接启动降级登记面
+                StartupDegradation.Report("CATS_SCAN_FAILED", StartupDegradation.KindEnv, "多猫（会话目录扫描）",
+                    StartupDegradation.StateEmpty, "sessions 目录枚举失败：" + sessionsDir + " | " + ex.Message,
+                    "检查 Data/sessions 权限后重启", "S7");
                 return;
             }
             // 运行态分离——running/port 取自 Data/runtime/cats.json（cat.cfg 只承载用户配置；启动链零写入 cat.cfg）
@@ -2524,6 +1925,9 @@ namespace CatHome4.Admin
                 if (cat == null)
                 {
                     LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 会话构造失败", "CHAT");
+                    StartupDegradation.Report("CAT_BOOT_FAILED", StartupDegradation.KindData, "多猫（" + cfg.Id + "）",
+                        StartupDegradation.StateUnavailable, "会话构造失败：sessions/" + cfg.Id + "/cat.cfg",
+                        "管理面板 → 猫管理 → 检查该猫配置后重启", "S7");
                     continue;
                 }
                 _cats.Add(cat);
@@ -2552,6 +1956,9 @@ namespace CatHome4.Admin
                 if (port < 0)
                 {
                     LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 端口分配失败", "CHAT");
+                    StartupDegradation.Report("CAT_BOOT_FAILED", StartupDegradation.KindEnv, "多猫（" + cfg.Id + "）",
+                        StartupDegradation.StateUnavailable, "端口分配失败（端口段耗尽）：猫 " + cfg.Id,
+                        "关闭占用端口的进程后重启，或减少同时运行的猫", "S7");
                     continue;
                 }
                 try
@@ -2561,6 +1968,9 @@ namespace CatHome4.Admin
                 catch (Exception ex)
                 {
                     LogStore.Add("CatHome4", 2, "启动扫描：猫 " + cfg.Id + " 拉起失败：" + ex.Message, "CHAT");
+                    StartupDegradation.Report("CAT_BOOT_FAILED", StartupDegradation.KindEnv, "多猫（" + cfg.Id + "）",
+                        StartupDegradation.StateUnavailable, "拉起失败：猫 " + cfg.Id + " 端口 " + port.ToString() + " | " + ex.Message,
+                        "管理面板 → 猫管理 → 手动启动该猫", "S7");
                     continue;
                 }
                 cat.Running = true;

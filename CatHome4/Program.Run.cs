@@ -6,7 +6,6 @@ using System.Text.Json;
 using System.Threading;
 using Mau.Runtime;
 using CatHome4.Admin;
-using CatHome4.QQ;
 using CatHome4.Observe;
 using CatHome4.Contracts;
 using Mau.Providers;
@@ -80,18 +79,14 @@ namespace CH4
                 }
                 LoopTiming.Accumulate("http", ElapsedMsSince(segTicks));
                 segTicks = Stopwatch.GetTimestamp();
-                AdminService.PumpAllHosts();
+                CatHostService.PumpAllHosts();
                 LoopTiming.Accumulate("hosts", ElapsedMsSince(segTicks));
                 segTicks = Stopwatch.GetTimestamp();
                 _chatBridge.PumpSessions();
-                PumpChatQueue();
                 LoopTiming.Accumulate("sessions", ElapsedMsSince(segTicks));
                 segTicks = Stopwatch.GetTimestamp();
-                AdminService.PumpCatQueues();
+                AdminService.PumpInputQueue();
                 LoopTiming.Accumulate("catqueue", ElapsedMsSince(segTicks));
-                segTicks = Stopwatch.GetTimestamp();
-                QQBotService.Tick();
-                LoopTiming.Accumulate("qqbot", ElapsedMsSince(segTicks));
                 // 宿主自更新——启动回执注入（一次性）+ 重启闸门（停机态 + 全局 Idle → 接力拉起）
                 segTicks = Stopwatch.GetTimestamp();
                 PumpMajordomoPush();
@@ -140,189 +135,11 @@ namespace CH4
         /// <returns>true=识别成功并已投递</returns>
         private static bool DispatchCommand(string line)
         {
-            // [段0] 宿主重启停机态——拒绝一切新指令（design-ch4-host-restart §三 T2）
-            if (IsRestarting())
-            {
-                Console.WriteLine("[CMD] 宿主重启中——指令未受理：" + line);
-                return true;
-            }
-            if (line.StartsWith("Chat ", StringComparison.Ordinal))
-            {
-                string chatContent = line.Substring(5).Trim();
-                if (chatContent.Length == 0)
-                {
-                    return false;
-                }
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    // 主线程（控制台）——直接投递会话（相位推进在 Pump——ThreadGuard 合规）
-                    _chatBridge.DefaultSession.PostUserMessage(chatContent);
-                }
-                else
-                {
-                    // HTTP 线程——入队主线程泵（FlowRunner.Tick 仅宿主主线程——跨线程违规判例 2026-08-18）
-                    _chatQueue.Enqueue(chatContent);
-                }
-                return true;
-            }
-            // P8.5 显式新会话——清前文 + 按清单重新注入（唯一重注入通道；主线程直执 / HTTP 线程置位泵——ThreadGuard 契约；会话忙时标志保留泵重判）
-            if (line == "session.new")
-            {
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    if (_chatBridge.DefaultSession.IsIdle)
-                    {
-                        _chatBridge.HandleSessionNew(_chatBridge.DefaultSession, _chatBridge.DefaultPersona, _chatBridge.DefaultInjectList, _chatBridge.DefaultToolSpecs);
-                    }
-                    else
-                    {
-                        _chatBridge.SessionNewRequested = true;
-                        Console.WriteLine("[CMD] 会话忙——session.new 排队执行");
-                    }
-                }
-                else
-                {
-                    _chatBridge.SessionNewRequested = true;
-                }
-                return true;
-            }
-            if (line == "note.start")
-            {
-                // M4c Note 启动——拼接计划+进度推给 LLM（主线程直执 / HTTP 线程入队泵）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.NoteStart();
-                }
-                else
-                {
-                    _sessionCmdQueue.Enqueue(line);
-                }
-                return true;
-            }
-            if (line.StartsWith("note.add ", StringComparison.Ordinal))
-            {
-                // M4c Note 手动新增——主线程直执 / HTTP 线程入队泵（Note 状态仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    _chatBridge.DefaultSession.NoteAdd(line.Substring(9).Trim());
-                }
-                else
-                {
-                    _sessionCmdQueue.Enqueue(line);
-                }
-                return true;
-            }
-            if (line == "session clear" || line == "session count")
-            {
-                // 会话调试指令——主线程直执 / HTTP 线程入队泵（ThreadGuard：_chatContext 仅主线程触碰——2026-08-20 遗留改造；会话忙时入队重判）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    if (_chatBridge.DefaultSession.IsIdle)
-                    {
-                        _chatBridge.HandleSessionCmd(_chatBridge.DefaultSession, line);
-                    }
-                    else
-                    {
-                        _sessionCmdQueue.Enqueue(line);
-                        Console.WriteLine("[CMD] 会话忙——" + line + " 排队执行");
-                    }
-                }
-                else
-                {
-                    _sessionCmdQueue.Enqueue(line);
-                }
-                return true;
-            }
-            if (line.StartsWith("session.rollback ", StringComparison.Ordinal) || line.StartsWith("session.fork ", StringComparison.Ordinal))
-            {
-                // P6b 回滚/分支——主线程直执 / HTTP 线程入队 Admin cat 泵（ThreadGuard：上下文仅主线程触碰）
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    Console.WriteLine("[CMD] " + AdminService.ExecuteSessionCmd(_chatBridge.DefaultSession, line));
-                }
-                else
-                {
-                    AdminService._catQueue.Enqueue(line);
-                }
-                return true;
-            }
-            // R0.2 热重载指令——CLI 通道（--run/--script）支持：reload &lt;Flow注册名&gt; [dll]（QuickCat/TextCat/MauCat/CsCat/ConfigCat/...——主线程直执——ExecuteReload 事务三段式）
-            if (line.StartsWith("reload ", StringComparison.Ordinal))
-            {
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    Console.WriteLine("[CMD] " + ExecuteReload(line.Substring(7).Trim()));
-                }
-                else
-                {
-                    Console.WriteLine("[CMD] reload 仅主线程执行——CLI 通道使用");
-                }
-                return true;
-            }
-            // P9.3 多猫管理指令族——主线程直执 / HTTP 线程入队泵（ThreadGuard：注册表仅主线程触碰）
-            // M3 catcfg.apply 同族路由（每猫配置运行时生效——HTTP 端点落盘后入队）
-            // 统一执行出口（Program.Command.cs）——CLI / HTTP / 工具桥三面同源（ExecuteAdminCommand）
-            if (line.StartsWith("cat.", StringComparison.Ordinal) || line.StartsWith("catcfg.", StringComparison.Ordinal))
-            {
-                if (Environment.CurrentManagedThreadId == _mainThreadId)
-                {
-                    Console.WriteLine("[CMD] " + ExecuteAdminCommand(line));
-                }
-                else
-                {
-                    AdminService._catQueue.Enqueue(line);
-                }
-                return true;
-            }
-            // 延迟指令族——delay.*（design-ch4-delay §5.1；调度器内部锁保护——HTTP 线程可直执）
-            if (DelayCommand.Handle(_chatBridge.DefaultSession.Id, line))
-            {
-                return true;
-            }
-            return false;
+            // A281 分发表迁入 Admin 域（三入口合一）——主入口目标：默认会话 + 主入口特权
+            return AdminService.DispatchInput(AdminService.MainInputTarget(), line);
         }
 
-        /// <summary>
-        /// HTTP Chat 入队队列——Kestrel 线程投递 / 主线程泵消费（ThreadGuard：FlowRunner.Tick 仅主线程）
-        /// </summary>
-        private static System.Collections.Concurrent.ConcurrentQueue<string> _chatQueue = new System.Collections.Concurrent.ConcurrentQueue<string>();
-
-        /// <summary>
-        /// 会话调试指令队列——session clear/count（HTTP 线程投递 / 主线程泵消费——_chatContext 仅主线程触碰）
-        /// </summary>
-        private static System.Collections.Concurrent.ConcurrentQueue<string> _sessionCmdQueue = new System.Collections.Concurrent.ConcurrentQueue<string>();
-
-        /// <summary>
-        /// 泵 HTTP Chat 队列——主线程消费入队任务（RunInteractive 主循环 + DriveUntilIdle 每轮调用）
-        /// </summary>
-        private static void PumpChatQueue()
-        {
-            // P8.5：会话新开请求优先处理（HTTP 线程置位——主线程泵执行，ThreadGuard 契约）；会话忙时标志保留——下帧重判（排队语义保持）
-            if (_chatBridge.SessionNewRequested)
-            {
-                if (_chatBridge.DefaultSession.IsIdle)
-                {
-                    _chatBridge.SessionNewRequested = false;
-                    _chatBridge.HandleSessionNew(_chatBridge.DefaultSession, _chatBridge.DefaultPersona, _chatBridge.DefaultInjectList, _chatBridge.DefaultToolSpecs);
-                }
-            }
-            // 会话调试指令泵消费（session clear/count——HTTP 线程投递 / 主线程执行；会话忙时保留队列——下帧重判）
-            string sessionCmd;
-            while (_sessionCmdQueue.TryDequeue(out sessionCmd))
-            {
-                if (!_chatBridge.DefaultSession.IsIdle)
-                {
-                    _sessionCmdQueue.Enqueue(sessionCmd);
-                    break;
-                }
-                _chatBridge.HandleSessionCmd(_chatBridge.DefaultSession, sessionCmd);
-            }
-            string job;
-            while (_chatQueue.TryDequeue(out job))
-            {
-                _chatBridge.DefaultSession.PostUserMessage(job);
-            }
-        }
+        // A281 六泵并一——原 _chatQueue / _sessionCmdQueue 与 PumpChatQueue 已迁入 Admin 域统一队列（AdminService.PumpInputQueue）
 
 
 
@@ -338,11 +155,9 @@ namespace CH4
                 {
                     _httpHost.PumpMainThread();
                 }
-                AdminService.PumpAllHosts();
+                CatHostService.PumpAllHosts();
                 _chatBridge.PumpSessions();
-                PumpChatQueue();
-                AdminService.PumpCatQueues();
-                QQBotService.Tick();
+                AdminService.PumpInputQueue();
                 if (AllIdle())
                 {
                     return;
@@ -353,30 +168,13 @@ namespace CH4
         }
 
         /// <summary>
-        /// 三 Cat 全部 Idle 判定——状态行全部 =Idle（编排者双状态机都 Idle 才算空闲）
+        /// 全局空闲判定——委托闸门卡点探测（单一出口：会话相位 / 工具组 Flow / OA 在途 / 视图待推）。
+        /// A262：与重启闸门同源，避免「空闲判定」与「闸门判定」两套实现漂移。
         /// </summary>
         /// <returns>true=全部空闲</returns>
         private static bool AllIdle()
         {
-            // P9.1 会话判定——全部会话 Idle（原三 Cat 语料判定保留）
-            for (int i = 0; i < _chatBridge.Sessions.Count; i = i + 1)
-            {
-                if (!_chatBridge.Sessions[i].IsIdle)
-                {
-                    return false;
-                }
-            }
-            // 工具组 Flow 全部 Idle 判定——遍历句柄表（TextCat/MauCat/CsCat/ConfigCat）
-            foreach (KeyValuePair<string, FlowHandle> kv in _toolFlowHandles)
-            {
-                if (!IsFlowIdle(kv.Value))
-                {
-                    return false;
-                }
-            }
-            // OA 无未完成工单——Flow Idle 但工单 Open = 接单窗口期（探测壳 1 帧延迟），不得判空闲提前退出
-            OAView view = _oa.GetSnapshot();
-            return view.OpenCount == 0 && view.WorkCount == 0;
+            return DescribeGateBlocker().Length == 0;
         }
 
         /// <summary>

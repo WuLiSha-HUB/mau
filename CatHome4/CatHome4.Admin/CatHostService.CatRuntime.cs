@@ -3,16 +3,17 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using Mau.Runtime;
+using static CatHome4.Admin.AdminService;
 
 namespace CatHome4.Admin
 {
     /// <summary>
-    /// 猫运行态持久化面——Data/runtime/cats.json。
+    /// 猫运行态持久化面（A285：自 AdminService 抽出）——Data/runtime/cats.json。
     /// 分离契约：cat.cfg 只承载用户配置（persona/toolNames/injectList/enabledRoots 等）；运行态（running/port）独立落盘。
     /// 语义：缺失记录 = 静默态（不拉起）；port=0 = 未监听。
     /// 写时机：cat.start / cat.stop / 启动换端口 / 旧配置一次性迁移——用户配置改动不触本文件，启动链不写 cat.cfg。
     /// </summary>
-    internal static partial class AdminService
+    internal static partial class CatHostService
     {
         /// <summary>
         /// 猫运行态条目——running + port。

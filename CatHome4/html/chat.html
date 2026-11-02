@@ -50,7 +50,7 @@
         <span class="ch-lt-label" id="chatCoreLabel">全部</span>
     </div>
 
-    <!-- ═══ 插话队列显示区（js/chat/state/pending.js——内核 _pending 队列投影；含 QQ / 指令 / 定时等非前端来源；空表自动隐藏） ═══ -->
+    <!-- ═══ 插话队列显示区（js/chat/state/pending.js——内核 _pending 队列投影；含指令 / 定时等非前端来源；空表自动隐藏） ═══ -->
     <div id="chatPendingPanel"></div>
 
     <!-- ═══ 输入区 ═══ -->
@@ -226,6 +226,22 @@
     <script src="js/chat/tools/py/py-service.js?v=__V__"></script>
     <script src="js/chat/tools/search/web-fetch.js?v=__V__"></script>
     <script src="js/chat/tools/search/web-fetch-jobs.js?v=__V__"></script>
+    <!-- DbCat（5） -->
+    <script src="js/chat/tools/db/db-put.js?v=__V__"></script>
+    <script src="js/chat/tools/db/db-query.js?v=__V__"></script>
+    <script src="js/chat/tools/db/db-get.js?v=__V__"></script>
+    <script src="js/chat/tools/db/db-update.js?v=__V__"></script>
+    <script src="js/chat/tools/db/db-delete.js?v=__V__"></script>
+    <!-- DbAdmin（3） -->
+    <script src="js/chat/tools/dbadmin/dbAdmin-libs.js?v=__V__"></script>
+    <script src="js/chat/tools/dbadmin/dbAdmin-create.js?v=__V__"></script>
+    <script src="js/chat/tools/dbadmin/dbAdmin-drop.js?v=__V__"></script>
+    <!-- TsCat（5）——TS 编码工具面（A294） -->
+    <script src="js/chat/tools/ts/ts-check.js?v=__V__"></script>
+    <script src="js/chat/tools/ts/ts-list.js?v=__V__"></script>
+    <script src="js/chat/tools/ts/ts-read.js?v=__V__"></script>
+    <script src="js/chat/tools/ts/ts-find-ref.js?v=__V__"></script>
+    <script src="js/chat/tools/ts/ts-patch.js?v=__V__"></script>
     <!-- 内置（10） -->
     <script src="js/chat/tools/builtin/info.js?v=__V__"></script>
     <script src="js/chat/tools/builtin/Note.js?v=__V__"></script>

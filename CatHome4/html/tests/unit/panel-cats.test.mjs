@@ -1,6 +1,6 @@
 // tests/unit/panel-cats.test.mjs —— 主面板多猫行（2026-10-01 主面板轮）
-// 覆盖：列结构（ID 列撤除）· 名称行内编辑（POST cat-config displayName；未改动 / 清空不提交）
-//       · LLM API / QQ Bot 下拉（change 即提交 cat-config 单字段）· 目录白名单无权目录展示 + 专用弹层入口 · 工具清单 / 前文注入单按钮
+// 覆盖：列结构（ID 列撤除 / A299 QQ Bot 列撤除）· 名称行内编辑（POST cat-config displayName；未改动 / 清空不提交）
+//       · LLM API / 思考强度下拉（change 即提交 cat-config 单字段）· 目录白名单无权目录展示 + 专用弹层入口 · 工具清单 / 前文注入单按钮
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { expect, test, beforeAll } from 'vitest';
@@ -53,7 +53,6 @@ function callsTo(url) {
 // 渲染单行——清空表体后调 renderCatRow（池数据由用例预设）
 function renderRow(cat) {
   window.catApiOptions = [{ apiConfigId: 'aaaaaaaa-0000-0000-0000-000000000000', displayName: '主端点', isDefault: true }];
-  window.catQqBotOptions = [{ qqBotId: 'bbbbbbbb-0000-0000-0000-000000000000', displayName: '露雪娜' }];
   window.catAllRoots = ROOTS;
   document.querySelector('#catsTable tbody').textContent = '';
   window.renderCatRow(cat);
@@ -72,20 +71,19 @@ beforeAll(async () => {
   await tick();
 });
 
-test('主面板行——10 列（会话状态列前置 + ID 列已撤）；名称可编辑、API/QQBot/思考强度是下拉、工具清单 / 前文注入是按钮', () => {
+test('主面板行——9 列（会话状态列前置 + ID 列已撤 + A299 QQ Bot 列撤除）；名称可编辑、API/思考强度是下拉、工具清单 / 前文注入是按钮', () => {
   const tr = renderRow(CAT_ROW);
-  expect(tr.children.length).toBe(10);
+  expect(tr.children.length).toBe(9);
   expect(tr.children[1].querySelector('input').value).toBe('测试猫');
   expect(tr.children[2].querySelector('select')).not.toBeNull();
-  expect(tr.children[3].querySelector('select')).not.toBeNull();
-  // 思考强度列——紧随 QQ Bot；首项「跟随全局」+ 三档
-  expect(tr.children[4].querySelector('select').value).toBe('');
-  expect(tr.children[6].querySelector('button').textContent).toBe('工具清单');
+  // 思考强度列——紧随 LLM API；首项「跟随全局」+ 三档
+  expect(tr.children[3].querySelector('select').value).toBe('');
+  expect(tr.children[5].querySelector('button').textContent).toBe('工具清单');
   // 前文注入列——紧随工具清单，样式与工具清单按钮同源（btn-mini）
-  const injectBtn = tr.children[7].querySelector('button');
+  const injectBtn = tr.children[6].querySelector('button');
   expect(injectBtn.textContent).toBe('前文注入');
   expect(injectBtn.className).toBe('btn-mini');
-  expect(tr.children[8].textContent).toBe('-');
+  expect(tr.children[7].textContent).toBe('-');
   // ID 不再出现在任何单元格
   const texts = [];
   for (let i = 0; i < tr.children.length; i = i + 1) { texts.push(tr.children[i].textContent); }
@@ -94,7 +92,7 @@ test('主面板行——10 列（会话状态列前置 + ID 列已撤）；名�
 
 test('目录白名单列——显示无权目录（池 ∖ 启用根），点「设置」开专用弹层', async () => {
   const tr = renderRow(CAT_ROW);   // enabledRoots = ['ccbp'] → 无权仅 mau（workspace 为系统根不计）
-  const td = tr.children[5];
+  const td = tr.children[4];
   expect(td.textContent).toContain('无权: mau');
   expect(td.textContent.indexOf('ccbp')).toBe(-1);
   td.querySelector('button').onclick();
@@ -105,7 +103,7 @@ test('目录白名单列——显示无权目录（池 ∖ 启用根），点「
 
 test('目录白名单列——启用根为空 = 空白名单（非系统根全部无权）', () => {
   const tr = renderRow(Object.assign({}, CAT_ROW, { enabledRoots: [] }));
-  const td = tr.children[5];
+  const td = tr.children[4];
   expect(td.textContent).toContain('无权: ccbp, mau');
 });
 
@@ -133,11 +131,10 @@ test('名称行内编辑——改动提交 POST cat-config displayName；未改�
   expect(posts[0].body.displayName).toBe('新名字');
 });
 
-test('LLM API / QQ Bot 下拉——change 即提交 cat-config 单字段（空值 = 清空语义）', async () => {
+test('LLM API 下拉——change 即提交 cat-config 单字段（空值 = 清空语义）', async () => {
   captureFetch();
   const tr = renderRow(Object.assign({}, CAT_ROW, {
-    apiConfigId: 'aaaaaaaa-0000-0000-0000-000000000000',
-    qqbotId: 'bbbbbbbb-0000-0000-0000-000000000000'
+    apiConfigId: 'aaaaaaaa-0000-0000-0000-000000000000'
   }));
   const apiSel = tr.children[2].querySelector('select');
   apiSel.value = '';
@@ -147,14 +144,12 @@ test('LLM API / QQ Bot 下拉——change 即提交 cat-config 单字段（空�
   expect(posts.length).toBe(1);
   expect(posts[0].body.cat).toBe(CAT_ROW.id);
   expect(posts[0].body.apiConfigId).toBe('');
-  // 单字段写——未提交字段不出现在 payload（后端缺省即保留）
-  expect(posts[0].body.qqbotId).toBe(undefined);
 });
 
 test('思考强度列——change 即提交 cat-config reasoningEffort 单字段（空 = 跟随全局）', async () => {
   captureFetch();
   const tr = renderRow(Object.assign({}, CAT_ROW, { reasoningEffort: 'max' }));
-  const sel = tr.children[4].querySelector('select');
+  const sel = tr.children[3].querySelector('select');
   expect(sel.value).toBe('max');
   sel.value = '';
   sel.dispatchEvent(new Event('change'));
@@ -164,7 +159,7 @@ test('思考强度列——change 即提交 cat-config reasoningEffort 单字段
   expect(posts[0].body.cat).toBe(CAT_ROW.id);
   expect(posts[0].body.reasoningEffort).toBe('');
   // 单字段写——未提交字段不出现在 payload（后端缺省即保留）
-  expect(posts[0].body.qqbotId).toBe(undefined);
+  expect(posts[0].body.apiConfigId).toBe(undefined);
 });
 
 test('会话状态列——phase 徽标 + 七态名 + Note 标 + 前文（token/条/字符）/ 轮次 · 消息 · 待处理', () => {
@@ -234,12 +229,12 @@ test('整行点击——内容区开会话详情；按钮 / 输入控件不触�
   await tick();
   expect(document.getElementById('catDetailModal').style.display).toBe('none');
   // 工具清单按钮 → 不触发
-  tr.children[6].querySelector('button').dispatchEvent(new Event('click', { bubbles: true }));
+  tr.children[5].querySelector('button').dispatchEvent(new Event('click', { bubbles: true }));
   await tick();
   expect(document.getElementById('catDetailModal').style.display).toBe('none');
   document.getElementById('catToolsModal').style.display = 'none';
   // 前文注入按钮 → 不触发详情；开前文注入弹层
-  tr.children[7].querySelector('button').dispatchEvent(new Event('click', { bubbles: true }));
+  tr.children[6].querySelector('button').dispatchEvent(new Event('click', { bubbles: true }));
   await tick();
   expect(document.getElementById('catDetailModal').style.display).toBe('none');
   expect(document.getElementById('catInjectModal').style.display).toBe('flex');

@@ -14,10 +14,10 @@ namespace Mau.Development
 #pragma warning disable CS8600 // 环境 SDK 对 ConcurrentDictionary/Dictionary TryXXX(out TValue) 的 MaybeNullWhen 分析异常误报——out 实参非空变量也报警（最小复现验证）
     /// <summary>
     /// C# 工具桥实现——Roslyn 编码工具域缓存桥（design-ch4-cs.md D1-D3）。
-    /// 磁盘权威 + 快照监管（mtime+size 前缀对账）+ 项目键隔离常驻池（LRU 4）+ 树/编译/语义三态无感。
+    /// 磁盘权威 + 快照快链（mtime+size）与内容比较兜底 + 项目键隔离常驻池（LRU 4）+ 树/编译/语义三态无感。
     /// 引用集 = 目标项目已 build 的 bin 产物 + TPA + 共享框架探测（AspNetCore/WindowsDesktop——莎拍板 A 方案）——
     /// bin 缺失 → 引导先 cs.build（check 快、build 权威的闭环）。
-    /// 工具面 12 件：check / build / list / read / find_ref / find / patch / member / comment / dead / comment_check / format。
+    /// 工具面 13 件：check / build / test / list / read / find_ref / find / patch / member / comment / dead / comment_check / format。
     /// </summary>
     public sealed partial class MauRoslynBridge : ICSharpBridge
     {

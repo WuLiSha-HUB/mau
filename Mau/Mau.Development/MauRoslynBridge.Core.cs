@@ -10,6 +10,7 @@ using Microsoft.CodeAnalysis.CSharp;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Microsoft.CodeAnalysis.Formatting;
 using Microsoft.CodeAnalysis.Options;
+using Microsoft.CodeAnalysis.Text;
 using Mau.Runtime;
 
 namespace Mau.Development
@@ -481,8 +482,8 @@ namespace Mau.Development
         }
 
         /// <summary>
-        /// 项目级全扫——重扫源文件集合（增删检测）+ 全文件快照对账（批量刷新）
-        /// 语义操作（check/find_ref/dead/rename）前调用；树级工具也调用（低成本，百文件 &lt;2ms 元数据）
+        /// 项目级全扫——重扫源文件集合（增删检测）+ 全文件对账（元数据快链 + 内容比较，批量刷新）
+        /// 语义操作（check/find_ref/dead/rename）前调用；磁盘是唯一真相——内容比较兜底，外部改动本轮自动重解析。
         /// </summary>
         /// <param name="cache">缓存</param>
         private void FullScan(ProjectCache cache)
@@ -536,11 +537,12 @@ namespace Mau.Development
                         ProjectSnapshot known;
                         if (cache.Stamps.TryGetValue(filePath, out known))
                         {
-                            // 快照对账——mtime+size 全等 = 未变（增量刷新 D3）；错位风险（mtime 异常/为 0）→ 宁可全量重解析
+                            // 快照对账——mtime+size 只是快线索（同秒同大小的外部改写会漏判）；元数据全等时再做内容比较，
+                            // 磁盘是唯一真相：外部 text-* / 编辑器的改动必须在本次扫描内被看见并自动重解析。
                             bool stampsValid = known.Utc > DateTime.MinValue && currentSnapshot.Utc > DateTime.MinValue;
                             if (stampsValid && known.Utc == currentSnapshot.Utc && known.Length == currentSnapshot.Length)
                             {
-                                changed = false;
+                                changed = !string.Equals(ReadTextShared(filePath), existing.GetText().ToString(), StringComparison.Ordinal);
                             }
                         }
                         if (changed)
@@ -1424,33 +1426,6 @@ namespace Mau.Development
         {
             bool bom = File.Exists(path) && HasUtf8Bom(path);
             return WriteFilePreserving(path, text, bom, "");
-        }
-
-        /// <summary>
-        /// 编译验证——新增错误检测（基线对比：改后新增的 error 才算坏——项目既有错误不误伤）
-        /// </summary>
-        /// <param name="before">改动前编译</param>
-        /// <param name="after">改动后编译</param>
-        /// <param name="newErrors">新增错误诊断文本行</param>
-        /// <returns>true=无新增错误（可落盘）</returns>
-        private static bool ValidateNoNewErrors(CSharpCompilation before, CSharpCompilation after, out List<string> newErrors)
-        {
-            newErrors = new List<string>();
-            HashSet<string> beforeErrors = new HashSet<string>(StringComparer.Ordinal);
-            ImmutableArrayHelper.CollectErrorKeys(before, beforeErrors);
-            foreach (Diagnostic diagnostic in after.GetDiagnostics())
-            {
-                if (diagnostic.Severity != DiagnosticSeverity.Error)
-                {
-                    continue;
-                }
-                string key = diagnostic.Id + "|" + diagnostic.Location.GetLineSpan().Path + "|" + diagnostic.GetMessage();
-                if (!beforeErrors.Contains(key))
-                {
-                    newErrors.Add(diagnostic.ToString());
-                }
-            }
-            return newErrors.Count == 0;
         }
     }
 

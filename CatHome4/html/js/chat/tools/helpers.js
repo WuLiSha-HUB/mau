@@ -236,3 +236,36 @@ function ovHead(resultText) {
     }
     return metaHead(resultText);
 }
+
+/// 结构化回执正文行——剥头后正文按行拆（无头 → 原文行；空 → 空数组）
+function ovBodyLines(r) {
+    if (typeof r !== 'string' || r.length === 0) {
+        return [];
+    }
+    var h = ovHead(r);
+    return (h ? h.body : r).split('\n');
+}
+
+/// 结构化回执摘要行——正文首行（空结果 → 空串；摘要与载荷分段回执用）
+function ovBodyFirst(r) {
+    var lines = ovBodyLines(r);
+    return (lines.length > 0) ? lines[0] : '';
+}
+
+/// 结构化回执载荷——正文中首个可解析 JSON 对象（无 → null；非 JSON 行跳过不抛）
+function ovPayload(r) {
+    var lines = ovBodyLines(r);
+    for (var i = 0; i < lines.length; i++) {
+        var t = lines[i].replace(/^\s+|\s+$/g, '');
+        if (t.charAt(0) !== '{') {
+            continue;
+        }
+        try {
+            var o = JSON.parse(t);
+            return (o && typeof o === 'object') ? o : null;
+        } catch (e) {
+            return null;
+        }
+    }
+    return null;
+}

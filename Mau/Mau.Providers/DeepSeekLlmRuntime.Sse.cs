@@ -30,6 +30,8 @@ namespace Mau.Providers
         private static async IAsyncEnumerable<LlmStreamEvent> TranslateSse(SseParser<string> parser, [EnumeratorCancellation] CancellationToken ct)
         {
             bool done = false;
+            // [段0-暂存] finish_reason——流末统一产一次 Finish 事件（length = 输出被截断，消费方据此出声）
+            string lastFinishReason = "";
             // [段0-暂存] usage——双发形态去重：本处只缓存，流末统一产一次事件（同一请求不得累加两次）
             string lastUsage = "";
             // [段0] 工具调用聚合——按 index 累积（design A.5：id/name 仅首帧；arguments 是累积增量需拼接后整体解析）
@@ -54,6 +56,12 @@ namespace Mau.Providers
                 if (TryParseUsage(item.Data, out usageJson) && usageJson.Length > 0)
                 {
                     lastUsage = usageJson;
+                }
+                // [段2a] finish_reason——每帧尝试（与 delta 同帧或独立帧），流末统一产出
+                string finishReason;
+                if (TryParseFinishReason(item.Data, out finishReason) && finishReason.Length > 0)
+                {
+                    lastFinishReason = finishReason;
                 }
                 // [段2b] 帧解析——delta.content/reasoning_content 判空再产事件（空首帧不开块；空 delta 帧跳过）
                 string text;
@@ -85,6 +93,11 @@ namespace Mau.Providers
             {
                 yield return new LlmStreamEvent(LlmStreamKind.Error, "ERR|STREAM_CLOSED|SSE 流未以 [DONE] 结束");
                 yield break;
+            }
+            // [段3b] finish_reason 事件——流末一次（length = 输出被截断；text 为上游原文）
+            if (lastFinishReason.Length > 0)
+            {
+                yield return new LlmStreamEvent(LlmStreamKind.Finish, lastFinishReason);
             }
             // [段4] usage 事件——每请求一次（双发形态以最后一个为准；消费方按请求累加，同一请求不重复计数）
             if (lastUsage.Length > 0)
@@ -153,6 +166,55 @@ namespace Mau.Providers
             catch
             {
                 // 畸形 JSON 帧——调用方跳过（MALFORMED 帧不做硬失败，容忍上游抖动）
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// 解析 finish_reason——choices[0].finish_reason 字符串（无则空串）。
+        /// 用途：length 表示输出达 max_tokens 被截断——上层据此出声（失败必须可见）。
+        /// </summary>
+        /// <param name="data">帧 data 载荷</param>
+        /// <param name="finishReason">finish_reason 原文（无为空串）</param>
+        /// <returns>true=解析到非空 finish_reason</returns>
+        internal static bool TryParseFinishReason(string data, out string finishReason)
+        {
+            finishReason = "";
+            if (data == null || data.Length == 0)
+            {
+                return false;
+            }
+            // 早退——帧内无该字段直接跳过（占比 <1%，避免每帧 JSON 解析开销）
+            if (data.IndexOf("\"finish_reason\"", StringComparison.Ordinal) < 0)
+            {
+                return false;
+            }
+            try
+            {
+                using (JsonDocument doc = JsonUtil.ParseStrict(data))
+                {
+                    JsonElement root = doc.RootElement;
+                    JsonElement choices;
+                    if (!root.TryGetProperty("choices", out choices) || choices.GetArrayLength() == 0)
+                    {
+                        return false;
+                    }
+                    JsonElement value;
+                    if (choices[0].TryGetProperty("finish_reason", out value) && value.ValueKind == JsonValueKind.String)
+                    {
+                        string? got = value.GetString();
+                        if (got != null && got.Length > 0)
+                        {
+                            finishReason = got;
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+            }
+            catch
+            {
+                // 畸形帧跳过——容忍上游抖动
                 return false;
             }
         }

@@ -47,11 +47,11 @@ namespace CH4
         /// <summary>RoundSummary 工单超时帧上限——一次性 LLM 调用（60s 现实耗时 + 余量）</summary>
         private const long RoundSummaryTimeoutFrames = 2400;
 
-        /// <summary>RoundSummary 前段提示词（注入服务 system 参——语气 / 输出 / 风格规范）。</summary>
-        private const string RoundSummaryPromptHead = "你是轮次总结器。用一句自然语言（20-50 字）概括给定的一轮对话，直接陈述结论；语气平实、信息密度高；不要客套、不要分点、不要引号、不要复述原文。";
+        /// <summary>RoundSummary 播报串行键——播报名与正文、全部猫的总结共用（跨猫全串行，不并发）。</summary>
+        private const string RoundSummaryAudioKey = "roundsummary";
 
-        /// <summary>RoundSummary 后段提示词（拼在待总结内容之后——固定分隔符，界定待总结范围）。</summary>
-        private const string RoundSummaryPromptTail = "\n——以上为本轮对话的全部内容（用户输入与助手回复按序合并），请据此给出一句总结。";
+        /// <summary>RoundSummary 后段提示词（拼在待总结内容之后——固定分隔符，界定待总结范围；第一人称口径）。</summary>
+        private const string RoundSummaryPromptTail = "\n——以上是本轮的全部往来（用户输入与你自己的回复按序合并）。请用第一人称向用户交代这一轮你做了什么、结果如何。";
         /// <summary>系统注入类型——现行唯一值 systemauto（后续类型扩在此处；未知值一律拒绝，不静默回落）。</summary>
         internal const string SysKindSystemAuto = "systemauto";
 
@@ -281,6 +281,12 @@ namespace CH4
 
         /// <summary>已预警请求号——同一请求多 usage 帧只报一次（比对 _requestCount；0 为起点哨兵，请求号自 1 起）</summary>
         private int _lastMissAlertReq;
+
+        /// <summary>本次请求 finish_reason——流末由 Finish 事件回填（length = 输出被截断）</summary>
+        private string _finishReason = "";
+
+        /// <summary>已投截断提示请求号——同一请求只投一次（比对 _requestCount；0 为起点哨兵，请求号自 1 起）</summary>
+        private int _lastTruncationAlertReq;
 
         /// <summary>本轮开始时间戳——Stopwatch.GetTimestamp（roundsum 总耗时）</summary>
         private long _roundStartTick;
@@ -1927,6 +1933,7 @@ namespace CH4
                 // [段1] 槽预置 + 后台流式消费
                 StringBuilder text = new StringBuilder();
                 string toolCalls = "";
+                _finishReason = "";
                 await foreach (LlmStreamEvent ev in _llmRuntime.ChatStream(messages, _tools, ResolveCacheIsolationKey(), ct))
                 {
                     if (ev.Kind == LlmStreamKind.Text)
@@ -2053,6 +2060,11 @@ namespace CH4
                             _viewStore.AppendError(missAlert, ViewTimestamp());
                         }
                     }
+                    else if (ev.Kind == LlmStreamKind.Finish)
+                    {
+                        // finish_reason 落槽——length 的可见处置在流末结算段（日志 WARN + 提示气泡）
+                        _finishReason = ev.Text;
+                    }
                     else if (ev.Kind == LlmStreamKind.Done)
                     {
                         // F4 视图——done 由整块 replace 表达（流式结束不单独推事件；无需推送）
@@ -2111,6 +2123,17 @@ namespace CH4
                 }
                 // E3 Token 统计——结算行带本轮 usage（轮级：本轮全部请求累加；SSE 推送仍走 usage 事件——前端覆盖式显示整轮累计值）
                 llmSummary = llmSummary + "。本轮 Token：输入 " + _usagePrompt.ToString() + "（含缓存 " + _usageCacheHit.ToString() + "）· 输出 " + _usageCompletion.ToString();
+                // finish_reason=length——输出被截断：结算行点名 + WARN 日志 + 提示气泡（失败必须可见；同请求只提示一次）
+                if (_finishReason == "length")
+                {
+                    llmSummary = llmSummary + "；输出被截断（finish_reason=length）";
+                    LogStore.Add("LLM", 2, "输出被截断：finish_reason=length（输出 " + _usageCompletion.ToString() + " token 达上限——回复与工具参数不完整）", "LLM");
+                    if (_lastTruncationAlertReq != _requestCount)
+                    {
+                        _lastTruncationAlertReq = _requestCount;
+                        _viewStore.AppendError("⚠ 输出被截断：模型输出达 token 上限（finish_reason=length），本轮回复不完整。可调 llm.max_tokens 提高上限后重试", ViewTimestamp());
+                    }
+                }
                 LogStore.Add("LLM", 0, llmSummary, "LLM");
             }
             catch (System.OperationCanceledException ex)
@@ -2396,6 +2419,14 @@ namespace CH4
             {
                 return _viewBus.HasPendingContent;
             }
+        }
+        /// <summary>
+        /// 待推标记复位——猫停机释放会话前调用（A297）：会话所属 HttpHost 已 Stop，帧泵不再运行，
+        /// 标记无人取走会让全局重启闸门永久置位。只清变更标记，不动视图内容（下次接新宿主走全量重绘）。
+        /// </summary>
+        public void ResetViewPending()
+        {
+            _viewBus.ResetPending();
         }
         /// <summary>
         /// 状态段整段 JSON——后端权威业务态（v2 契约：轮阶段 / 六态用时 / Note / 延迟队列 / Token 三级 / 前文长度与条数）。
@@ -3414,6 +3445,23 @@ namespace CH4
             _usageCacheHit = 0;
         }
         /// <summary>
+        /// RoundSummary 前段提示词——按猫身份生成的第一人称视角（向用户交代，不做第三方总结）。
+        /// </summary>
+        /// <returns>system 提示词</returns>
+        private string BuildRoundSummaryPromptHead()
+        {
+            string name = DisplayName;
+            if (name == null || name.Length == 0)
+            {
+                name = _catKey;
+            }
+            return "你是「" + name + "」。这一轮你刚做完事，现在向用户亲口交代你做了什么、结果如何。"
+                + "第一人称（我 / 我这边），口语，像当面说话；只说自己的动作与结果，不复述用户的要求，"
+                + "不用「用户」「助手」「该轮」这类旁观措辞；一句话 20-50 字；不要客套、不要分点、不要引号。"
+                + "这句话会被直接念出来，数字与缩写按读音写：版本号、编号、端口号逐位写成汉字（1.8.152 写成 一点八点一五二，8080 写成 八零八零），"
+                + "只有表示数量时才用阿拉伯数字（3 个文件）；技术缩写拆成大写单字母加空格（CUDA 写成 C U D A）。";
+        }
+        /// <summary>
         /// RoundSummary——轮末调度：组 prompt 并投 LLMSimpleRequest 服务工单（开关开 + 配置可用 + 有内容时才发）。
         /// 谁发谁收——officeId 记入 _roundSummaryOfficeId，由 Pump 每帧轮询回收。
         /// </summary>
@@ -3445,7 +3493,7 @@ namespace CH4
             _oa.SetStr(officeId, RoundSummaryOwnerId, "endpoint", llm[0]);
             _oa.SetStr(officeId, RoundSummaryOwnerId, "apikey", llm[1]);
             _oa.SetStr(officeId, RoundSummaryOwnerId, "model", llm[2]);
-            _oa.SetStr(officeId, RoundSummaryOwnerId, "system", RoundSummaryPromptHead);
+            _oa.SetStr(officeId, RoundSummaryOwnerId, "system", BuildRoundSummaryPromptHead());
             _oa.SetStr(officeId, RoundSummaryOwnerId, "content", content);
             _roundSummaryOfficeId = officeId;
         }
@@ -3497,11 +3545,16 @@ namespace CH4
                 result = "ERR|EMPTY|轮末总结无可读回执";
             }
             long ts = _roundSummaryPendingTs > 0 ? _roundSummaryPendingTs : ViewTimestamp();
-            _viewStore.AppendRoundSummaryNote(result, ts);
-            // A247——总结自动出声（外观配置启用时；失败记 Log、不影响轮次）
+            string audioName = "";
             if (!result.StartsWith("ERR|", StringComparison.Ordinal))
             {
-                SpeakRoundSummary(result);
+                audioName = BuildSummaryAudioName(_catKey, ts);
+            }
+            _viewStore.AppendRoundSummaryNote(result, ts, audioName);
+            // A247——总结自动出声（外观配置启用时；失败记 Log、不影响轮次）；A265——音频名与块 payload 同源
+            if (audioName.Length > 0)
+            {
+                SpeakRoundSummary(result, audioName);
             }
         }
 
@@ -3628,10 +3681,15 @@ namespace CH4
             return text.Substring(0, max) + "...";
         }
         /// <summary>
+        /// 中间段合成序号——避免同毫秒同名（临时文件，拼接成功后删除）。
+        /// </summary>
+        private static int _summarySegmentSeq;
+        /// <summary>
         /// RoundSummary——总结文本自动出声：外观配置启用时后台合成并播放（不阻塞主线程；失败记 Log、不影响轮次）。
         /// </summary>
         /// <param name="text">总结文本（非 ERR| 的正常总结）</param>
-        private void SpeakRoundSummary(string text)
+        /// <param name="audioName">拼接后单文件名（与块 payload 同源，A265）</param>
+        private void SpeakRoundSummary(string text, string audioName)
         {
             Func<string, string[]> provider = SummaryAudioProvider;
             if (provider == null || text.Length == 0)
@@ -3645,11 +3703,12 @@ namespace CH4
                 return;
             }
             string voice = cfg[1] == null ? "" : cfg[1];
+            string displayName = ResolveSpeakName(catKey);
             Task.Run(delegate ()
             {
                 try
                 {
-                    RunSummarySpeak(catKey, voice, text);
+                    RunSummarySpeak(catKey, displayName, voice, text, audioName);
                 }
                 catch (Exception ex)
                 {
@@ -3658,80 +3717,10 @@ namespace CH4
             });
         }
         /// <summary>
-        /// 总结播报执行体（后台线程）——合成 WAV 后入队播放；全程失败可见（Log），不影响轮次。
+        /// 总结音频产物目录——配置 py.service.kokoro.out_dir（未配置返回空串，不猜目录；缺失则创建）。
         /// </summary>
-        /// <param name="catKey">猫 key（播放串行分组键）</param>
-        /// <param name="voice">音色槽位值（空 = 服务默认音色）</param>
-        /// <param name="text">待合成文本</param>
-        private static void RunSummarySpeak(string catKey, string voice, string text)
-        {
-            IPyService py = null;
-            if (!DataBox.TryResolve<IPyService>(out py) || py == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IPyService 未注入", "CHAT");
-                return;
-            }
-            string outPath = BuildSummaryAudioPath();
-            if (outPath.Length == 0)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录未配置（py.service.kokoro.out_dir）", "CHAT");
-                return;
-            }
-            Dictionary<string, object> payload = new Dictionary<string, object>();
-            payload["id"] = "summary";
-            payload["op"] = "speak";
-            payload["text"] = text;
-            if (voice.Length > 0)
-            {
-                payload["voice"] = voice;
-            }
-            payload["speed"] = 1.0;
-            payload["out"] = outPath;
-            string invokeArgs = JsonUtil.Object(("name", "kokoro"), ("payload", JsonUtil.Serialize(payload)));
-            string reply = py.Invoke(invokeArgs);
-            if (reply == null || reply.Length == 0 || reply.StartsWith("ERR|", StringComparison.Ordinal))
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + (reply == null ? "(无回执)" : reply), "CHAT");
-                return;
-            }
-            string produced = outPath;
-            JsonDocument doc = JsonUtil.Parse(reply, "summary-speak");
-            if (doc == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结合成回执不可解析: " + reply, "CHAT");
-                return;
-            }
-            try
-            {
-                JsonElement root = doc.RootElement;
-                if (!JsonUtil.GetBool(root, "ok", false))
-                {
-                    LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + reply, "CHAT");
-                    return;
-                }
-                produced = JsonUtil.GetStr(root, "out", outPath);
-            }
-            finally
-            {
-                doc.Dispose();
-            }
-            IAudioService audio = null;
-            if (!DataBox.TryResolve<IAudioService>(out audio) || audio == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IAudioService 未注入", "CHAT");
-                return;
-            }
-            string enqueue = audio.Enqueue(catKey, produced, -1f);
-            if (enqueue != null && enqueue.Length > 0)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播放入队失败: " + enqueue, "CHAT");
-            }
-        }
-        /// <summary>
-        /// 总结播报产物路径——配置 py.service.kokoro.out_dir 下按时间戳命名（未配置返回空串，不猜目录）。
-        /// </summary>
-        /// <returns>WAV 全路径；未配置空串</returns>
-        private static string BuildSummaryAudioPath()
+        /// <returns>目录全路径；未配置空串</returns>
+        private static string ResolveSummaryAudioDir()
         {
             ConfigStore cfg = null;
             string dir = "";
@@ -3754,7 +3743,44 @@ namespace CH4
             {
                 return "";
             }
-            return System.IO.Path.Combine(dir, "summary_" + DateTime.Now.ToString("yyyyMMdd_HHmmss_fff") + ".wav");
+            return dir;
+        }
+        /// <summary>
+        /// 总结音频单文件名（A265）——按轮次时间戳 + 猫 key 派生：块先落盘、合成在后台，名字必须可预算（视图层条目不改写）。
+        /// </summary>
+        /// <param name="catKey">猫 key</param>
+        /// <param name="ts">轮末时间戳（毫秒）</param>
+        /// <returns>文件名（不含目录）</returns>
+        private static string BuildSummaryAudioName(string catKey, long ts)
+        {
+            string stamp = DateTimeOffset.FromUnixTimeMilliseconds(ts).LocalDateTime.ToString("yyyyMMdd_HHmmss_fff");
+            return "summary_" + stamp + "_" + SafeNameSegment(catKey) + ".wav";
+        }
+        /// <summary>
+        /// 文件名片段清洗——只留字母数字与下划线/连字符（猫 key 进文件名，禁路径分隔符与非法字符）。
+        /// </summary>
+        /// <param name="raw">原始片段</param>
+        /// <returns>安全片段（无可用字符 = "cat"）</returns>
+        private static string SafeNameSegment(string raw)
+        {
+            if (raw == null || raw.Length == 0)
+            {
+                return "cat";
+            }
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            for (int i = 0; i < raw.Length; i = i + 1)
+            {
+                char c = raw[i];
+                if ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '-')
+                {
+                    sb.Append(c);
+                }
+            }
+            if (sb.Length == 0)
+            {
+                return "cat";
+            }
+            return sb.ToString();
         }
     }
 }

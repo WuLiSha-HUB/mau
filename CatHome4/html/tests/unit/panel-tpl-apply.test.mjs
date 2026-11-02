@@ -206,7 +206,7 @@ test('套用弹层——一致者自动勾选 / 不一致不勾 / 读取失败�
   expect(document.getElementById('tplApplyList').textContent).toContain('配置读取失败（不可套用）');
 });
 
-test('一键套用——载荷含模板五字段（含目录白名单）+ 保留该猫 qqbotEnable；不带 apiConfigId', async () => {
+test('一键套用——载荷含模板五字段（含目录白名单）；不带 apiConfigId', async () => {
   // 模板端启用根显式渲染——workspace 系统根恒勾选（套用载荷取模板值，不取该猫现值）
   window.renderRootChecks('tplRoots', [
     { id: 'workspace', path: 'D:\\ws', writable: true, fixedRoot: true },
@@ -229,7 +229,6 @@ test('一键套用——载荷含模板五字段（含目录白名单）+ 保留
     toolNames: 'text-read,cs-build',
     packs: ['overwork'],
     injectList: ['ccbp:L1/Tree.md'],
-    qqbotEnable: true,
     enabledRoots: ['workspace']
   });
   expect(posts[0].body.apiConfigId).toBeUndefined();

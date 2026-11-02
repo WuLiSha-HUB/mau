@@ -1,0 +1,58 @@
+﻿// db_cat.mau —— DbCat 语料（Smriti 条目库工具组——db-* 五件独立 Flow）
+// 角色：工具组 Flow——认领 TOOL 域 db-* 5 工具（put/query/get/update/delete）
+// 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 5 线认领执行 → complete_str 回执
+// 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（宿主发单落盒）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行
+//   —— 在途期间状态停在 Ready（不接新单）+ 线级唯一在途槽（结构性不可并发的锁）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到结果按代际丢弃）；超时 2400 帧（120s）
+// 服务面：积木经 DataBox.TryResolve<DbService>（A267 宿主 S2 段绑定；未注入即 ERR|DB_NO_SERVICE）
+// 说明：库只能由控制台新建（工具面不建库）——五线不含 create
+
+// ── 状态机（5 线——每线独立生命周期）──
+§ 'S_Put' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Query' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Get' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Update' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Delete' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+
+// ── 主动传感器壳——5 线各自探测（纯只读判断积木 → bool 落盒）──
+§ 'P_PutOpen' ↻ [1]: 'oa.is_open'["TOOL", "db-put"] > @ptOpen
+§ 'P_QueryOpen' ↻ [1]: 'oa.is_open'["TOOL", "db-query"] > @qyOpen
+§ 'P_GetOpen' ↻ [1]: 'oa.is_open'["TOOL", "db-get"] > @gtOpen
+§ 'P_UpdateOpen' ↻ [1]: 'oa.is_open'["TOOL", "db-update"] > @upOpen
+§ 'P_DeleteOpen' ↻ [1]: 'oa.is_open'["TOOL", "db-delete"] > @dlOpen
+
+// ══════════════ db-put 线 ══════════════
+§ 'T_PutClaim' : @ptOpen & 'S_Put' = 'Idle' → 'oa.claim_next_simple'["TOOL", "db-put"] > @ptOffice | 'S_Put' = 'Claimed' | 'S_Put' = 'Idle'
+§ 'T_PutArgs' : 'S_Put' = 'Claimed' → 'oa.get_str'[@ptOffice, "args"] > @ptArgs | 'self.desc'["db-put 执行中", "", ""] | 'S_Put' = 'Ready' | 'S_Put' = 'Failed'
+§ 'T_PutExec' [t=2400, par] : 'S_Put' = 'Ready' → 'db.put'[@ptArgs] > @ptRes | 'S_Put' = 'Done' | 'S_Put' = 'Failed'
+§ 'T_PutReply' : 'S_Put' = 'Done' → 'oa.complete_str'[@ptOffice, @ptRes] | 'self.desc'["空闲待命", "", ""] | 'S_Put' = 'Idle' | 'S_Put' = 'Idle'
+§ 'T_PutAbort' : 'S_Put' = 'Failed' → 'oa.complete_str'[@ptOffice, @ptRes] | 'S_Put' = 'Idle' | 'S_Put' = 'Idle'
+
+// ══════════════ db-query 线 ══════════════
+§ 'T_QueryClaim' : @qyOpen & 'S_Query' = 'Idle' → 'oa.claim_next_simple'["TOOL", "db-query"] > @qyOffice | 'S_Query' = 'Claimed' | 'S_Query' = 'Idle'
+§ 'T_QueryArgs' : 'S_Query' = 'Claimed' → 'oa.get_str'[@qyOffice, "args"] > @qyArgs | 'self.desc'["db-query 执行中", "", ""] | 'S_Query' = 'Ready' | 'S_Query' = 'Failed'
+§ 'T_QueryExec' [t=2400, par] : 'S_Query' = 'Ready' → 'db.query'[@qyArgs] > @qyRes | 'S_Query' = 'Done' | 'S_Query' = 'Failed'
+§ 'T_QueryReply' : 'S_Query' = 'Done' → 'oa.complete_str'[@qyOffice, @qyRes] | 'self.desc'["空闲待命", "", ""] | 'S_Query' = 'Idle' | 'S_Query' = 'Idle'
+§ 'T_QueryAbort' : 'S_Query' = 'Failed' → 'oa.complete_str'[@qyOffice, @qyRes] | 'S_Query' = 'Idle' | 'S_Query' = 'Idle'
+
+// ══════════════ db-get 线 ══════════════
+§ 'T_GetClaim' : @gtOpen & 'S_Get' = 'Idle' → 'oa.claim_next_simple'["TOOL", "db-get"] > @gtOffice | 'S_Get' = 'Claimed' | 'S_Get' = 'Idle'
+§ 'T_GetArgs' : 'S_Get' = 'Claimed' → 'oa.get_str'[@gtOffice, "args"] > @gtArgs | 'self.desc'["db-get 执行中", "", ""] | 'S_Get' = 'Ready' | 'S_Get' = 'Failed'
+§ 'T_GetExec' [t=2400, par] : 'S_Get' = 'Ready' → 'db.get'[@gtArgs] > @gtRes | 'S_Get' = 'Done' | 'S_Get' = 'Failed'
+§ 'T_GetReply' : 'S_Get' = 'Done' → 'oa.complete_str'[@gtOffice, @gtRes] | 'self.desc'["空闲待命", "", ""] | 'S_Get' = 'Idle' | 'S_Get' = 'Idle'
+§ 'T_GetAbort' : 'S_Get' = 'Failed' → 'oa.complete_str'[@gtOffice, @gtRes] | 'S_Get' = 'Idle' | 'S_Get' = 'Idle'
+
+// ══════════════ db-update 线 ══════════════
+§ 'T_UpdateClaim' : @upOpen & 'S_Update' = 'Idle' → 'oa.claim_next_simple'["TOOL", "db-update"] > @upOffice | 'S_Update' = 'Claimed' | 'S_Update' = 'Idle'
+§ 'T_UpdateArgs' : 'S_Update' = 'Claimed' → 'oa.get_str'[@upOffice, "args"] > @upArgs | 'self.desc'["db-update 执行中", "", ""] | 'S_Update' = 'Ready' | 'S_Update' = 'Failed'
+§ 'T_UpdateExec' [t=2400, par] : 'S_Update' = 'Ready' → 'db.update'[@upArgs] > @upRes | 'S_Update' = 'Done' | 'S_Update' = 'Failed'
+§ 'T_UpdateReply' : 'S_Update' = 'Done' → 'oa.complete_str'[@upOffice, @upRes] | 'self.desc'["空闲待命", "", ""] | 'S_Update' = 'Idle' | 'S_Update' = 'Idle'
+§ 'T_UpdateAbort' : 'S_Update' = 'Failed' → 'oa.complete_str'[@upOffice, @upRes] | 'S_Update' = 'Idle' | 'S_Update' = 'Idle'
+
+// ══════════════ db-delete 线 ══════════════
+§ 'T_DeleteClaim' : @dlOpen & 'S_Delete' = 'Idle' → 'oa.claim_next_simple'["TOOL", "db-delete"] > @dlOffice | 'S_Delete' = 'Claimed' | 'S_Delete' = 'Idle'
+§ 'T_DeleteArgs' : 'S_Delete' = 'Claimed' → 'oa.get_str'[@dlOffice, "args"] > @dlArgs | 'self.desc'["db-delete 执行中", "", ""] | 'S_Delete' = 'Ready' | 'S_Delete' = 'Failed'
+§ 'T_DeleteExec' [t=2400, par] : 'S_Delete' = 'Ready' → 'db.delete'[@dlArgs] > @dlRes | 'S_Delete' = 'Done' | 'S_Delete' = 'Failed'
+§ 'T_DeleteReply' : 'S_Delete' = 'Done' → 'oa.complete_str'[@dlOffice, @dlRes] | 'self.desc'["空闲待命", "", ""] | 'S_Delete' = 'Idle' | 'S_Delete' = 'Idle'
+§ 'T_DeleteAbort' : 'S_Delete' = 'Failed' → 'oa.complete_str'[@dlOffice, @dlRes] | 'S_Delete' = 'Idle' | 'S_Delete' = 'Idle'

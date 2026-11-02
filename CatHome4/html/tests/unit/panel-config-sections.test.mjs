@@ -45,17 +45,17 @@ test('侧栏顺序——配置居首且为默认页签', () => {
   expect(document.getElementById('tab-cats').classList.contains('active')).toBe(false);
 });
 
-test('配置区七大项——顺序 + data-cfg 键', () => {
+test('配置区六大项——顺序 + data-cfg 键（A299 QQ Bot 池撤除）', () => {
   const secs = document.querySelectorAll('#tab-config > div > .cfg-sec');
-  expect(secs.length).toBe(7);
+  expect(secs.length).toBe(6);
   const titles = [];
   const keys = [];
   for (const sec of secs) {
     titles.push(sec.querySelector('.cfg-sec-title').textContent.trim());
     keys.push(sec.getAttribute('data-cfg'));
   }
-  expect(titles).toEqual(['🔁 重启生效', 'LLM API 池', '新猫默认模板', 'QQ Bot 池', '加载包池', '外观池', '⚡ 立即生效']);
-  expect(keys).toEqual(['restart', 'apis', 'tpl', 'qqbots', 'packs', 'appearance', 'config']);
+  expect(titles).toEqual(['🔁 重启生效', 'LLM API 池', '新猫默认模板', '加载包池', '外观池', '⚡ 立即生效']);
+  expect(keys).toEqual(['restart', 'apis', 'tpl', 'packs', 'appearance', 'config']);
 });
 
 test('落态总览——apis 默认展开 / 后四项默认收起 / restart 按记录收起', () => {
@@ -65,9 +65,9 @@ test('落态总览——apis 默认展开 / 后四项默认收起 / restart 按�
     states.push(sec.classList.contains('collapsed'));
     marks.push(sec.querySelector('.cfg-sec-mark').textContent);
   }
-  // restart 有记录（预置 '1'）——按记录收起；其余按页面默认（apis 展开 / 后五项收起）
-  expect(states).toEqual([true, false, true, true, true, true, true]);
-  expect(marks).toEqual(['▸', '▾', '▸', '▸', '▸', '▸', '▸']);
+  // restart 有记录（预置 '1'）——按记录收起；其余按页面默认（apis 展开 / 后四项收起）
+  expect(states).toEqual([true, false, true, true, true, true]);
+  expect(marks).toEqual(['▸', '▾', '▸', '▸', '▸', '▸']);
 });
 
 test('记录优先于默认态——restart 页面默认展开，记录说收起 → 落收起', () => {

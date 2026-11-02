@@ -5,8 +5,8 @@ using System.Text.Json;
 using System.Threading;
 using CatHome4.Admin;
 using CatHome4.Contracts;
+using CatHome4.Core;
 using CatHome4.Http;
-using CatHome4.QQ;
 using CatHome4.Observe;
 using Mau.Runtime;
 using Mau.Providers;
@@ -63,27 +63,6 @@ namespace CH4
         /// <summary>会话协调桥——S1 程序集拆分：会话注册表/默认猫配置/轮转泵/会话指令（Core 实例类）</summary>
         private static ChatBridge _chatBridge;
         /// <summary>
-        /// qqbot 绑定目标收集适配——IQqTargetCollector 实现（S3 解耦：QQ 域经接口消费，入口壳提供——默认猫 + 多猫注册表）。
-        /// </summary>
-        private sealed class QqTargetCollector : IQqTargetCollector
-        {
-            /// <summary>收集绑定指定 qqbot 的猫——委托到 Program.CollectQqTargets</summary>
-            /// <param name="qqBotId">qqbot 配置身份</param>
-            /// <returns>绑定目标列表（空=未绑定）</returns>
-            public List<QqTarget> CollectByBot(Guid qqBotId)
-            {
-                return AdminService.CollectQqTargets(qqBotId);
-            }
-
-            /// <summary>收集所有绑定 qqbot 的猫——委托到 Program.CollectAllQqTargets</summary>
-            /// <returns>全部绑定目标</returns>
-            public List<QqTarget> CollectAll()
-            {
-                return AdminService.CollectAllQqTargets();
-            }
-        }
-
-        /// <summary>
         /// html 根解析适配——IHtmlRootProvider 实现（S2 解耦：Http 域经接口消费 html 根，入口壳提供实现——源码区优先 + 部署区回退）。
         /// </summary>
         private sealed class HtmlRootProvider : IHtmlRootProvider
@@ -97,38 +76,7 @@ namespace CH4
         }
 
         /// <summary>
-        /// 系统通知服务——工具面「发声」通道（ISystemNotifyService 实现）。
-        /// 等价 ChatBridge.PostSystemMessage(catKey, "systemauto", content)：前台可见的系统块、随轮次消费（忙时排队）。
-        /// 现行消费：web.search 验证升级（搜索通道命中验证码时通知人工处理）。
-        /// </summary>
-        private sealed class SystemNotifyService : ISystemNotifyService
-        {
-            /// <summary>会话协调桥——通知投递出口</summary>
-            private readonly ChatBridge _bridge;
-
-            /// <summary>
-            /// 构造——注入会话桥
-            /// </summary>
-            /// <param name="bridge">会话协调桥</param>
-            public SystemNotifyService(ChatBridge bridge)
-            {
-                _bridge = bridge;
-            }
-
-            /// <summary>
-            /// 投递系统通知——systemauto 注入（失败可见，原样返回内核回执）
-            /// </summary>
-            /// <param name="catKey">目标猫（会话标识）</param>
-            /// <param name="content">通知内容</param>
-            /// <returns>内核回执原文</returns>
-            public string Notify(string catKey, string content)
-            {
-                return _bridge.PostSystemMessage(catKey, "systemauto", content);
-            }
-        }
-
-        /// <summary>
-        /// 主程序入口——参数路由：无参=交互模式 / --selfcheck=启动自检 / --run "指令"=单指令脚本模式 / --script &lt;file&gt;=指令文件批量模式（P3a 热重载实测通道）/ --probe-llm &lt;目标&gt;=LLM 返回体探针（方案 B 诊断通道——不启动宿主）/ --tool-check &lt;工具名&gt; &lt;参数JSON&gt;=工具全链自检（A23：OA 走单 → 认领线 → 桥）
+        /// 主程序入口——参数路由：无参=交互模式 / --selfcheck=启动自检 / --run "指令"=单指令脚本模式 / --script &lt;file&gt;=指令文件批量模式（P3a 热重载实测通道）/ --probe-llm &lt;目标&gt;=LLM 返回体探针（方案 B 诊断通道——不启动宿主）
         /// </summary>
         public static int Main(string[] args)
         {
@@ -136,6 +84,8 @@ namespace CH4
             // A118 外壳初始化——高 DPI（必须早于任何窗口创建）+ 启动时刻（已运行时间基准）+ AUMID（通知图标身份键）
             ShellInit();
             InitAppUserModelId();
+            // A260 启动韧性——早期诊断 sink 先于一切配置解析（数据根不可写时回落 %TEMP%，再回落仅内存）
+            BootLog.Init(ResolveDataRoot());
             try
             {
                 Console.OutputEncoding = System.Text.Encoding.UTF8;
@@ -147,12 +97,20 @@ namespace CH4
             }
             try
             {
-                // [段1a] 参数面校验——零容忍（未知参数/缺值/互斥）；--majordomopush 仅常驻交互模式（design-ch4-host-restart §五）
+                // [段1a] 参数面校验——非交互零容忍（调用方是程序，必须拿到失败退出码）；
+                // 交互模式降级为提示后以无参交互继续（A260 R2：环境/配置类问题不得阻断启动）
                 string argErr = ValidateHostArgs(args, out bool nonInteractive);
                 if (argErr.Length > 0)
                 {
                     Console.WriteLine("[CMD] " + argErr);
-                    return 1;
+                    BootLog.Add("S0", "参数面：" + argErr);
+                    if (nonInteractive)
+                    {
+                        return 1;
+                    }
+                    StartupDegradation.Report("ARG_DEGRADED", StartupDegradation.KindConfig, "启动参数",
+                        StartupDegradation.StateFallback, argErr,
+                        "按正确用法重新启动（启动提示窗列有用法）", "S0");
                 }
                 // A118：非交互模式输出双写落盘（WinExe 无控制台——shell 直调取不到 stdout；父进程重定向链路不受影响）
                 if (nonInteractive)
@@ -174,6 +132,8 @@ namespace CH4
                 catch (Exception ex)
                 {
                     Console.WriteLine("[CMD] 启动失败: " + ex.Message);
+                    BootLog.Add("S7", "启动链异常：" + ex.ToString());
+                    WriteStartupReport("failed");
                     // A118：WinExe 无控制台——启动失败必须可见（原 Console.ReadKey 在无控制台时抛异常且失败静默）；
                     // 脚本/自检/探针模式无人值守不弹窗，仅以退出码 1 表达
                     bool showFailBox = !nonInteractive;
@@ -188,9 +148,12 @@ namespace CH4
                 {
                     _runner.Tick();
                 }
-                // 注册确认——启动观测一行（CommandBus 直执面已退役：当前应为 0 个模块，OA 认领为唯一执行路径）
+                // 注册确认——仅在语料真的使用 `⇚`（模块数 > 0）时出声；harness 不投递，常态静默（A278 裁决 / A283）
                 string[] keyDic = _bus.GetKeyDic();
-                Console.WriteLine("[CMD] CommandBus " + keyDic[0]);
+                if (keyDic.Length > 0 && keyDic[0].IndexOf("(0个模块)", StringComparison.Ordinal) < 0)
+                {
+                    Console.WriteLine("[CMD] CommandBus " + keyDic[0]);
+                }
                 // [段2c] P1 自启同步——启动时注册表与配置对齐（防手动删注册表漂移）
                 // 🔴 仅交互模式——非交互探针不得改写 HKCU Run 项（开发区 Data 无 app.cfg → 默认 false → 会静默删掉部署区自启项）
                 if (!nonInteractive)
@@ -217,14 +180,6 @@ namespace CH4
                 if (mode == "selfcheck")
                 {
                     return RunSelfCheck();
-                }
-                // [段3a] 工具全链自检通道——真实 OA 走单 → 认领线 → 桥（A23 集成面实跑通道）
-                for (int i = 0; i < args.Length; i++)
-                {
-                    if (args[i] == "--tool-check" && i + 2 < args.Length)
-                    {
-                        return RunToolCheck(args[i + 1], args[i + 2]);
-                    }
                 }
                 if (mode.StartsWith("run:", StringComparison.Ordinal))
                 {
@@ -264,434 +219,41 @@ namespace CH4
         /// headless=true（非交互模式）跳过外观层与常驻附属（段6）——探针通道与常驻实例端口零耦合（A74）。
         /// </summary>
         /// <param name="dllDir">语料生成物 dll 目录</param>
-        /// <param name="headless">非交互模式（--run/--script/--selfcheck/--tool-check）</param>
+        /// <param name="headless">非交互模式（--run/--script/--selfcheck）</param>
         private static void Bootstrap(string dllDir, bool headless)
         {
-            // [段0] 端口段解析——机器级端口空间按区划分（开发区向下 / 部署区向上——A74：两区实例可同时运行）
-            _portBand = ResolvePortBand();
-            // [段1] 线程守卫 + 机制服务
-            ThreadGuard guard = new ThreadGuard();
-            _oa = new OA(guard);
-            _bus = new CommandBus(guard);
-            IdAllocator ids = new IdAllocator();
-            _runner = new FlowRunner(guard, _oa, _bus, ids);
-            // [段2] DataBox 服务绑定——积木 TryResolve 面（OA/CommandBus/ILlmRuntime）
-            DataBox.Bind<IOA>(_oa);
-            DataBox.Bind<ICommandBus>(_bus);
-            // 文件系统服务——file.* 积木依赖（受控根 = workspace.json 配置 roots；回收站=可写根 tools/CatTemp/fs_recycle——P8.5 配置群）
-            string dataRoot = ResolveDataRoot();
-            WorkspaceConfig workspace = WorkspaceConfig.Load(Path.Combine(dataRoot, "Data", "config", "workspace.json"), dataRoot);
-            DataBox.Bind<WorkspaceConfig>(workspace);
-            // A153 受控根启动对账——生效根回显 + 同 path 多根检出（文本在 LogStore 就绪后于段3b 落盘）
-            bool rootsConflict = false;
-            string rootsNote = RootsAuditNote(workspace, out rootsConflict);
-            // mau 仓库根注入——受控根 id=mau → MauGroupBuilder/BrickIndex 静态入口（BRIK-MAU 工具 + 翻译器积木索引解析优先注入值）
-            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
+            // A260 二期——八段执行器编排：按外部依赖边界切段，每段失败登记后继续（R1：环境异常不得阻断启动）
+            // 段序 S0 → S2 → S1 → S3 → S4 → S5 → S6 → S7（受控根先于配置面——WritableRootPaths 是配置面服务的构造入参）
+            BootContext ctx = new BootContext();
+            ctx.DllDir = dllDir;
+            ctx.Headless = headless;
+            RunStep(ctx, "S0", "机制服务（OA / CommandBus / FlowRunner）", BootDegradePolicy.Internal, StageS0);
+            RunStep(ctx, "S2", "文件工具（受控根）", BootDegradePolicy.EmptySet, StageS2);
+            RunStep(ctx, "S1", "配置面（schema / 配置池 / 服务绑定）", BootDegradePolicy.EmptySet, StageS1);
+            RunStep(ctx, "S3", "观测日志", BootDegradePolicy.Continue, StageS3);
+            RunStep(ctx, "S4", "工具面（全部 Flow）", BootDegradePolicy.EmptySet, StageS4);
+            RunStep(ctx, "S5", "会话面（默认猫）", BootDegradePolicy.EmptySet, StageS5);
+            RunStep(ctx, "S6", "外观层（主端口）", BootDegradePolicy.Continue, StageS6);
+            RunStep(ctx, "S7", "常驻附属（多猫 / QQ / py / 前端测试服务）", BootDegradePolicy.Continue, StageS7);
+            // 启动健康面收口——日志出口（逐条 + 摘要）· 报告落盘 · 独立提示窗
+            StartupDegradeEntry[] bootEntries = StartupDegradation.Snapshot();
+            for (int i = 0; i < bootEntries.Length; i = i + 1)
             {
-                if (string.Equals(workspace.Roots[i].Id, "mau", StringComparison.OrdinalIgnoreCase))
-                {
-                    Mau.Development.MauGroupBuilder.SetWorkspaceRoot(workspace.Roots[i].Path);
-                    Mau.Translator.BrickIndex.SetWorkspaceRoot(workspace.Roots[i].Path);
-                    break;
-                }
+                LogStore.Add("CatHome4", 2, "boot.degrade | " + bootEntries[i].Code + " | "
+                    + bootEntries[i].Ability + " | " + bootEntries[i].Detail, "BOOT");
             }
-            // 兜底实例 = 常驻根子集（workspace/runtime）——猫级实例解析失败时只剩 workspace 可用（失败默认收紧，不回落全量）
-            List<WorkspaceConfig.RootEntry> fallbackRoots = new List<WorkspaceConfig.RootEntry>();
-            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
-            {
-                WorkspaceConfig.RootEntry entry = workspace.Roots[i];
-                if (string.Equals(entry.Id, "workspace", StringComparison.OrdinalIgnoreCase) || string.Equals(entry.Id, "runtime", StringComparison.OrdinalIgnoreCase))
-                {
-                    fallbackRoots.Add(entry);
-                }
-            }
-            DataBox.Bind<FileSystemService>(new FileSystemService(fallbackRoots.ToArray(), Path.Combine(WorkspaceRecycleRoot(workspace, dataRoot), "tools", "CatTemp", "fs_recycle")));
-            string configDir = Path.Combine(dataRoot, "Data", "config");
-            // P8.5 配置群 schema——schema.json 元声明（默认值/敏感/可写/空值语义——/api/v1/config 输出面）
-            // §4.1 schema 同步（模板为准：不一致 → .bak 备份 + 整体覆盖）→ §4.2 schema 驱动段注册（宿主零硬编码段清单）
-            // 两条结论在 LogStore 就绪后补记审计（启动期只有 Console——落盘补记见段3b）
-            string schemaTemplatePath;
-            string schemaSyncNote = EnsureSchemaSync(configDir, out schemaTemplatePath);
-            ConfigSchema schema = ConfigSchema.Load(Path.Combine(configDir, "schema.json"));
-            // A152 派生段声明通道——模板路径注入（声明时模板与运行副本同步写，避免启动期模板同步覆盖）
-            schema.TemplatePath = schemaTemplatePath;
-            DataBox.Bind<ConfigSchema>(schema);
-            ConfigStore llmConfig = ConfigStore.Load(Path.Combine(configDir, "llm.cfg"));
-            string segmentNote = RegisterSchemaSegments(llmConfig, schema, configDir);
-            DataBox.Bind<ConfigStore>(llmConfig);
-            // M1a LLM API 配置池——llm-api.json 明文（零 key）+ Data/secrets 独立秘密文件（CH3 同构迁移；环境变量首次导入兜底）
-            CH_LlmApiConfigStore apiConfigStore = new CH_LlmApiConfigStore(
-                Path.Combine(dataRoot, "Data", "config"),
-                Path.Combine(dataRoot, "Data", "secrets"));
-            DataBox.Bind<CH_LlmApiConfigStore>(apiConfigStore);
-            // M3 管理面静态引用——catcfg.apply 重建 Runtime 消费（S4 迁 Admin 域——Configure 注入）
-            // R2.3 QQ Bot 配置池——qqbot.json 明文（零 secret）+ Data/secrets 独立秘密文件（对齐 LLM API 池 M1 模式）
-            CH_QqBotConfigStore qqBotStore = new CH_QqBotConfigStore(
-                Path.Combine(dataRoot, "Data", "config"),
-                Path.Combine(dataRoot, "Data", "secrets"));
-            DataBox.Bind<CH_QqBotConfigStore>(qqBotStore);
-            // A244 外观配置池——appearance.json 明文（无密钥面；每猫 appearanceId 引用 + 唯一默认项）
-            CH_AppearanceConfigStore appearanceStore = new CH_AppearanceConfigStore(
-                Path.Combine(dataRoot, "Data", "config"));
-            DataBox.Bind<CH_AppearanceConfigStore>(appearanceStore);
-            // M1 语料面 Runtime——默认端点语义（QuickCat 工单 llm.stream 消费面；Guid.Empty=每次调用实时解析默认配置）
-            // 空配置池无默认端点 → 启动失败（不做静默回退——必须先配置端点后才能运行）
-            _llmRuntime = new DeepSeekLlmRuntime(apiConfigStore, Guid.Empty, llmConfig);
-            DataBox.Bind<ILlmRuntime>(_llmRuntime);
-            // P8 三期——Roslyn cs.* 编码工具域（MauRoslynBridge——受控根=可写根子集，只读知识根不参与项目扫描；磁盘权威快照 + 三态缓存）
-            DataBox.Bind<ICSharpBridge>(new MauRoslynBridge(WritableRootPaths(workspace)));
-            // R2.2 图像识别服务——DeepSeek vision 模型（vision.api_config_id 引用 LLM 池配置；未配置=不可用）
-            DataBox.Bind<IVisionService>(new Mau.Providers.DeepSeekVisionService(apiConfigStore, llmConfig));
-            // PsCat PowerShell 执行服务——EncodedCommand 免转义 + UTF-8 内建 + 写文件拦截 + 超时进程树杀（PsService）
-            DataBox.Bind<IPsService>(new PsService());
-            // py 执行与 py 服务进程管理——解释器读配置 py.python_path；句柄归基座持有（design-ch4-pytools §二）
-            // 运行期目录注入——锚文件落点（启动前自愈 + 服务锚；§5.2 清理第③层）
-            Mau.Runtime.PyService pySvc = new Mau.Runtime.PyService(WritableRootPaths(workspace));
-            pySvc.Configure(System.IO.Path.Combine(dataRoot, "Data", "runtime"));
-            DataBox.Bind<IPyService>(pySvc);
-            // A110 浏览器服务——系统 Edge headless + 裸 CDP（零第三方依赖 · 每猫独立 profile · timeback 域限定）
-            CdpBrowserService browserSvc = new CdpBrowserService(dataRoot);
-            DataBox.Bind<IBrowserService>(browserSvc);
-            DataBox.Bind<IBrowserLifecycle>(browserSvc);
-            // 网页资产下载服务——全局单一下载器（HttpClient + 后台 Task；任务态落盘 + 跨重启续传——design-ch4-webfetch）
-            WebFetchService webFetchSvc = new WebFetchService();
-            DataBox.Bind<IWebFetchService>(webFetchSvc);
-            // 宿主指令服务——工具面触达内核指令族（host.command 积木 → IHostCommandService；与 CLI/HTTP 面板同源单内核）
-            DataBox.Bind<IHostCommandService>(new HostCommandService());
-            // A239 音频播放服务——per-Key 串行 + 组间并发（NAudio.Wasapi；design-mau-audio §三）
-            DataBox.Bind<Mau.Contracts.IAudioService>(new Mau.Audio.AudioService());
-            AuditStore audit = new AuditStore();
-            AuditStore.Default = audit;
-            _runner.Audit = audit;
-            // [段3] 统一观测运行目录——O 系列：Data/runs/<ts>/ 四文件（log_all.txt/oa_all.txt/frame.txt/err_all.txt——design-ch4-observe §三）
-            string sessionRunId = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string runDir = Path.Combine(dataRoot, "Data", "runs", sessionRunId);
-            LogStore.ConfigureRuns(runDir);
-            FrameStore.Configure(Path.Combine(runDir, "frame.txt"));
-            // [段3a] Console 订阅——Log 同构行输出窗口（O4：过程行不再直打——统一观测）
-            LogStore.ConsoleSink = delegate (string line)
-            {
-                Console.WriteLine(line);
-            };
-            // [段3b] 配置面启动审计补记——schema 同步与段注册结论 + 受控根对账（启动期仅 Console 输出，此处落盘可回溯）
-            LogStore.Add("CatHome4", 1, "config.boot | " + schemaSyncNote + " | " + segmentNote, "CONFIG");
-            // A153 受控根对账落盘——同 path 多根走 L2（WARN）出声
-            if (rootsConflict)
-            {
-                LogStore.Add("CatHome4", 2, "roots.boot | " + rootsNote, "WORKSPACE");
-            }
-            else
-            {
-                LogStore.Add("CatHome4", 1, "roots.boot | " + rootsNote, "WORKSPACE");
-            }
-            // 根不可达告警——加载期跳过的非常驻根在此出声（L2）：面板可修正路径后重启恢复
-            for (int warnIdx = 0; warnIdx < workspace.LoadWarnings.Count; warnIdx = warnIdx + 1)
-            {
-                LogStore.Add("CatHome4", 2, "roots.boot | " + workspace.LoadWarnings[warnIdx], "WORKSPACE");
-            }
-            // [段4] 语料加载——扫描 Flows/FL_*.dll 统一装配（design-ch4-flow-scan §3.2：QuickCat + 全部工具组 Flow）
-            // 扫描化：文件名去 FL_ 前缀得 Flow 名（dll 名 = 组名——QuickCat 与工具组一视同仁）
-            // 容错：加载失败 → 警告 + 跳过注册（该组工具工单无人认领 → 超时诚实 ERR——不再宿主直执）
-            // 路由表数据化 + 工具定义数据化：加载后经 IFlow.GetMetaJson/GetToolsJson 读自曝 → 统一工具池（design-ch4-tools-pool §六）
-            // 工具组来源（组名 + Flow——A107：定义自曝失败时必须报得出是哪一组）
-            List<ToolGroupSource> poolGroups = new List<ToolGroupSource>();
-            string[] flowDlls = Directory.GetFiles(dllDir, "FL_*.dll");
-            Array.Sort(flowDlls, StringComparer.OrdinalIgnoreCase);
-            for (int f = 0; f < flowDlls.Length; f = f + 1)
-            {
-                string flowName = Path.GetFileNameWithoutExtension(flowDlls[f]);
-                if (flowName.StartsWith("FL_", StringComparison.Ordinal))
-                {
-                    flowName = flowName.Substring(3);
-                }
-                if (flowName.Length == 0)
-                {
-                    continue;
-                }
-                {
-                    FlowHandle handle = LoadToolGroup(flowName, dllDir);
-                    if (handle != null)
-                    {
-                        ToolGroupSource groupSource = new ToolGroupSource();
-                        groupSource.Name = flowName;
-                        groupSource.Flow = handle.Flow;
-                        poolGroups.Add(groupSource);
-                    }
-                }
-            }
-            // 内置工具定义源——宿主内建小表（本质也是 BRIK，只是内置：Note/time/random/info/host-*）
-            ToolPool.RebuildAll(poolGroups, BuildBuiltinToolsJson());
-            // A107——定义缺陷出声：逐条 L3 落盘（判例：整组静默消失无人知）
-            LogToolPoolDefects();
-            // A127——执行序对账：池内工具须在 ToolOrderTable 全量登记（未登记者静默落默认档 = 隐性缺口，此处出声）
-            LogToolOrderAccounting();
-            // A210——域类型白名单对账：白名单里的名字须在池内（拼写漂移 / 工具退役漏改 = 域内静默缺件，此处出声）
-            LogTimebackProfileAccounting();
-            // [段5] 会话面——上下文 + 前文恢复 + 工具定义 + 默认会话注册（P9.1 会话对象化：ChatSession 承载状态机——design-llm-streaming §六）
-            ChatContext chatCtx = new ChatContext();
-            // S1 ChatBridge 化——会话协调实例（注入提示词构建委托——CatCfg 域静态面 BuildInjectPrompt）
-            _chatBridge = new ChatBridge(BuildInjectPrompt);
-            // 系统通知服务——工具面「发声」通道（brick → DataBox → ChatBridge.PostSystemMessage systemauto；现行消费：web.search 验证升级）
-            DataBox.Bind<ISystemNotifyService>(new SystemNotifyService(_chatBridge));
-            // S4 Admin 域接线——依赖注入（管理 API 处理器 + cat.* 指令族迁入 CatHome4.Admin）
-            AdminService.Configure(_chatBridge, _oa, dataRoot, _mainThreadId, ExecuteTool, ObserveService.BuildSnapshotJson, new HtmlRootProvider(), apiConfigStore, qqBotStore, appearanceStore, llmConfig, _portBand);
-            AdminService.BuildEnvInfoProvider = BuildEnvInfo;
-            // 加载包数据面接线——pack 内置工具（池定义与猫挂载解析归 Admin 域；Core 零配置面依赖）
-            ChatSession.PackPayloadProvider = AdminService.BuildPackPayload;
-            // 授权面实时查询接线——工具调用判定按当前 cat.cfg 名单实时解析（design-ch4-tools §三·十一：注入面=提示，授权面=真相）
-            ChatSession.AuthorizedToolNamesProvider = AdminService.ResolveCatAuthorizedToolNames;
-            // 轮末总结 LLM 配置接线——catKey → [endpoint, apikey, model]（LLMSimpleRequest 服务工单参数；roundsummary）
-            ChatSession.RoundSummaryLlmProvider = AdminService.ResolveRoundSummaryLlm;
-            // 轮末总结播报接线——catKey → [启用标志, 音色槽位值]（A247：总结自动出声）
-            ChatSession.SummaryAudioProvider = AdminService.ResolveSummaryAudio;
-            // 延迟队列落盘接线——Data/runtime/delays.json（跨宿主重启保留；design-ch4-delay §七）
-            DelayQueue.Configure(Path.Combine(dataRoot, "Data", "runtime", "delays.json"));
-            DelayQueue.Load();
-            // 待处理消息队列落盘接线——Data/runtime/pending_<catKey>.json（A232：入队即物化 · 跨宿主重启保留；须先于会话创建）
-            ChatSession.ConfigurePendingStore(Path.Combine(dataRoot, "Data", "runtime"));
-            // 网页资产下载接线——任务表落盘 + 产物目录（workspace 根下 tools/Downloads）+ 完成注入回调（design-ch4-webfetch）
-            string downloadsDir = "";
-            for (int i = 0; i < workspace.Roots.Length; i = i + 1)
-            {
-                if (string.Equals(workspace.Roots[i].Id, "workspace", StringComparison.OrdinalIgnoreCase))
-                {
-                    downloadsDir = Path.Combine(Path.Combine(workspace.Roots[i].Path, "tools"), "Downloads");
-                    break;
-                }
-            }
-            webFetchSvc.Configure(
-                Path.Combine(dataRoot, "Data", "runtime", "downloads.json"),
-                downloadsDir,
-                delegate (string downloadCatKey, string downloadText)
-                {
-                    return _chatBridge.PostSystemMessage(downloadCatKey, "systemauto", downloadText) == "OK";
-                });
-            webFetchSvc.Start();
-            // py 服务自启——follow=true 的服务随宿主启动拉起（design-ch4-pytools §5.2；接线 2026-10-15）
-            {
-                IPyService pyAutostart;
-                if (DataBox.TryResolve<IPyService>(out pyAutostart) && pyAutostart != null)
-                {
-                    LogStore.Add("CatHome4", 1, "py.boot | " + pyAutostart.Autostart(), "CONFIG");
-                }
-            }
-            // timeback 归档落点接线——Data/runtime/timeback（全局计数 + 每次回收一个作用域文件；A104）
-            ChatSession.TimebackArchiveDirProvider = AdminService.ResolveTimebackArchiveDir;
-            // A201 会话元数据落点接线——Data/sessions/<id>/<id>.session.json（会话自身参数持久化；design-ch4-protocol §十三）
-            ChatSession.SessionMetaPathProvider = AdminService.ResolveSessionMetaPath;
-            // A201 显示名解析接线——session.new 时按 cat.cfg 现值刷新（新会话取最新）
-            ChatSession.DisplayNameProvider = AdminService.ResolveCatDisplayName;
-            // timeback 归档现场记录接线——回收时采集本猫 info 快照（归档文件第二行）
-            ChatSession.TimebackInfoProvider = BuildEnvInfo;
-            AdminService.NotifyBalloon = Program.NotifyBalloon;
-            // S5 Observe 域接线——依赖注入（观测面迁入 CatHome4.Observe）
-            ObserveService.Configure(_oa, _chatBridge, _toolFlowHandles, _toolFlowIds, _runner, null);
-            SessionStore chatStore = new SessionStore(Path.Combine(dataRoot, "Data", "sessions", "majordomo", "majordomo.jsonl"));
-            LlmMessage[] restored;
-            // M1 默认猫——API 配置身份从 sessions/majordomo/cat.cfg 读取；缺省 Guid.Empty=默认端点语义（每次调用实时解析）
-            // M2 默认猫同构——persona/toolNames/injectList 三字段同迁（每猫配置完全独立；注入源从 workspace.inject 切到 cat.cfg）
-            Guid defaultApiConfigId = Guid.Empty;
-            // R0.2 工具注册表——统一工具池灌入（Flow 自曝工具定义 + 内置定义源；替代 BuildToolSpecs 人工表）
-            // 🔴 必须先于 EnsureMajordomoCfg——SaveCatCfgData 内 ValidateToolNames 依赖注册表（空表 → 模板工具全被过滤）
-            ToolRegistry.Init(ToolPool.BuildSpecs(), ToolPool.BuildOwnerFlowMap(), ToolPool.BuildPrivilegedMap());
-            // 工具池摘要——启动观测（工具总数 + 组别分布；design-ch4-tools-pool §六）
-            string poolSummary = "工具池已聚合：" + ToolPool.AllNames().Length.ToString() + " 个工具 / " + ToolPool.AllGroups().Length.ToString() + " 个组";
-            if (ToolPool.Defects().Length > 0)
-            {
-                poolSummary = poolSummary + "｜定义缺陷 " + ToolPool.Defects().Length.ToString() + " 组（详见 err 面）";
-            }
-            LogStore.Add("CatHome4", 1, poolSummary, "CONFIG");
-
-            // 默认猫 cat.cfg 补建——缺失时按全局默认模板创建（新用户无 cfg 必然态；运行时缺省回退 → 启动落盘）
-            AdminService.EnsureMajordomoCfg();
-            AdminService.CatCfgData defaultCfg = AdminService.LoadCatCfg(Path.Combine(dataRoot, "Data", "sessions", "majordomo", "cat.cfg"));
-            _chatBridge.DefaultPersona = "";
-            _chatBridge.DefaultInjectList = new string[0];
-            string defaultToolNames = "";
-            if (defaultCfg != null)
-            {
-                if (defaultCfg.ApiConfigId != null && defaultCfg.ApiConfigId.Length > 0)
-                {
-                    Guid parsed;
-                    if (Guid.TryParse(defaultCfg.ApiConfigId, out parsed) && parsed != Guid.Empty)
-                    {
-                        defaultApiConfigId = parsed;
-                    }
-                }
-                if (defaultCfg.Persona != null)
-                {
-                    _chatBridge.DefaultPersona = defaultCfg.Persona;
-                }
-                if (defaultCfg.InjectList != null)
-                {
-                    _chatBridge.DefaultInjectList = defaultCfg.InjectList;
-                }
-                if (defaultCfg.ToolNames != null)
-                {
-                    defaultToolNames = defaultCfg.ToolNames;
-                }
-            }
-            // M2c 声明面裁剪——读时比对（非法名过滤/全空全量保底）；session.new 重注入复用
-            _chatBridge.DefaultToolSpecs = AdminService.FilterToolSpecs(AdminService.ResolveToolNames(defaultToolNames, true), true);
-            // 授权面原始串——实时解析输入（design-ch4-tools §三·十一）
-            _chatBridge.DefaultToolNames = defaultToolNames;
-            AdminService._defaultApiConfigId = defaultApiConfigId;
-            AdminService._defaultReasoningEffort = defaultCfg != null ? AdminService.NormalizeReasoningEffort(defaultCfg.ReasoningEffort) : "";
-            // R2.3 默认猫 qqbot 配置——majordomo cat.cfg 读取（缺省未绑定/禁用）
-            Guid defaultQqBotId = Guid.Empty;
-            bool defaultQqBotEnable = false;
-            if (defaultCfg != null)
-            {
-                if (defaultCfg.QqBotId != null && defaultCfg.QqBotId.Length > 0)
-                {
-                    Guid parsed;
-                    if (Guid.TryParse(defaultCfg.QqBotId, out parsed) && parsed != Guid.Empty)
-                    {
-                        defaultQqBotId = parsed;
-                    }
-                }
-                defaultQqBotEnable = defaultCfg.QqBotEnable;
-            }
-            _chatBridge.DefaultQqBotId = defaultQqBotId;
-            _chatBridge.DefaultQqBotEnable = defaultQqBotEnable;
-            if (chatStore.TryLoad(out restored))
-            {
-                chatCtx.ReplaceMessages(restored);
-                Console.WriteLine("[CMD] 会话前文恢复: " + restored.Length.ToString() + " 条消息（有前文——不注入）");
-            }
-            else
-            {
-                // 无前文 = 隐式新会话——按 cat.cfg injectList 清单注入（M2d：不再走全局 workspace.inject）
-                string injectPrompt = _chatBridge.BuildPrompt(workspace, _chatBridge.DefaultToolSpecs, _chatBridge.DefaultPersona, _chatBridge.DefaultInjectList);
-                chatCtx.SetSystemPrompt(injectPrompt);
-                Console.WriteLine("[CMD] 新会话注入: " + _chatBridge.DefaultInjectList.Length.ToString() + " 个文件");
-            }
-            // 会话标识 ≡ 猫 key（唯一标识——不再有独立"会话身份"层）；首启 / 外部改写时校正并回写
-            string defaultSessionId = chatStore.SessionId;
-            if (!string.Equals(defaultSessionId, "majordomo", StringComparison.Ordinal))
-            {
-                defaultSessionId = "majordomo";
-                chatStore.SessionId = defaultSessionId;
-                chatStore.Rewrite(chatCtx.GetMessages());
-                Console.WriteLine("[CMD] 会话标识对齐猫 key: " + defaultSessionId);
-            }
-            // P9.1 会话对象化——默认会话注册（工具表就位后构造——ChatSession 状态机承载面；M2c 声明面按猫裁剪）
-            // 端点角色——默认猫主要 / 备用（同一实例注入 Runtime 与会话；自动故障转移与手动对调共用）
-            LlmEndpointRole defaultApiRole = new LlmEndpointRole();
-            AdminService._defaultApiRole = defaultApiRole;
-            SessionViewStore chatViewStore = new SessionViewStore(Path.Combine(dataRoot, "Data", "sessions", "majordomo", "majordomo.view.jsonl"));
-            // A221 工具面解析——持久化快照优先（会话工具头与 system prompt 同命；重启不改面）
-            ToolSpec[] defaultTools = ChatSession.ResolveSessionTools(defaultSessionId, _chatBridge.DefaultToolSpecs);
-            _chatBridge.DefaultSession = new ChatSession(defaultSessionId, "majordomo", chatCtx, chatStore,
-                new DeepSeekLlmRuntime(apiConfigStore, defaultApiConfigId, llmConfig, defaultApiRole, AdminService._defaultReasoningEffort), _oa, defaultTools, ExecuteTool, chatViewStore);
-            _chatBridge.DefaultSession.AttachApiRole(defaultApiRole);
-            // 完整前文留档——落点 sessions_ctx（与 sessions / sessions_old 同级；份数走 chat.full_ctx_keep）
-            _chatBridge.DefaultSession.AttachFullContext(Path.Combine(dataRoot, "Data", "sessions_ctx"));
-            // M4e 猫级白名单——默认猫启用根（cat.cfg enabledRoots；缺省全量）+ 工具执行猫上下文
-            _chatBridge.DefaultSession.SetCatKey("majordomo");
-            _chatBridge.DefaultSession.SetUserInjectIdleOnly(defaultCfg != null && defaultCfg.UserInjectIdleOnly);
-            AdminService.ApplyCatRoots("majordomo");
-            _chatBridge.DefaultSession.AttachEnvInfo(() => BuildEnvInfo());
-            _chatBridge.DefaultSession.AttachRoundNotify(Program.NotifyBalloon);
-            _chatBridge.RegisterSession(_chatBridge.DefaultSession);
-            // F4 视图——从真实前文重建视图层（恢复/注入后——真实前文绝对可用）
-            _chatBridge.DefaultSession.LoadView();
-            // A201 会话元数据——启动恢复（实例 ID / 创建时刻 / 两级 token 累计 + A202 请求边界态；文件缺失走首建）
-            _chatBridge.DefaultSession.LoadMeta();
-            // LLM 注入探测——默认端点解析（无默认端点 = 未注入；启动失败语义由语料面消费时暴露）
-            CH_LlmApiConfig llmProbeConfig = apiConfigStore.ResolveDefault();
-            string llmKeyProbe = "";
-            if (llmProbeConfig != null)
-            {
-                llmKeyProbe = apiConfigStore.GetSecret(llmProbeConfig.ApiConfigId);
-            }
-            string llmState;
-            if (llmKeyProbe.Length == 0)
-            {
-                llmState = "未注入(ERR路径)";
-            }
-            else
-            {
-                llmState = "已注入";
-            }
-            // A41 启动自检——默认端点存在性 + 缓存隔离声明合法性（失败必须可见：缺失/非法一律记 WARN，不静默）
-            if (llmProbeConfig == null)
-            {
-                LogStore.Add("CatHome4", 2, "启动自检：LLM 配置池无默认端点（IsDefault 未设置）——未显式绑定端点的会话无法发起请求", "CONFIG");
-            }
-            else if (llmKeyProbe.Length == 0)
-            {
-                LogStore.Add("CatHome4", 2, "启动自检：默认端点「" + llmProbeConfig.DisplayName + "」缺少 API Key（secrets 未注入）", "CONFIG");
-            }
-            string cacheIsolationProbe = llmConfig.Get("llm.cache_isolation", "");
-            if (cacheIsolationProbe.Length > 0)
-            {
-                string normalizedIsolation = cacheIsolationProbe.Trim().ToLowerInvariant();
-                if (normalizedIsolation != "cat" && normalizedIsolation != "session" && normalizedIsolation != "off")
-                {
-                    LogStore.Add("CatHome4", 2, "启动自检：llm.cache_isolation 取值非法（" + cacheIsolationProbe + "）——运行时回落 cat；合法值 cat/session/off", "CONFIG");
-                }
-            }
-            // P8.5 观测落点——workspace.load 审计 + 全局盒 roots 摘要（design §七：当前受控根永远可从观测层看到）
-            System.Text.StringBuilder rootSummary = new System.Text.StringBuilder();
-            for (int i = 0; i < workspace.Roots.Length; i++)
-            {
-                if (i > 0)
-                {
-                    rootSummary.Append("|");
-                }
-                rootSummary.Append(workspace.Roots[i].Id);
-                if (workspace.Roots[i].Writable)
-                {
-                    rootSummary.Append("(rw)");
-                }
-                else
-                {
-                    rootSummary.Append("(ro)");
-                }
-            }
-            DataBox.Set<string>("global", "workspace.roots", rootSummary.ToString());
-            LogStore.Add("CatHome4", 1, "工作区已加载：" + workspace.Roots.Length.ToString() + " 个根、" + workspace.Inject.Length.ToString() + " 条注入（" + rootSummary.ToString() + "）", "CONFIG");
-            Console.WriteLine("[CMD] 就绪 | Flows: " + ToolGroupSummary() + " | LLM: " + llmState + " | 帧节流 " + FrameTargetMs + "ms");
-            // [段6] HTTP 外观层启动——P6 最小闭环（协议 design-ch4-protocol.md；快照回调 + 指令投递回调注入）
-            // P9.3 多实例化签名——sessionId 归属默认会话；catsBuilder 多猫列表（管理页签数据源）；主端口服务 index.html
-            // F2.1/F2.2——主端口纯管理面板（index.html）；majordomo 对话走独立端口（chat.html，与多猫同构）
-            // 🔴 非交互模式（--run/--script/--selfcheck/--tool-check）整段跳过——探针通道单指令直执 + 进程自退，
-            //    不启动外观层与常驻附属（多猫 / 前端测试服务 / QQ 桥）：端口零占用，与常驻实例彻底解耦（A74）
             if (headless)
             {
-                Console.WriteLine("[CMD] 非交互模式——外观层与常驻附属未启动（端口零占用）");
+                Console.WriteLine("[CMD] 启动降级 " + StartupDegradation.Count.ToString() + " 项——详见 startup_report.json");
+                WriteStartupReport("non-interactive");
                 return;
             }
-            _httpHost = HttpHost.Start(new HttpHostOptions
+            WriteStartupReport("interactive");
+            if (StartupDegradation.HasAny)
             {
-                Port = ResolveHttpPort(llmConfig),
-                FrontendTestPort = _portBand.FrontendTestPort,
-                SessionId = _chatBridge.DefaultSession.Id,
-                SnapshotBuilder = ObserveService.BuildSnapshotJson,
-                Dispatcher = DispatchCommand,
-                EnvelopeBuilder = AdminService.MakeChatEnvelopeBuilder(_chatBridge.DefaultSession),
-                FrameBuilder = ObserveService.BuildCompactFrameJson,
-                CatsBuilder = AdminService.BuildCatsJson,
-                PatchBuilder = ObserveService.BuildPatchJson,
-                ServeChatPage = false,
-                RouteRegistrar = AdminService.RegisterAdminRoutes,
-                DepsRefresh = DependencyProbe.Refresh,
-                LlmProbe = CatHome4.Observe.LlmEndpointProbe.ProbeAsync,
-                HtmlRootProvider = new HtmlRootProvider()
-            });
-            // F2.2 majordomo 特殊会话——独立端口 serve chat.html + 强制自启（DefaultSession 事件推送绑独立端口 host）
-            AdminService.StartMajorHost();
-            // [段6b] 启动扫描——sessions/*/cat.cfg 中 running 猫拉起（主 HTTP 就位后——每猫 HttpHost 独立实例）
-            AdminService.LoadCatsOnBoot();
-            Console.WriteLine("[CMD] HTTP 外观层就绪: http://127.0.0.1:" + _httpHost.Port + " | Majordomo 对话: http://127.0.0.1:" + AdminService.MajorPort);
-            // [段6c] 前端测试服务拉起——开发流程（改前端 → 跑测试 → 刷新生效）；未监听则启动 node server.js
-            EnsureFrontendTestService();
-            // R2.3 QQ 管理器启动——扫描 Bot 池建立全部连接（附属功能组件；Bot 池空 = 零连接静默）
-            // S3 解耦——注入绑定目标收集面（默认猫 + 多猫注册表实现）
-            QQBotService.SetCollector(new QqTargetCollector());
-            QQBotService.SetFileCacheRoot(Path.Combine(dataRoot, "Data", "qqbot-files"));
-            QQBotService.Start();
+                LogStore.Add("CatHome4", 2, "boot.summary | " + StartupDegradation.BuildSummaryLine(), "BOOT");
+                ShowStartupDegradeWindow();
+            }
         }
         /// <summary>
         /// 环境信息——运行版本 + LLM 端点类型 + 当前时间（info 内置工具数据源；R0.2 拍板：不显示工具组清单——工具注册是前文初始化一次性）
@@ -705,7 +267,7 @@ namespace CH4
                 version = "?";
             }
             // info 返回体 = 分类 JSON 块（design-ch4-tools 附录 §info——LLM 可读优先：分类 + 缩进 + 中文直显）
-            // 分类：version(版本+编译时刻) / time(当前时间) / llm / endpoint(本地端点) / roots / tokens / packs / qqbot
+            // 分类：version(版本+编译时刻) / time(当前时间) / llm / endpoint(本地端点) / roots / tokens / packs
             string catKey = ToolCatContext.CurrentCatKey;
             if (catKey == null)
             {
@@ -733,7 +295,7 @@ namespace CH4
             try
             {
                 bool followDefault = true;
-                CH_LlmApiConfig cfg = AdminService.ResolveEffectiveApiConfig(catKey, out followDefault);
+                CH_LlmApiConfig cfg = CatHostService.ResolveEffectiveApiConfig(catKey, out followDefault);
                 if (cfg != null)
                 {
                     // 端点摘要——主机（去协议与路径；端点非私密——key 在 secrets 面）
@@ -761,7 +323,7 @@ namespace CH4
             info["llm"] = llmBlock;
             // [段4] endpoint——本地端点位置（本猫对话页 + 主管理面板；端口未监听 = 空串）
             Dictionary<string, object> endpointBlock = new Dictionary<string, object>();
-            int chatPort = AdminService.ResolveCatPort(catKey);
+            int chatPort = CatHostService.ResolveCatPort(catKey);
             endpointBlock["chat"] = chatPort > 0 ? "http://127.0.0.1:" + chatPort.ToString() : "";
             int panelPort = 0;
             if (_httpHost != null)
@@ -774,7 +336,7 @@ namespace CH4
             List<Dictionary<string, object>> rootList = new List<Dictionary<string, object>>();
             if (catKey.Length > 0)
             {
-                WorkspaceConfig.RootEntry[] entries = AdminService.ResolveCatRootEntries(catKey);
+                WorkspaceConfig.RootEntry[] entries = CatHostService.ResolveCatRootEntries(catKey);
                 for (int i = 0; i < entries.Length; i = i + 1)
                 {
                     Dictionary<string, object> item = new Dictionary<string, object>();
@@ -796,7 +358,7 @@ namespace CH4
             }
             info["roots"] = rootList;
             // [段6] tokens——前文长度（请求级实时值优先，未发起请求则回落最近一轮轮末落盘值——「看别猫」场景 idle 猫也有可读值）+ 最近前文变动时刻（Unix 毫秒；展示层格式化）
-            ChatSession session = AdminService.FindCatSession(catKey);
+            ChatSession session = CatHostService.FindCatSession(catKey);
             long ctxLen = 0;
             long lastChangeAt = 0;
             if (session != null)
@@ -814,20 +376,61 @@ namespace CH4
             {
                 info["packs"] = packList;
             }
-            // [段8] qqbot——渠道说明（未接入 = 不输出该键）
-            string qqbotShow = AdminService.BuildCatQqBotInfo(catKey);
-            if (qqbotShow.Length > 0)
+            // [段8b] db——授权库清单（A279）：库权限（cat.cfg dbLibs）已授权时 info 必须自证可见面；
+            // 判据取 DbService.ListLibs（按 catId 授权过滤 + 摘要自证全集）；服务缺失 / 读失败如实出声，不静默省略该段
+            Dictionary<string, object> dbBlock = new Dictionary<string, object>();
+            DbService dbSvc = null;
+            bool dbSvcReady = DataBox.TryResolve<DbService>(out dbSvc);
+            if (!dbSvcReady || dbSvc == null)
             {
-                Dictionary<string, object> qqbotBlock = new Dictionary<string, object>();
-                qqbotBlock["usage"] = qqbotShow;
-                info["qqbot"] = qqbotBlock;
+                dbBlock["ok"] = false;
+                dbBlock["reason"] = "数据库服务未绑定";
             }
+            else
+            {
+                DbResult dbList = dbSvc.ListLibs(catKey);
+                dbBlock["ok"] = dbList.Ok;
+                if (dbList.Ok)
+                {
+                    dbBlock["summary"] = dbList.Message;
+                    JsonDocument dbDoc = JsonUtil.Parse(dbList.Data, "info.db");
+                    if (dbDoc != null)
+                    {
+                        JsonElement dbLibsNode;
+                        if (dbDoc.RootElement.TryGetProperty("libs", out dbLibsNode) && dbLibsNode.ValueKind == JsonValueKind.Array)
+                        {
+                            dbBlock["libs"] = dbLibsNode.Clone();
+                        }
+                        dbDoc.Dispose();
+                    }
+                }
+                else
+                {
+                    dbBlock["reason"] = dbList.Code + " " + dbList.Message;
+                }
+            }
+            bool dbRootVisible = false;
+            for (int i = 0; i < rootList.Count; i = i + 1)
+            {
+                object rootIdObj;
+                if (rootList[i].TryGetValue("id", out rootIdObj))
+                {
+                    string rootIdText = rootIdObj as string;
+                    if (rootIdText != null && string.Equals(rootIdText, "db", StringComparison.OrdinalIgnoreCase))
+                    {
+                        dbRootVisible = true;
+                        break;
+                    }
+                }
+            }
+            dbBlock["rootVisible"] = dbRootVisible;
+            info["db"] = dbBlock;
             // [段9] tools_drift——工具面漂移（会话注入面 vs 当前授权集；仅不一致时输出——design-ch4-tools §三·十一）
             // added 附用法摘要（name/desc/args——注册表声明派生，冷启动猫不新会话即可上手；removed 只给名字）
             if (session != null)
             {
                 string[] declaredNames = session.DeclaredToolNames;
-                string[] authorizedNames = AdminService.ResolveCatAuthorizedToolNames(catKey);
+                string[] authorizedNames = CatHostService.ResolveCatAuthorizedToolNames(catKey);
                 List<string> driftAdded = new List<string>();
                 List<string> driftRemoved = new List<string>();
                 for (int i = 0; i < authorizedNames.Length; i = i + 1)
@@ -901,7 +504,7 @@ namespace CH4
                     timebackAny = true;
                 }
             }
-            string timebackDir = AdminService.ResolveTimebackArchiveDir(catKey);
+            string timebackDir = CatHostService.ResolveTimebackArchiveDir(catKey);
             if (timebackDir.Length > 0)
             {
                 TimebackArchive timebackArchive = new TimebackArchive(timebackDir);
@@ -929,7 +532,7 @@ namespace CH4
             {
                 info["timeback"] = timebackBlock;
             }
-            return JsonSerializer.Serialize(info, AdminService.InfoJsonOptions);
+            return JsonSerializer.Serialize(info, CatHostService.InfoJsonOptions);
         }
         /// <summary>
         /// timeback 归档行摘要——info timeback.recent 条目（只取观测字段；findings 全文不进 info）。
@@ -1024,12 +627,6 @@ namespace CH4
                 {
                     return;
                 }
-                // cwd 中立——node 的 cwd 恒为系统临时目录，永不指向 testDir：testDir 位于运行区内
-                // （MauOut\html\tests），cwd 落在那里会让 node 持住运行区目录句柄，下一次 restart-* 的
-                // 「原子切换运行区」改名必失败（判例 2026-10-18 / 2026-10-30 三轮）。
-                // server.js 全程只用 __dirname、不依赖 cwd，故脚本路径必须绝对化。
-                string neutralCwd = System.IO.Path.GetTempPath();
-                string serverJs = System.IO.Path.Combine(testDir, "server.js");
                 // node_modules 缺失 → 自动部署（npm install + playwright chromium + 启动 server.js——后台链；纯净仓库跟随 Mau 自动部署）
                 if (!System.IO.Directory.Exists(System.IO.Path.Combine(testDir, "node_modules")))
                 {
@@ -1043,9 +640,8 @@ namespace CH4
                     System.Diagnostics.ProcessStartInfo deployPsi = new System.Diagnostics.ProcessStartInfo
                     {
                         FileName = "cmd.exe",
-                        // --prefix 指定安装目录（cwd 中立后 npm 不能靠 cwd 找 package.json）；node 走绝对脚本路径
-                        Arguments = "/c npm install --prefix \"" + testDir + "\" && node \"" + serverJs + "\"",
-                        WorkingDirectory = neutralCwd,
+                        Arguments = "/c npm install && node server.js",
+                        WorkingDirectory = testDir,
                         CreateNoWindow = true,
                         UseShellExecute = false
                     };
@@ -1059,8 +655,8 @@ namespace CH4
                 System.Diagnostics.ProcessStartInfo nodePsi = new System.Diagnostics.ProcessStartInfo
                 {
                     FileName = "node",
-                    Arguments = "\"" + serverJs + "\"",
-                    WorkingDirectory = neutralCwd,
+                    Arguments = "server.js",
+                    WorkingDirectory = testDir,
                     CreateNoWindow = true,
                     UseShellExecute = false
                 };
@@ -1072,8 +668,11 @@ namespace CH4
             }
             catch (Exception ex)
             {
-                // 测试服务启动失败不影响宿主主功能
+                // 测试服务启动失败不影响宿主主功能——A260 二期：接启动降级登记面（原仅一行 L2 日志，启动健康面不可见）
                 LogStore.Add("CatHome4", 2, "前端测试服务启动失败: " + ex.Message, "CONFIG");
+                StartupDegradation.Report("FE_TEST_SERVICE_FAILED", StartupDegradation.KindEnv, "前端测试服务",
+                    StartupDegradation.StateUnavailable, "前端测试服务拉起失败：" + ex.Message,
+                    "开发期手动执行 node server.js（html/tests 目录）后重启", "S7");
             }
         }
         /// <summary>

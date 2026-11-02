@@ -11,6 +11,8 @@ var catCfgInjectList = [];
 var catCfgAllPacks = [];
 // A107——工具组定义缺陷（后端 defectGroups——不可用组不进勾选面 + 弹层提示）
 var catCfgDefectGroups = [];
+// A275——库权限池可取性（false = 清单不可取，保存时不提交 dbLibs，避免静默清空）
+var catCfgDbLibsAvailable = false;
 
 function openCatCfg(catId, name) {
     catCfgTarget = catId;
@@ -29,9 +31,7 @@ function openCatCfg(catId, name) {
             catCfgDefectGroups = d.defectGroups || [];
             renderToolDefectNote(catCfgDefectGroups, d.staleToolNames || []);
             renderApiOptions(d.apiOptions || [], d.apiConfigId || '');
-            renderQqBotOptions(d.qqbotOptions || [], d.qqbotId || '');
             renderAppearanceOptions(d.appearanceOptions || [], d.appearanceId || '');
-            document.getElementById('catCfgQqEnable').checked = !!d.qqbotEnable;
             document.getElementById('catCfgIdleOnly').checked = !!d.userInjectIdleOnly;
             renderEffortOptions(d.reasoningEffort || '', d.defaultReasoningEffort || '');
             document.getElementById('catCfgName').value = d.displayName || '';
@@ -43,6 +43,9 @@ function openCatCfg(catId, name) {
             renderPackChecks(catCfgAllPacks, d.packs || []);
             // M4e 猫级白名单——启用根勾选（workspace 强制常驻不可取消）
             renderRootChecks('catCfgRoots', d.allRoots || [], d.enabledRoots || []);
+            // A275 库权限——库池 = 注册表登记的库（不可取时如实告警，不当成「无库」）
+            catCfgDbLibsAvailable = d.dbLibsAvailable === true;
+            renderDbLibChecks(d.allLibs || [], d.dbLibs || [], catCfgDbLibsAvailable);
             catCfgModal.style.display = 'flex';
         })
         .catch(function () {
@@ -119,30 +122,6 @@ function renderEffortOptions(current, globalValue) {
         opt.value = values[i];
         opt.textContent = values[i];
         if (values[i] === current) { opt.selected = true; }
-        sel.appendChild(opt);
-    }
-}
-
-// R2.3 QQ Bot 下拉——空选项=未绑定；多猫可绑同一 Bot
-function renderQqBotOptions(options, current) {
-    var sel = document.getElementById('catCfgQqBot');
-    sel.textContent = '';
-    var none = document.createElement('option');
-    none.value = '';
-    none.textContent = '（未绑定）';
-    if (!current || current.length === 0) { none.selected = true; }
-    sel.appendChild(none);
-    for (var i = 0; i < options.length; i++) {
-        var opt = document.createElement('option');
-        opt.value = options[i].qqBotId;
-        var label = options[i].displayName + ' (' + options[i].qqBotId.substring(0, 8) + '…)';
-        // A58 1:1——一只 Bot 只能绑一只猫：已被他猫占用 → 标注并禁用（后端保存时仍显式校验）
-        if (options[i].boundCat && options[i].qqBotId !== current) {
-            label = label + '（已被 ' + options[i].boundCat + ' 绑定）';
-            opt.disabled = true;
-        }
-        opt.textContent = label;
-        if (options[i].qqBotId === current) { opt.selected = true; }
         sel.appendChild(opt);
     }
 }
@@ -383,13 +362,15 @@ function saveCatCfg() {
         toolNames: toolNames.join(','),
         injectList: catCfgInjectList,
         packs: collectPackChecks(),
-        qqbotId: document.getElementById('catCfgQqBot').value,
-        qqbotEnable: document.getElementById('catCfgQqEnable').checked,
         userInjectIdleOnly: document.getElementById('catCfgIdleOnly').checked,
         appearanceId: document.getElementById('catCfgAppearance').value,
         reasoningEffort: document.getElementById('catCfgEffort').value,
         enabledRoots: collectRootChecks('catCfgRoots')
     };
+    // A275——库清单不可取时不提交 dbLibs（字段级合并：缺省保留磁盘现值，避免静默清空）
+    if (catCfgDbLibsAvailable) {
+        payload.dbLibs = collectDbLibChecks();
+    }
     fetch('/api/v1/cat-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -398,10 +379,21 @@ function saveCatCfg() {
         .then(function (r) { return r.json(); })
         .then(function (d) {
             if (d.ok) {
-                // A132 剔除出声——被剔池外工具名显式告知（不静默；明细同时进宿主日志）
-                var removed = d.removedToolNames;
-                if (removed && removed.length > 0) {
-                    document.getElementById('catCfgMsg').textContent = '已保存——⚠️ 已剔除池外工具名 ' + removed.length + ' 个：' + removed.join('、') + '（请重开配置确认名单）';
+                // A132 / A261 剔除出声——池外工具名与池外根 id 显式告知（不静默；明细同时进宿主日志）
+                var warns = [];
+                var removedTools = d.removedToolNames;
+                if (removedTools && removedTools.length > 0) {
+                    warns.push('已剔除池外工具名 ' + removedTools.length + ' 个：' + removedTools.join('、'));
+                }
+                var removedRoots = d.removedEnabledRoots;
+                if (removedRoots && removedRoots.length > 0) {
+                    warns.push('已剔除池外根 id ' + removedRoots.length + ' 个：' + removedRoots.join('、'));
+                }
+                if (d.rootsPoolUnavailable) {
+                    warns.push('全局根池不可用——白名单已按空处理（仅常驻根可用）');
+                }
+                if (warns.length > 0) {
+                    document.getElementById('catCfgMsg').textContent = '已保存——⚠️ ' + warns.join('；') + '（请重开配置确认名单）';
                 } else {
                     document.getElementById('catCfgMsg').textContent = '已保存——API 即时生效；人设/工具/前文 List/显示名 新会话生效';
                 }
@@ -486,6 +478,82 @@ function collectRootChecks(boxId) {
     var boxes = document.querySelectorAll('#' + boxId + ' input[type=checkbox].root-cb');
     for (var i = 0; i < boxes.length; i++) {
         if (boxes[i].checked) { ids.push(boxes[i].getAttribute('data-root')); }
+    }
+    return ids;
+}
+
+// A275 库权限勾选面——dbLibs（本猫可用库白名单；池 = 注册表登记的库）
+// available=false：数据库服务未绑定 / 宿主版本过旧——如实告警，不把「不可取」渲染成「无库」
+function renderDbLibChecks(allLibs, dbLibs, available) {
+    var box = document.getElementById('catCfgDbLibs');
+    box.textContent = '';
+    if (!available) {
+        var tip = document.createElement('div');
+        tip.style.cssText = 'width:100%;font-size:var(--ch-fs-tag);color:var(--ch-err)';
+        tip.textContent = '⚠ 库清单不可取——数据库服务未绑定或宿主版本过旧；保存不改动 dbLibs';
+        box.appendChild(tip);
+        return;
+    }
+    var checked = {};
+    var configured = [];
+    if (dbLibs && dbLibs.length > 0) {
+        for (var i = 0; i < dbLibs.length; i = i + 1) {
+            if (dbLibs[i] && dbLibs[i].length > 0) {
+                checked[dbLibs[i]] = true;
+                configured.push(dbLibs[i]);
+            }
+        }
+    }
+    var pool = allLibs || [];
+    if (pool.length === 0 && configured.length === 0) {
+        box.textContent = '（尚无库——控制台「数据」页签可新建）';
+        return;
+    }
+    var inPool = {};
+    for (var j = 0; j < pool.length; j = j + 1) {
+        var id = pool[j].id || '';
+        if (id.length === 0) { continue; }
+        inPool[id] = true;
+        box.appendChild(makeDbLibChip(id, pool[j].entries, pool[j].broken === true, checked[id] === true, false));
+    }
+    // 已配置但池内不存在——如实列出（不静默丢弃；取消勾选即清）
+    for (var k = 0; k < configured.length; k = k + 1) {
+        if (inPool[configured[k]] === true) { continue; }
+        box.appendChild(makeDbLibChip(configured[k], -1, false, true, true));
+    }
+}
+
+function makeDbLibChip(id, entries, broken, isChecked, stale) {
+    var label = document.createElement('label');
+    label.style.cssText = 'display:flex;align-items:center;gap:4px;background:var(--ch-bg-chip);border:1px solid var(--ch-line);border-radius:4px;padding:3px 8px;font-size:var(--ch-fs-tag);color:var(--ch-fg);cursor:pointer';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'db-lib-cb';
+    cb.setAttribute('data-lib', id);
+    cb.checked = isChecked;
+    label.appendChild(cb);
+    var txt = document.createElement('span');
+    var text = id;
+    if (entries >= 0) { text = text + ' · ' + entries + ' 条'; }
+    if (stale) {
+        text = text + '（未登记）';
+        label.style.color = 'var(--ch-warn)';
+        label.title = '注册表无此库——勾选保留，取消勾选即清';
+    }
+    if (broken) {
+        text = text + ' ⚠ 坏库';
+        label.style.color = 'var(--ch-err)';
+    }
+    txt.textContent = text;
+    label.appendChild(txt);
+    return label;
+}
+
+function collectDbLibChecks() {
+    var ids = [];
+    var boxes = document.querySelectorAll('#catCfgDbLibs input[type=checkbox].db-lib-cb');
+    for (var i = 0; i < boxes.length; i = i + 1) {
+        if (boxes[i].checked) { ids.push(boxes[i].getAttribute('data-lib')); }
     }
     return ids;
 }
@@ -680,7 +748,7 @@ function openTplApply() {
         .catch(function (e) { document.getElementById('tplApplyList').textContent = '读取失败: ' + e; });
 }
 
-// 逐猫读配置（串行）——比对要现况；套用要保留字段（qqbotEnable / enabledRoots / qqbotId）
+// 逐猫读配置（串行）——比对要现况；套用要保留字段（enabledRoots）
 function loadTplApplyCats(cats) {
     tplApplyCats = [];
     var idx = 0;
@@ -719,7 +787,7 @@ function renderTplApplyList() {
         cb.className = 'tpl-apply-cb';
         cb.setAttribute('data-cat', item.id);
         cb.checked = matched;
-        // 配置读不到 → 无法安全套用（缺字段会丢 qqbotEnable / enabledRoots）——禁用勾选
+        // 配置读不到 → 无法安全套用（缺字段会丢 enabledRoots）——禁用勾选
         cb.disabled = item.cfg === null;
         row.appendChild(cb);
         var txt = document.createElement('span');
@@ -735,8 +803,8 @@ function closeTplApply() {
     document.getElementById('tplApplyModal').style.display = 'none';
 }
 
-// 一键套用——逐猫串行：模板五字段覆盖（含目录白名单）+ 该猫 API/QQBot 原样带回
-// （后端 cat-config 2026-10-01 起为字段级合并写——缺省即保留；此处显式带回 qqbotId/qqbotEnable 属幂等冗余，行为不变）
+// 一键套用——逐猫串行：模板五字段覆盖（含目录白名单）
+// （后端 cat-config 2026-10-01 起为字段级合并写——缺省即保留；API 配置与目录白名单以外的字段不动）
 function applyTplToCats() {
     var boxes = document.querySelectorAll('#tplApplyList input.tpl-apply-cb');
     var targets = [];
@@ -776,10 +844,8 @@ function applyTplToCats() {
             toolNames: tpl.defaultToolNames,
             packs: tpl.defaultPacks,
             injectList: tpl.defaultInjectList,
-            qqbotEnable: !!item.cfg.qqbotEnable,
             enabledRoots: tpl.defaultEnabledRoots
         };
-        if (item.cfg.qqbotId) { payload.qqbotId = item.cfg.qqbotId; }
         msg.textContent = '套用中… ' + idx + '/' + targets.length;
         fetch('/api/v1/cat-config', {
             method: 'POST',
@@ -849,9 +915,20 @@ function renderRoots() {
             var editBtn = document.createElement('button');
             editBtn.textContent = '编辑';
             editBtn.className = 'btn-mini tight info';
-            editBtn.onclick = function () {
-                enterEditRoot(idx);
-            };
+            var lockedRootId = (rootsList[idx].id || '').toLowerCase();
+            if (lockedRootId === 'db' || lockedRootId === 'data') {
+                // 路径锁定根（A273）——data = 应用数据根 / db = 数据根/Data/db：路径由系统计算，后端同校验拒绝
+                editBtn.disabled = true;
+                if (lockedRootId === 'db') {
+                    editBtn.title = '数据库根固定为 数据根/Data/db——不可修改';
+                } else {
+                    editBtn.title = '数据根固定为应用数据目录——不可修改';
+                }
+            } else {
+                editBtn.onclick = function () {
+                    enterEditRoot(idx);
+                };
+            }
             tdOp.appendChild(editBtn);
             var rm = document.createElement('button');
             rm.textContent = '移除';
@@ -901,6 +978,12 @@ function enterEditRoot(idx) {
                 pathIn.value = rootsList[rowIdx].path;
                 pathIn.className = 'input-mini';
                 pathIn.style.width = '96%';
+                var isLockedRow = isFixedRow && ((rootsList[rowIdx].id || '').toLowerCase() === 'db' || (rootsList[rowIdx].id || '').toLowerCase() === 'data');
+                if (isLockedRow) {
+                    // 路径锁定根（data / db）——只读展示，确定时忽略路径改动
+                    pathIn.disabled = true;
+                    pathIn.title = '路径由系统固定——不可修改';
+                }
                 tdPath.appendChild(pathIn);
                 tr.appendChild(tdPath);
                 var tdNote = document.createElement('td');
@@ -941,6 +1024,10 @@ function enterEditRoot(idx) {
                 okBtn.onclick = function () {
                     var nid = idIn.value.trim().toLowerCase();
                     var npath = pathIn.value.trim();
+                    if (isLockedRow) {
+                        // 路径锁定根——以原值落回（防程序性改动绕过只读）
+                        npath = rootsList[rowIdx].path;
+                    }
                     var nw = wSel.value === 'true';
                     if (nid.length === 0 || npath.length === 0) {
                         document.getElementById('rootsMsg').textContent = 'id 和路径不能为空';

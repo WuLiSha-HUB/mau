@@ -3,7 +3,7 @@
 //
 // 覆盖：
 //   ① 声明面 ↔ 落位面不漂移——`TOOL_DECL`（各件自注册）与 `TOOL_SKELETONS`（落位表）键集必须一致，
-//      且同为运行态工具池 72 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
+//      且同为运行态工具池 86 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
 //   ② 骨架分派——登记工具走对应骨架；未登记工具走形态探测回落（禁止空白）
 //   ③ 专属骨架——`info`（分类摊平）/ `catinfo`（每猫一行）
 //   ④ 折叠行四级——前缀（图标 / 批次 / 失败）· 声明层 headline · 骨架兜底 · 规模后缀
@@ -19,7 +19,7 @@ beforeAll(async () => {
     await bootChatPage();
 });
 
-// 工具池基准——72 件（按工具组；新增工具须同批登记落位表 + 落件 + 本表）
+// 工具池基准——86 件（按工具组；新增工具须同批登记落位表 + 落件 + 本表）
 const POOL = [
     // TextCat 7
     'text-read', 'text-read_lines', 'text-read_between', 'text-write', 'text-append', 'text-replace', 'text-grep',
@@ -42,6 +42,12 @@ const POOL = [
     'web-search', 'web-ds-search', 'web-fetch', 'web-fetch-jobs', 'image-analyze', 'image-inject',
     // AudioCat 2 · PyCat 3
     'audio-play', 'audio-speak', 'py-run', 'py-list', 'py-service',
+    // DbCat 5（A274）
+    'db-put', 'db-query', 'db-get', 'db-update', 'db-delete',
+    // DbAdmin 3（库级管理——明细分列 / 建库 / 删库）
+    'dbAdmin-libs', 'dbAdmin-create', 'dbAdmin-drop',
+    // TsCat 5（A294——TS 编码工具面）
+    'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -65,9 +71,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 73 件', () => {
+    it('落位表 = 工具池 86 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(73);
+        expect(POOL.length).toBe(86);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -137,8 +143,6 @@ describe('专属骨架——info / catinfo（逐字段摊平）', () => {
         expect(text).toContain('可见根');
         expect(text).toContain('mau(rw)');
         expect(text).toContain('加载包');
-        // 缺类不显示（无 qqbot 键 → 不出现该行）
-        expect(text).not.toContain('QQBot');
     });
 
     it('catinfo——整块 JSON → 每猫一行（运行态 / 相位 / 前文 / 活跃）', () => {
@@ -261,5 +265,253 @@ describe('声明层覆盖——段内容生效', () => {
         const group = node.querySelector('.chat-imgs');
         expect(group).toBeTruthy();
         expect(group.querySelector('img')).toBeTruthy();
+    });
+});
+
+describe('流式工具计时（A263）', () => {
+    it('在途卡（结果未定稿）显示自增用时——锚随首现时刻记忆', () => {
+        const p = { name: 'text-read', arguments: '{"path":"ccbp:L1/Tree.md"}', toolIndex: 1, toolTotal: 2 };
+        const node = window.buildToolBlock(p, 'toolcard');
+        const live = node.querySelector('.chat-dur-live');
+        expect(live).not.toBeNull();
+        expect(live.getAttribute('data-since')).toMatch(/^\d+$/);
+        expect(live.textContent).toMatch(/^ · \d+\.\ds$/);
+    });
+
+    it('同一在途卡重复渲染——锚不变（live 帧每帧重建，读数不归零）', () => {
+        const p = { name: 'cs-build', arguments: '{"path":"x.csproj"}', toolIndex: 2, toolTotal: 3 };
+        const a = window.buildToolBlock(p, 'toolcard').querySelector('.chat-dur-live').getAttribute('data-since');
+        const b = window.buildToolBlock(p, 'toolcard').querySelector('.chat-dur-live').getAttribute('data-since');
+        expect(b).toBe(a);
+    });
+
+    it('定稿卡无 durMs 不显示用时；有 durMs 走既有口径', () => {
+        const done = window.buildToolBlock(card('text-read', { path: 'x' }, 'OK|done'), 'toolcard');
+        expect(done.querySelector('.chat-dur-live')).toBeNull();
+        expect(done.querySelector('.chat-dur')).toBeNull();
+        const timed = window.buildToolBlock(card('text-read', { path: 'x' }, 'OK|done', { durMs: 1200 }), 'toolcard');
+        expect(timed.querySelector('.chat-dur')).not.toBeNull();
+        expect(timed.querySelector('.chat-dur-live')).toBeNull();
+    });
+});
+
+describe('DbCat——库名与条目摘要（A274）', () => {
+    /** 成功回执三段：结构化头 + 摘要行 + JSON 载荷 */
+    function dbResult(tool, lib, summary, payload) {
+        return '{"ok":true,"tool":"' + tool + '","target":"' + lib + '"}\n' + summary + '\n' + payload;
+    }
+
+    it('db-query——三数进折叠行，条目逐条列出（ID / 标题 / 更新时间）', () => {
+        const res = dbResult('db-query', 'smriti', '命中 2 / 活跃 5',
+            '{"total":5,"matched":2,"shown":2,"items":[{"id":7,"title":"甲","updatedAt":"2026-10-20 22:10:00"},{"id":3,"title":"乙","updatedAt":"2026-10-19 09:00:00"}]}');
+        const node = window.buildToolBlock(card('db-query', { lib: 'smriti', keyword: '甲' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('查询 smriti · 「甲」');
+        expect(text).toContain('查询库 smriti · 关键词 甲');
+        expect(text).toContain('命中 2 / 活跃 5');
+        expect(text).toContain('#7 · 甲 · 2026-10-20 22:10:00');
+        expect(text).toContain('#3 · 乙');
+    });
+
+    it('db-query——无命中显式占位，截断时标「仅列前 N 条」', () => {
+        const empty = dbResult('db-query', 'smriti', '命中 0 / 活跃 5', '{"total":5,"matched":0,"shown":0,"items":[]}');
+        expect(window.buildToolBlock(card('db-query', { lib: 'smriti' }, empty), 'toolcard').textContent).toContain('（无命中条目）');
+        const cut = dbResult('db-query', 'smriti', '命中 9 / 活跃 20',
+            '{"total":20,"matched":9,"shown":1,"items":[{"id":1,"title":"甲","updatedAt":"2026-10-20 22:10:00"}]}');
+        expect(window.buildToolBlock(card('db-query', { lib: 'smriti' }, cut), 'toolcard').textContent).toContain('仅列前 1 条（命中 9）');
+    });
+
+    it('db-get——版本时间行 + 正文段', () => {
+        const res = dbResult('db-get', 'smriti', '条目 #7',
+            '{"id":7,"title":"甲","body":"单行正文","v":2,"createdAt":"2026-10-18 10:00:00","updatedAt":"2026-10-20 22:10:00"}');
+        const node = window.buildToolBlock(card('db-get', { lib: 'smriti', key: '甲' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('读取 smriti · 标题 甲 · #7 v2');
+        expect(text).toContain('#7 · v2');
+        expect(text).toContain('更新 2026-10-20 22:10:00');
+        expect(text).toContain('正文 · 1 行');
+        expect(text).toContain('单行正文');
+    });
+
+    it('db-get——按 ID 定位时折叠行标 ID 前缀', () => {
+        const res = dbResult('db-get', 'smriti', '条目 #7',
+            '{"id":7,"title":"甲","body":"单行正文","v":1,"createdAt":"2026-10-18 10:00:00","updatedAt":"2026-10-20 22:10:00"}');
+        const node = window.buildToolBlock(card('db-get', { lib: 'smriti', mode: 'id', key: '7' }, res), 'toolcard');
+        expect(node.textContent).toContain('读取 smriti · ID 7');
+    });
+
+    it('db-put / db-update / db-delete——摘要带库名与条目 ID', () => {
+        const put = window.buildToolBlock(card('db-put', { lib: 'smriti', title: '甲', body: 'x' },
+            dbResult('db-put', 'smriti', '条目已写入: #7', '{"id":7,"v":1}')), 'toolcard');
+        expect(put.textContent).toContain('库 smriti · 条目 #7（v1）已写入');
+        const upd = window.buildToolBlock(card('db-update', { lib: 'smriti', title: '甲', body: 'y' },
+            dbResult('db-update', 'smriti', '条目已更新: #7 v2', '{"id":7,"v":2}')), 'toolcard');
+        expect(upd.textContent).toContain('条目 #7 已更新至 v2');
+        const del = window.buildToolBlock(card('db-delete', { lib: 'smriti', title: '甲' },
+            dbResult('db-delete', 'smriti', '条目已删除（墓碑保留）: #7', '{"id":7}')), 'toolcard');
+        expect(del.textContent).toContain('条目 #7 已删除（墓碑保留，可审计）');
+    });
+
+    it('失败态——回落骨架原文，机器码可见', () => {
+        const node = window.buildToolBlock(card('db-put', { lib: 'smriti', title: '甲', body: 'x' },
+            'ERR|DB_TITLE_EXISTS|标题已存在: 甲'), 'toolcard');
+        expect(node.textContent).toContain('DB_TITLE_EXISTS');
+        expect(node.querySelector('.chat-tool').classList.contains('err')).toBe(true);
+    });
+});
+
+describe('DbAdmin——库级管理渲染', () => {
+    /** 管理面回执三段（无 target 时省略该键） */
+    function adminResult(tool, target, summary, payload) {
+        var head = '{"ok":true,"tool":"' + tool + '"' + (target ? ',"target":"' + target + '"' : '') + '}';
+        return head + '\n' + summary + (payload ? '\n' + payload : '');
+    }
+
+    it('dbAdmin-libs——逐库一行（条目 / 墓碑 / 坏行 / 字节 / 创建 + 损坏标记）', () => {
+        const res = adminResult('dbAdmin-libs', '', '库 2（授权内 2 / 共 3——1 个未授权已隐藏）',
+            '{"libs":[{"id":"smriti","createdAt":"2026-10-21 13:10:33","entries":105,"tombstones":20,"badLines":0,"bytes":179699,"broken":false},'
+            + '{"id":"probe","createdAt":"2026-10-20 10:00:00","entries":0,"tombstones":0,"badLines":2,"bytes":900,"broken":true}]}');
+        const node = window.buildToolBlock(card('dbAdmin-libs', {}, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('库明细 · 2 个库');
+        expect(text).toContain('列举库明细（按猫授权过滤）');
+        expect(text).toContain('smriti · 条目 105 · 墓碑 20 · 坏行 0 · 175.5 KB');
+        expect(text).toContain('创建 2026-10-21 13:10:33');
+        expect(text).toContain('probe · 条目 0');
+        expect(text).toContain('900 B');
+        expect(text).toContain('⚠️ 损坏');
+    });
+
+    it('dbAdmin-libs——授权内无库时显式占位', () => {
+        const res = adminResult('dbAdmin-libs', '', '库 0（授权内 0 / 共 3——3 个未授权已隐藏）', '{"libs":[]}');
+        expect(window.buildToolBlock(card('dbAdmin-libs', {}, res), 'toolcard').textContent).toContain('（授权内无库）');
+    });
+
+    it('dbAdmin-create——库名与创建时刻自然语言化', () => {
+        const res = adminResult('dbAdmin-create', 'smriti2', '库已建立: smriti2',
+            '{"id":"smriti2","createdAt":"2026-10-21 15:30:00"}');
+        const node = window.buildToolBlock(card('dbAdmin-create', { lib: 'smriti2' }, res), 'toolcard');
+        expect(node.textContent).toContain('新建库 smriti2 · 已建立');
+        expect(node.textContent).toContain('库 smriti2 已建立');
+        expect(node.textContent).toContain('创建时刻 · 2026-10-21 15:30:00');
+    });
+
+    it('dbAdmin-drop——确认串入输入段，回收路径可见（可恢复）', () => {
+        const res = adminResult('dbAdmin-drop', 'tmpdb', '库已移入回收区: tmpdb',
+            '{"id":"tmpdb","trash":"C:/db/_trash/tmpdb-20261021_153000"}');
+        const node = window.buildToolBlock(card('dbAdmin-drop', { lib: 'tmpdb', confirm: 'tmpdb' }, res), 'toolcard');
+        expect(node.textContent).toContain('删除库 tmpdb · 已移入回收区');
+        expect(node.textContent).toContain('确认串 tmpdb');
+        expect(node.textContent).toContain('已移入回收区（可恢复）');
+        expect(node.textContent).toContain('回收路径 · C:/db/_trash/tmpdb-20261021_153000');
+    });
+
+    it('失败态——授权面拒绝落 err 块且机器码可见（不空白）', () => {
+        const node = window.buildToolBlock(card('dbAdmin-create', { lib: 'x1' },
+            'ERR|TOOL_FORBIDDEN|工具不在当前授权面: dbAdmin-create'), 'toolcard');
+        expect(node.textContent).toContain('TOOL_FORBIDDEN');
+        expect(node.querySelector('.chat-tool').classList.contains('err')).toBe(true);
+    });
+});
+
+describe('TsCat——TS 编码工具面渲染（A294）', () => {
+    /** TS 工具回执——单段 JSON（无结构化头） */
+    function tsResult(o) {
+        return JSON.stringify(o);
+    }
+
+    it('ts-check——折叠行读 counts，正例显式「无类型错误」', () => {
+        const res = tsResult({
+            ok: true, mode: 'project', tsconfig: 'tsconfig.json', files: 3,
+            errors: [], warnings: [], counts: { errors: 0, warnings: 0 }
+        });
+        const node = window.buildToolBlock(card('ts-check', { path: 'mau:tools/ts/fixtures/tsconfig.json' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('TS 类型检查 mau:tools/ts/fixtures/tsconfig.json');
+        expect(text).toContain('TS 检查 tsconfig.json · 0 错 0 警 · 3 文件');
+        expect(text).toContain('（无类型错误）');
+    });
+
+    it('ts-check——负例逐条诊断（文件:行:列 TS码 消息），单文件降级标注', () => {
+        const res = tsResult({
+            ok: true, mode: 'single', files: 1,
+            errors: [{ file: 'src/broken.ts', line: 15, col: 14, code: 2322, message: "Type 'string' is not assignable to type 'number'." }],
+            warnings: [], counts: { errors: 1, warnings: 0 }
+        });
+        const node = window.buildToolBlock(card('ts-check', { path: 'mau:tools/ts/fixtures-err/src/broken.ts' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('1 错 0 警 · 1 文件 · 单文件');
+        expect(text).toContain('src/broken.ts:15:14 TS2322');
+        expect(text).toContain("Type 'string' is not assignable to type 'number'.");
+    });
+
+    it('ts-list——模块判定与逐条声明（种类 / 名称 / 签名 / 行号）', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', isModule: true, kind: 'all', total: 2,
+            items: [
+                { kind: 'class', name: 'EntityStore', signature: 'export class EntityStore', line: 25 },
+                { kind: 'method', name: 'add', signature: 'public add(entity: Entity): void', line: 34 }
+            ]
+        });
+        const node = window.buildToolBlock(card('ts-list', { file: 'mau:tools/ts/fixtures/src/model.ts' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('结构 model.ts · 2 项 · 模块');
+        expect(text).toContain('[class] EntityStore — export class EntityStore (L25)');
+        expect(text).toContain('[method] add — public add(entity: Entity): void (L34)');
+    });
+
+    it('ts-read——源码段带行号列，折叠行标区间', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', symbol: 'add', kind: 'method',
+            text: '30:     /**\n31:      * 加入实体\n34:     public add(entity: Entity): void',
+            range: { start: 30, end: 37 }
+        });
+        const node = window.buildToolBlock(card('ts-read', { file: 'mau:tools/ts/fixtures/src/model.ts', symbol: 'add' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('读取 model.ts · add · method · L30-37');
+        expect(text).toContain('public add(entity: Entity): void');
+    });
+
+    it('ts-find-ref——三列命中（路径 / 行号 / 种类），无引用显式占位', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', symbol: 'makeEntity', total: 2,
+            refs: [
+                { file: 'src/model.ts', line: 61, col: 17, kind: 'decl' },
+                { file: 'src/consumer.ts', line: 12, col: 27, kind: 'ref' }
+            ]
+        });
+        const node = window.buildToolBlock(card('ts-find-ref', { file: 'mau:tools/ts/fixtures/src/model.ts', symbol: 'makeEntity' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('引用 makeEntity · 2 处');
+        expect(text).toContain('src/model.ts:61:17: decl');
+        expect(text).toContain('src/consumer.ts:12:27: ref');
+
+        const empty = window.buildToolBlock(card('ts-find-ref', { symbol: 'nobody' }, tsResult({ ok: true, total: 0, refs: [] })), 'toolcard');
+        expect(empty.textContent).toContain('（无引用）');
+    });
+
+    it('ts-patch——diff 逐行 + 诊断行；无变更显式占位', () => {
+        const res = tsResult({
+            ok: true, file: 'C:/x/model.ts', mode: 'replace', changedLines: 1,
+            diff: ["-     return { id: id, name: 'entity-' + id };", "+     return { id: id, name: 'probe-' + id };"],
+            diagnostics: [], errorCount: 0
+        });
+        const node = window.buildToolBlock(card('ts-patch', { file: 'mau:tools/ts/fixtures/src/model.ts', old: "x", new: "y" }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('改写 model.ts · 替换 · 1 行变更');
+        expect(text).toContain("-     return { id: id, name: 'entity-' + id };");
+        expect(text).toContain("+     return { id: id, name: 'probe-' + id };");
+
+        const noChange = window.buildToolBlock(card('ts-patch', { file: 'x.ts', symbol: 's' },
+            tsResult({ ok: true, mode: 'symbol', changedLines: 0, diff: [], diagnostics: [], errorCount: 0 })), 'toolcard');
+        expect(noChange.textContent).toContain('（无变更）');
+    });
+
+    it('服务失败——ok:false 显式出声（不静默成空白）', () => {
+        const node = window.buildToolBlock(card('ts-check', { path: 'x' },
+            tsResult({ ok: false, error: 'BAD_OP', message: '未知操作：ts.check' })), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('服务失败');
+        expect(text).toContain('BAD_OP');
     });
 });

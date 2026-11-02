@@ -416,14 +416,25 @@ namespace CatHome4.QQ
             }
             _started = true;
             _startTime = DateTime.Now;
-            Refresh();
-            // A33——转发态续接：连接就位后加载（游标 / 残留来源 / 轮状态 / msg_seq 水位）——重启后接续转发回 QQ
-            if (_collector != null)
+            try
             {
-                LoadForwardState(_collector.CollectAll());
+                Refresh();
+                // A33——转发态续接：连接就位后加载（游标 / 残留来源 / 轮状态 / msg_seq 水位）——重启后接续转发回 QQ
+                if (_collector != null)
+                {
+                    LoadForwardState(_collector.CollectAll());
+                }
+                // 装载流程结束——置「转发态就绪」（SaveForwardState 门：未就绪不落盘，防空态覆写已有快照）
+                _stateLoaded = true;
             }
-            // 装载流程结束——置「转发态就绪」（SaveForwardState 门：未就绪不落盘，防空态覆写已有快照）
-            _stateLoaded = true;
+            catch (Exception ex)
+            {
+                // A260：QQ 通道是附属能力——启动失败不得阻断宿主（其余能力照常）
+                LogStore.Add("QQBot", 2, "QQ 管理器启动失败（通道不可用，宿主继续运行）: " + ex.Message, "QQBOT");
+                StartupDegradation.Report("QQ_START_FAILED", StartupDegradation.KindExternal, "QQ 通道",
+                    StartupDegradation.StateUnavailable, "QQ 管理器启动失败：" + ex.Message,
+                    "管理面板 → QQ Bot → 检查配置后重启", "S7");
+            }
         }
 
         /// <summary>

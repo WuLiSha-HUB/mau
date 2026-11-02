@@ -18,6 +18,8 @@
             <button data-tab="log">日志</button>
             <button data-tab="deps">依赖</button>
             <button data-tab="res">资源</button>
+            <button data-tab="boot">启动</button>
+            <button data-tab="db">数据</button>
             <button data-tab="raw">原始</button>
             <!-- 前端版本标记——每次改动前端递增；刷新后数字变化 = 拿到新版（人眼 cache-busting） -->
             <div style="margin-top:auto;color:var(--ch-fg-faint);font-size:var(--ch-fs-tag);writing-mode:vertical-rl" data-version>UI v?</div>
@@ -99,8 +101,42 @@
                     <div id="resLoop"></div>
                     <h2>py 服务</h2>
                     <div id="resPy"></div>
+                    <h2>node 服务</h2>
+                    <div id="resNode"></div>
                     <h2>GPU 显存</h2>
                     <div id="resGpu"></div>
+                </div>
+            </section>
+            <!-- A260 启动健康区——快照 boot 段渲染（降级清单 / 诊断落点 / 报告路径） -->
+            <section id="tab-boot" class="tab">
+                <div id="bootbar">
+                    <span id="bootInfo" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">启动健康——配置或环境异常的降级清单</span>
+                </div>
+                <div id="bootScroll">
+                    <div id="bootList"></div>
+                    <div id="bootReport" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag);padding:8px 12px"></div>
+                    <div id="bootSink" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag);padding:0 12px 12px 12px"></div>
+                </div>
+            </section>
+            <!-- A269 数据库（Smriti）浏览区——库下拉 / 新建库 / 条目查询 / 正文预览（写入一律走 db-* 工具面） -->
+            <section id="tab-db" class="tab">
+                <div id="dbbar" style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--ch-line-faint);align-items:center;flex-wrap:wrap">
+                    <span style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">条目库（Smriti）——只读浏览；增 / 改 / 删走 db-* 工具面</span>
+                    <span style="flex:1"></span>
+                    <select id="dbLibSelect" style="background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag)"></select>
+                    <button id="dbLibRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
+                    <input id="dbLibNew" placeholder="新库名（2–32 位）" style="background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag);min-width:170px">
+                    <button id="dbLibNewBtn" style="background:var(--ch-bg-raised);border:1px solid var(--ch-bg-accent);color:var(--ch-ok);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">新建库</button>
+                </div>
+                <div id="dbquerybar" style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--ch-line-faint);align-items:center;flex-wrap:wrap">
+                    <input id="dbKeyword" placeholder="标题关键词（空 = 全部）" style="flex:1;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                    <input id="dbLimit" placeholder="条数（≤200）" style="width:110px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                    <button id="dbQueryBtn" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">查询</button>
+                    <span id="dbInfo" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">载入库清单…</span>
+                </div>
+                <div id="dbScroll" style="flex:1;overflow-y:auto">
+                    <div id="dbList"></div>
+                    <div id="dbPreview" style="padding:10px 12px;border-top:1px solid var(--ch-line)"></div>
                 </div>
             </section>
             <!-- 配置区 -->
@@ -224,30 +260,6 @@
                             <span id="tplMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag)"></span>
                         </div>
                     </div>
-                    <!-- R2.3 QQ Bot 池管理——列表/新建/编辑/删除（secret 掩码；注册即建 WS 连接） -->
-                    <div class="cfg-sec collapsed" data-cfg="qqbots">
-                        <div class="cfg-sec-head">
-                            <span class="cfg-sec-mark">▸</span>
-                            <span class="cfg-sec-title">QQ Bot 池</span>
-                            <span class="cfg-sec-desc">QQ 机器人接入凭据池——注册即建 WS 连接；Secret 掩码显示</span>
-                        </div>
-                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
-                            <span id="qqbotsMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag)"></span>
-                            <span style="flex:1"></span>
-                            <button id="qqbotsRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
-                        </div>
-                        <table class="box-table" id="qqbotsTable"><thead><tr><th style="width:14%">名称</th><th style="width:18%">配置 ID</th><th style="width:14%">AppId</th><th style="width:10%">环境</th><th style="width:16%">Secret</th><th style="width:28%">操作</th></tr></thead><tbody></tbody></table>
-                        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-                            <input id="qqNewName" placeholder="名称" style="width:120px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                            <input id="qqNewAppId" placeholder="AppId" style="width:160px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                            <select id="qqNewSandbox" style="background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                                <option value="true">沙箱</option>
-                                <option value="false">正式</option>
-                            </select>
-                            <input id="qqNewSecret" placeholder="Secret（可留空）" style="width:200px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                            <button id="qqAddBtn" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">新建</button>
-                        </div>
-                    </div>
                     <!-- 加载包池（R4 加载包——池 CRUD；猫级挂载在猫配置弹层） -->
                     <div class="cfg-sec collapsed" data-cfg="packs">
                         <div class="cfg-sec-head">
@@ -291,7 +303,7 @@
                         <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
                             <input id="apcNewName" placeholder="名称" style="width:110px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
                             <input id="apcNewPet" placeholder="桌宠种类（空=不显示）" style="width:170px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
-                            <input id="apcNewTts" title="Kokoro 音色名（如 zf_xiaoxiao）；空=服务默认音色" placeholder="TTS 音色（空=默认）" style="width:150px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                            <select id="apcNewTts" title="Kokoro 音色（括号内为听感标注）；空=服务默认音色" style="width:150px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)"></select>
                             <label style="display:flex;align-items:center;gap:4px;font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);cursor:pointer">
                                 <input type="checkbox" id="apcNewSummary"> 轮末总结
                             </label>
@@ -322,7 +334,7 @@
                     <button id="catsRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
                 </div>
                 <div style="flex:1;overflow-y:auto;padding:8px 12px">
-                    <table class="box-table" id="catsTable"><thead><tr><th style="width:16%">会话状态</th><th style="width:10%">名称</th><th style="width:11%">LLM API</th><th style="width:11%">QQ Bot</th><th style="width:11%">思考强度</th><th style="width:10%">目录白名单</th><th style="width:7%">工具清单</th><th style="width:7%">前文注入</th><th style="width:5%">端口</th><th style="width:12%">操作</th></tr></thead><tbody></tbody></table>
+                    <table class="box-table" id="catsTable"><thead><tr><th style="width:16%">会话状态</th><th style="width:10%">名称</th><th style="width:11%">LLM API</th><th style="width:11%">思考强度</th><th style="width:10%">目录白名单</th><th style="width:7%">工具清单</th><th style="width:7%">前文注入</th><th style="width:5%">端口</th><th style="width:12%">操作</th></tr></thead><tbody></tbody></table>
                     <div id="catsMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag);margin-top:6px"></div>
                 </div>
             </section>
@@ -343,11 +355,6 @@
             <input id="catCfgName" placeholder="如 雾理莎（留空不允许）" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">LLM API 配置</label>
             <select id="catCfgApi" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px"></select>
-            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">QQ Bot 绑定（qqbotId——一只 Bot 只能绑一只猫；空=未绑定）</label>
-            <select id="catCfgQqBot" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px"></select>
-            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
-                <input type="checkbox" id="catCfgQqEnable"> 启用 qqbot 转发（qqbotEnable——false=不注入不转发）
-            </label>
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
                 <input type="checkbox" id="catCfgIdleOnly"> 人工输入空闲注入（userInjectIdleOnly——true=人工输入仅在空闲时推送，轮内不插；sys 注入不受影响）
             </label>
@@ -363,7 +370,9 @@
             <textarea id="catCfgPersona" rows="3" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px;resize:vertical"></textarea>
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">目录白名单（enabledRoots——全局根池子集；workspace 系统根必选不可取消；空=空白名单，本猫仅常驻 workspace 可用）</label>
             <div id="catCfgRoots" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px"></div>
-            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">前文注入 List（injectList——候选取自「配置页 → 新猫默认模板 → 默认前文」池；拖动 ≡ 调顺序；新会话时按序注入）</label>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">库权限（dbLibs——本猫可用库白名单；空=无库权限（默认猫 majordomo 全放）；未勾选的库在工具面报 DB_LIB_DENIED）</label>
+            <div id="catCfgDbLibs" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px"></div>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">前文注入 List（injectList——id:相对路径 / 绝对路径 / 目录（加载其一级 *.md，文件名升序）；拖动 ≡ 调顺序；新会话时按序注入）</label>
             <div id="catCfgInject" style="margin-top:5px"></div>
             <div style="display:flex;gap:6px;margin-top:6px;align-items:center">
                 <button id="catCfgInjectPick" class="btn-mini">选择前文</button>
@@ -554,7 +563,7 @@
     <!-- 两页共用前端工具（loadUiVersion/applyUiConfig——js/ui-common.js 单一定义；配置接线复用 app.js loadConfig 的同一响应） -->
     <script src="js/ui-common.js?v=__V__"></script>
     <script>loadUiVersion();</script>
-    <!-- 2026-09-08 体量治理——JS 四域外置（加载顺序：app 公共 → panel 多猫 → panel-apis API/QQBot 池 → panel-catcfg 每猫配置/受控根；对话已迁 chat.html 独立页——F2.1 index 纯管理面）；__V__ 宿主注入版本号（cache-busting） -->
+    <!-- 2026-09-08 体量治理——JS 四域外置（加载顺序：app 公共 → panel 多猫 → panel-apis API 池 → panel-catcfg 每猫配置/受控根；对话已迁 chat.html 独立页——F2.1 index 纯管理面）；__V__ 宿主注入版本号（cache-busting） -->
     <script src="js/app.js?v=__V__"></script>
     <script src="js/panel.js?v=__V__"></script>
     <script src="js/panel-apis.js?v=__V__"></script>
@@ -565,5 +574,7 @@
     <script src="js/panel-user.js?v=__V__"></script>
     <script src="js/panel-deps.js?v=__V__"></script>
     <script src="js/panel-res.js?v=__V__"></script>
+    <script src="js/panel-boot.js?v=__V__"></script>
+    <script src="js/panel-db.js?v=__V__"></script>
 </body>
 </html>

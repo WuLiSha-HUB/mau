@@ -7,6 +7,8 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Mau.Runtime;
 
+using static CatHome4.Admin.CatHostService;
+
 namespace CatHome4.Admin
 {
     /// <summary>

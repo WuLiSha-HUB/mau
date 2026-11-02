@@ -162,6 +162,19 @@ namespace CH4
                 ("persist", JsonUtil.Raw(persistJson)),
                 ("live", JsonUtil.Raw(LiveJson())));
         }
+        /// <summary>
+        /// 待推标记复位——宿主推送面随猫停机失效时调用（A297）。
+        /// 🔴 帧泵只在会话所属 HttpHost 的 PumpMainThread 里跑：宿主 Stop 后标记再无人取走，
+        /// `HasPendingContent` 恒真 → 重启闸门 `AnyViewPending` 永久阻塞。
+        /// 只清变更标记，不动内容（下次接新宿主由连接建立首帧 BuildFull 现取全量，不依赖本标记）。
+        /// </summary>
+        public void ResetPending()
+        {
+            _pendingAppend.Clear();
+            _liveDirty = false;
+            _stateDirty = false;
+            _fullPending = false;
+        }
 
         /// <summary>
         /// 取帧——帧轮唯一出口：无变化返回 false（零字节），有变化按内容组装（追加 / 状态 / 临时区可同帧承载）。

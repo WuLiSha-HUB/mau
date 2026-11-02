@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Mau.Runtime;
 
+using static CatHome4.Admin.CatHostService;
+
 namespace CatHome4.Admin
 {
     /// <summary>
@@ -341,7 +343,9 @@ namespace CatHome4.Admin
         /// <summary>从 cat.cfg 数据解析外观配置身份（空/非法=Guid.Empty=跟随默认外观）。</summary>
         /// <param name="cfg">cat.cfg 数据（可 null）</param>
         /// <returns>外观配置身份；零值=跟随默认外观</returns>
-        private static Guid ResolveAppearanceId(CatCfgData cfg)
+        /// <param name="cfg">猫配置数据</param>
+        /// <returns>外观配置身份（Guid.Empty=跟随默认外观）</returns>
+        internal static Guid ResolveAppearanceId(CatCfgData cfg)
         {
             if (cfg == null || cfg.AppearanceId == null || cfg.AppearanceId.Length == 0)
             {

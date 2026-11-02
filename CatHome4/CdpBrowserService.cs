@@ -27,8 +27,14 @@ namespace CH4
         /// <summary>启动超时——等 DevToolsActivePort 出现</summary>
         private const long BootTimeoutMs = 20000;
 
-        /// <summary>导航超时——等 document.readyState = complete</summary>
-        private const long NavTimeoutMs = 45000;
+        /// <summary>导航预算——等 document.readyState 进入可读状态；20 秒判「无法访问」（莎 2026-11-02 定：打不开页面是常态，不该拖到工具层 120 秒）</summary>
+        private const long NavTimeoutMs = 20000;
+
+        /// <summary>单次 CDP 调用上限（毫秒）——收发无上限时 WebSocket 可永久挂住（A295 根因：就绪判据轮不到，工具层超时与后台线程脱钩）</summary>
+        private const int CallTimeoutMs = 10000;
+
+        /// <summary>就绪轮询单次 eval 切片上限（毫秒）——保证 20 秒预算能被按时判出（单次调用不得超过剩余预算）</summary>
+        private const int EvalSliceMs = 2000;
 
         /// <summary>加载静默期毫秒——可读状态后再等一拍，兜住 SPA 挂载与首屏渲染尾巴</summary>
         private const int SettleMs = 800;
@@ -92,25 +98,74 @@ namespace CH4
             {
                 try
                 {
+                    // [预算] 一次 open 全程受 NavTimeoutMs 约束——打不开页面是常态，20 秒必出结果（A295 · 莎 2026-11-02）
                     Stopwatch sw = Stopwatch.StartNew();
-                    browser.Cdp.Call("Page.navigate", JsonUtil.Serialize(new { url = url }));
-                    string state = WaitReady(browser.Cdp, NavTimeoutMs);
+                    browser.Cdp.Call("Page.navigate", JsonUtil.Serialize(new { url = url }), BudgetSlice(sw, NavTimeoutMs, CallTimeoutMs));
+                    string state = WaitReady(browser.Cdp, BudgetRemaining(sw, NavTimeoutMs));
                     if (state != "interactive" && state != "complete")
                     {
-                        return "ERR|BROWSER_TIMEOUT|页面未在 " + NavTimeoutMs + "ms 内进入可读状态（readyState=" + state + "）: " + url;
+                        return "ERR|BROWSER_TIMEOUT|页面无法访问（" + NavTimeoutMs.ToString() + "ms 内未进入可读状态，readyState=" + state + "）: " + url;
                     }
                     Thread.Sleep(SettleMs);
                     sw.Stop();
-                    string title = EvalRaw(browser.Cdp, "document.title");
-                    string finalUrl = EvalRaw(browser.Cdp, "location.href");
+                    string title = SafeEval(browser.Cdp, "document.title");
+                    string finalUrl = SafeEval(browser.Cdp, "location.href");
                     LogStore.Add("CatHome4", 1, "browser.open " + catId + " " + finalUrl + " " + sw.ElapsedMilliseconds + "ms", "BROWSER");
                     return "ready=" + state + " | title=" + title + " | url=" + finalUrl + " | ms=" + sw.ElapsedMilliseconds;
+                }
+                catch (TimeoutException ex)
+                {
+                    // A295——CDP 无响应即判不可达：不把一次 open 拖成无限等待（工具层超时与后台线程脱钩的根因）
+                    LogStore.Add("CatHome4", 3, "browser.open 超时: " + ex.Message, "BROWSER");
+                    return "ERR|BROWSER_TIMEOUT|页面无法访问（CDP 无响应）: " + url + " —— " + ex.Message;
                 }
                 catch (Exception ex)
                 {
                     LogStore.Add("CatHome4", 3, "browser.open 失败: " + ex.Message, "BROWSER");
                     return "ERR|BROWSER_NAV|" + ex.GetType().Name + ": " + ex.Message;
                 }
+            }
+        }
+        /// <summary>预算剩余（毫秒）——下限 200，保证轮询能拿到一次有效切片（A295）</summary>
+        /// <param name="sw">起点计时器</param>
+        /// <param name="budgetMs">总预算毫秒</param>
+        /// <returns>剩余毫秒（≥200）</returns>
+        private static int BudgetRemaining(Stopwatch sw, long budgetMs)
+        {
+            long remaining = budgetMs - sw.ElapsedMilliseconds;
+            if (remaining < 200)
+            {
+                return 200;
+            }
+            return (int)remaining;
+        }
+        /// <summary>预算切片（毫秒）——取剩余与单次调用上限的较小者（A295）</summary>
+        /// <param name="sw">起点计时器</param>
+        /// <param name="budgetMs">总预算毫秒</param>
+        /// <param name="capMs">单次调用上限毫秒</param>
+        /// <returns>本次调用可用的超时毫秒</returns>
+        private static int BudgetSlice(Stopwatch sw, long budgetMs, int capMs)
+        {
+            int remaining = BudgetRemaining(sw, budgetMs);
+            if (remaining < capMs)
+            {
+                return remaining;
+            }
+            return capMs;
+        }
+        /// <summary>取值兜底——超时不抛（已判完可读状态后的标题 / 地址取值不该让整单失败；A295）</summary>
+        /// <param name="cdp">CDP 会话</param>
+        /// <param name="expression">取值表达式</param>
+        /// <returns>取值结果（失败为空串）</returns>
+        private static string SafeEval(CdpClient cdp, string expression)
+        {
+            try
+            {
+                return EvalRaw(cdp, expression);
+            }
+            catch (Exception)
+            {
+                return "";
             }
         }
 
@@ -1283,7 +1338,25 @@ namespace CH4
             string state = "";
             while (sw.ElapsedMilliseconds < timeoutMs)
             {
-                state = EvalRaw(cdp, "document.readyState");
+                long remaining = timeoutMs - sw.ElapsedMilliseconds;
+                int slice = EvalSliceMs;
+                if (remaining < slice)
+                {
+                    slice = (int)remaining;
+                }
+                if (slice < 200)
+                {
+                    slice = 200;
+                }
+                try
+                {
+                    state = EvalRaw(cdp, "document.readyState", slice);
+                }
+                catch (TimeoutException)
+                {
+                    // 单次 eval 无响应——按「打不开」处置（A295）：预算到点即判，不把 20 秒拖成无限等待
+                    return "timeout";
+                }
                 if (state == "interactive" || state == "complete")
                 {
                     return state;
@@ -1298,10 +1371,11 @@ namespace CH4
         /// </summary>
         /// <param name="cdp">CDP 会话</param>
         /// <param name="expression">JS 表达式</param>
+        /// <param name="timeoutMs">单次调用上限毫秒（A295——无上限时 WebSocket 可永久挂住）</param>
         /// <returns>取值结果（失败为空串）</returns>
-        private static string EvalRaw(CdpClient cdp, string expression)
+        private static string EvalRaw(CdpClient cdp, string expression, int timeoutMs)
         {
-            JsonElement r = cdp.Call("Runtime.evaluate", JsonUtil.Serialize(new { expression = expression, returnByValue = true }));
+            JsonElement r = cdp.Call("Runtime.evaluate", JsonUtil.Serialize(new { expression = expression, returnByValue = true }), timeoutMs);
             JsonElement res;
             if (!r.TryGetProperty("result", out res))
             {
@@ -1322,6 +1396,16 @@ namespace CH4
                 return v.GetString() ?? "";
             }
             return v.GetRawText();
+        }
+        /// <summary>
+        /// 执行 JS 表达式并取回值——默认单次调用上限（CallTimeoutMs）
+        /// </summary>
+        /// <param name="cdp">CDP 会话</param>
+        /// <param name="expression">JS 表达式</param>
+        /// <returns>取值结果（失败为空串）</returns>
+        private static string EvalRaw(CdpClient cdp, string expression)
+        {
+            return EvalRaw(cdp, expression, CallTimeoutMs);
         }
 
         /// <summary>
@@ -1608,14 +1692,32 @@ namespace CH4
             /// <returns>响应根节点（已 Clone）</returns>
             public JsonElement Call(string method, string paramsJson)
             {
+                return Call(method, paramsJson, CallTimeoutMs);
+            }
+
+            /// <summary>
+            /// 发送命令并等待同 id 响应——超时抛 TimeoutException（A295：收发无上限时 WebSocket 可永久挂住，就绪判据永远轮不到）
+            /// </summary>
+            /// <param name="method">CDP 方法名</param>
+            /// <param name="paramsJson">参数 JSON（无参传 "{}"）</param>
+            /// <param name="timeoutMs">单次调用上限毫秒</param>
+            /// <returns>响应根节点（已 Clone）</returns>
+            public JsonElement Call(string method, string paramsJson, int timeoutMs)
+            {
                 int id = _id + 1;
                 _id = id;
                 string msg = JsonUtil.Object(("id", id), ("method", method), ("params", JsonUtil.Raw(paramsJson)));
                 byte[] bytes = Encoding.UTF8.GetBytes(msg);
-                _ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None).GetAwaiter().GetResult();
+                SendFrame(bytes, timeoutMs);
+                Stopwatch sw = Stopwatch.StartNew();
                 while (true)
                 {
-                    string text = ReceiveText();
+                    long remaining = timeoutMs - sw.ElapsedMilliseconds;
+                    if (remaining <= 0)
+                    {
+                        throw new TimeoutException("CDP " + method + " 超时（" + timeoutMs.ToString() + "ms 无响应）");
+                    }
+                    string text = ReceiveText((int)remaining);
                     using (JsonDocument doc = JsonUtil.ParseStrict(text))
                     {
                         JsonElement root = doc.RootElement;
@@ -1634,21 +1736,52 @@ namespace CH4
             }
 
             /// <summary>
-            /// 接收一条完整文本消息（分片累积到 EndOfMessage）
+            /// 发送一帧并受超时约束（A295——发送侧同样可能挂住）
             /// </summary>
+            /// <param name="bytes">负载</param>
+            /// <param name="timeoutMs">超时毫秒</param>
+            private void SendFrame(byte[] bytes, int timeoutMs)
+            {
+                using (CancellationTokenSource cts = new CancellationTokenSource(timeoutMs))
+                {
+                    try
+                    {
+                        _ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, cts.Token).GetAwaiter().GetResult();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw new TimeoutException("CDP 发送超时（" + timeoutMs.ToString() + "ms）");
+                    }
+                }
+            }
+
+            /// <summary>
+            /// 接收一条完整文本消息（分片累积到 EndOfMessage；整体受 timeoutMs 约束）
+            /// </summary>
+            /// <param name="timeoutMs">超时毫秒</param>
             /// <returns>消息文本</returns>
-            private string ReceiveText()
+            private string ReceiveText(int timeoutMs)
             {
                 byte[] buf = new byte[65536];
                 using (MemoryStream ms = new MemoryStream())
                 {
-                    while (true)
+                    using (CancellationTokenSource cts = new CancellationTokenSource(timeoutMs))
                     {
-                        WebSocketReceiveResult r = _ws.ReceiveAsync(new ArraySegment<byte>(buf), CancellationToken.None).GetAwaiter().GetResult();
-                        ms.Write(buf, 0, r.Count);
-                        if (r.EndOfMessage)
+                        try
                         {
-                            break;
+                            while (true)
+                            {
+                                WebSocketReceiveResult r = _ws.ReceiveAsync(new ArraySegment<byte>(buf), cts.Token).GetAwaiter().GetResult();
+                                ms.Write(buf, 0, r.Count);
+                                if (r.EndOfMessage)
+                                {
+                                    break;
+                                }
+                            }
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw new TimeoutException("CDP 接收超时（" + timeoutMs.ToString() + "ms 内无完整消息）");
                         }
                     }
                     return Encoding.UTF8.GetString(ms.ToArray());

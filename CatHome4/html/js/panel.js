@@ -1,20 +1,20 @@
-// CH4 外观层——panel.js：多猫管理区（2026-08-25 拆分自 index.html；2026-09-08 体量治理：API/QQBot 池 → panel-apis.js；每猫配置/受控根 → panel-catcfg.js）
+// CH4 外观层——panel.js：多猫管理区（2026-08-25 拆分自 index.html；2026-09-08 体量治理：API 池 → panel-apis.js；每猫配置/受控根 → panel-catcfg.js）
 // 依赖：app.js 先加载（全局状态与 SSE 已就位）
 // 加载顺序：app.js → panel.js → panel-apis.js → panel-catcfg.js（index.html 引用）
+// A299：QQ Bot 列与 Bot 池撤除（QQ 域从宿主移除）
 
 // [段13] 多猫管理区（P9.3d）——GET /api/v1/cats 列表 + POST command cat.* 指令族
 // 2026-10-01 主面板轮：ID 列撤除；新增 LLM API / QQ Bot（行内直改）+ 目录白名单 / 工具清单 / 前文注入（专用弹层入口）
 var catsTableBody = document.querySelector('#catsTable tbody');
 var catsMsgEl = document.getElementById('catsMsg');
 var catNewInput = document.getElementById('catNewName');
-// 行内编辑数据面——API 池 / QQ Bot 池 / 全局根池（首屏加载一次，渲染时查表）
+// 行内编辑数据面——API 池 / 全局根池（首屏加载一次，渲染时查表）
 var catApiOptions = [];
-var catQqBotOptions = [];
 var catAllRoots = [];
 
-// 池数据加载——三源就绪后渲染列表（任一失败不阻塞：降级为空池）
+// 池数据加载——两源就绪后渲染列表（任一失败不阻塞：降级为空池）
 function loadCatPools() {
-    var pending = 3;
+    var pending = 2;
     function step() {
         pending = pending - 1;
         if (pending === 0) { loadCats(); }
@@ -22,10 +22,6 @@ function loadCatPools() {
     fetch('/api/v1/llm-apis')
         .then(function (r) { return r.json(); })
         .then(function (d) { catApiOptions = d.items || []; step(); })
-        .catch(function () { step(); });
-    fetch('/api/v1/qqbot-apis')
-        .then(function (r) { return r.json(); })
-        .then(function (d) { catQqBotOptions = d.items || []; step(); })
         .catch(function () { step(); });
     fetch('/api/v1/workspace')
         .then(function (r) { return r.json(); })
@@ -154,7 +150,7 @@ function catStateMissHtml(cat) {
         + '  <span class="ci-down">Down</span>' + num(cat.sessionCompletion);
 }
 
-// 单猫行渲染——名称/LLM API/QQ Bot 行内直改；目录白名单 + 工具清单走专用弹层；操作按钮按状态启用（special 强制自启 + 无停止/删除）
+// 单猫行渲染——名称/LLM API 行内直改；目录白名单 + 工具清单走专用弹层；操作按钮按状态启用（special 强制自启 + 无停止/删除）
 function renderCatRow(cat) {
     var tr = document.createElement('tr');
     // 行点击入口——整行可点开会话详情（排除按钮 / 输入类控件；事件委托见文件末 tbody 绑定）
@@ -281,32 +277,7 @@ function renderCatRow(cat) {
     tdApi.appendChild(apiSel);
     tr.appendChild(tdApi);
 
-    // [列3] QQ Bot——下拉直改（空 = 未绑定；已被他猫占用项禁用）
-    var tdQq = document.createElement('td');
-    var qqSel = document.createElement('select');
-    qqSel.className = 'input-mini';
-    qqSel.style.width = '100%';
-    var qqNone = document.createElement('option');
-    qqNone.value = '';
-    qqNone.textContent = '（未绑定）';
-    qqSel.appendChild(qqNone);
-    for (var q = 0; q < catQqBotOptions.length; q++) {
-        var qqOpt = document.createElement('option');
-        qqOpt.value = catQqBotOptions[q].qqBotId;
-        var qqLabel = catQqBotOptions[q].displayName || catQqBotOptions[q].qqBotId;
-        if (catQqBotOptions[q].boundCat && catQqBotOptions[q].qqBotId !== cat.qqbotId) {
-            qqLabel = qqLabel + '（已被 ' + catQqBotOptions[q].boundCat + ' 绑定）';
-            qqOpt.disabled = true;
-        }
-        qqOpt.textContent = qqLabel;
-        qqSel.appendChild(qqOpt);
-    }
-    qqSel.value = cat.qqbotId || '';
-    qqSel.addEventListener('change', function () { submitCatField(cat, 'qqbotId', qqSel.value, 'QQ Bot'); });
-    tdQq.appendChild(qqSel);
-    tr.appendChild(tdQq);
-
-    // [列4] 思考强度——下拉直改（首项「跟随全局」= 零值语义：空 → 后端回落全局 llm.reasoning_effort；本猫覆盖，实时生效）
+    // [列3] 思考强度——下拉直改（首项「跟随全局」= 零值语义：空 → 后端回落全局 llm.reasoning_effort；本猫覆盖，实时生效）
     var tdEffort = document.createElement('td');
     var effortSel = document.createElement('select');
     effortSel.className = 'input-mini';
@@ -496,7 +467,7 @@ function collectDeniedRoots(cat) {
 // 主面板行内字段提交——POST /api/v1/cat-config（字段级合并写：出现即覆盖 / 缺省即保留）
 // 2026-10-01 修正：原走 cat.cfg.set 文本指令（HTTP 线程入队主线程泵，回执只报"已受理"）——空值被行首 Trim 吃掉（改成默认 API / 解绑 QQ Bot 必然失败），
 // 且写入未落盘就先重建列表（固定 400ms）→ 表现为「改完瞬间跳回原值」+「显示与实际不符」。
-// 现改走端点：同步落盘、回执即结果、落盘后才刷新。空值语义 = 清空（apiConfigId 回默认 / qqbotId 解绑 / displayName 拒绝空值）。
+// 现改走端点：同步落盘、回执即结果、落盘后才刷新。空值语义 = 清空（apiConfigId 回默认 / displayName 拒绝空值）。
 function submitCatField(cat, field, value, label) {
     catsMsgEl.textContent = '保存中…（' + label + '）';
     var payload = { cat: cat.id };

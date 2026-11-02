@@ -9,7 +9,7 @@
 // 回执：result = 生成文本（成功）/ ERR| 文本（失败可见）
 
 // ── 状态机 ──
-§ 'S_Llm' = { 'Init', 'Idle', 'Claimed', 'Calling', 'Waiting', 'Done', 'Failed' }
+§ 'S_Llm' = { 'Init', 'Idle', 'Claimed', 'Calling', 'Waiting', 'Fetching', 'Done', 'Failed' }
 
 // T_Init：初始化自述
 § 'T_Init' : 'S_Llm' = 'Init' → 'self.desc'["空闲待命", "", ""] | 'S_Llm' = 'Idle' | 'S_Llm' = 'Idle'
@@ -27,9 +27,12 @@
 // T_Call：启动后台一次性 LLM 调用（主线程立即返回——后台执行）
 § 'T_Call' : 'S_Llm' = 'Calling' → 'llm.simple_request'[@endpoint, @apikey, @model, @system, @content, @office] | 'self.desc'["调用中", "", ""] | 'S_Llm' = 'Waiting' | 'S_Llm' = 'Failed'
 
-// T_Reply：轮询取数——积木返回即就绪判据（不依赖传感器滞后值）；未就绪自环回 Waiting 下帧再试
-// （修 2026-10-13 竞态：传感器 @office 滞后一帧 → 提前判就绪 → 空回执）
-§ 'T_Reply' : 'S_Llm' = 'Waiting' → 'llm.simple_read'[@office] > @reply | 'S_Llm' = 'Done' | 'S_Llm' = 'Waiting'
+// T_Reply：轮询就绪——判据改为「后台已结算」（llm.simple_ready 读 done 盒），未就绪自环回 Waiting 下帧再试
+// （A287 · 2026-10-22 修：原用 llm.simple_read 的「回执非空」作就绪判据——空内容回执使判据永假，实例永久停在 Waiting）
+§ 'T_Reply' : 'S_Llm' = 'Waiting' → 'llm.simple_ready'[@office] | 'S_Llm' = 'Fetching' | 'S_Llm' = 'Waiting'
+
+// T_Fetch：取回执文本——已结算必有一次读；读不到（盒缺失 / 空内容）即失败，走 T_Abort 回执后回 Idle（不留常驻态）
+§ 'T_Fetch' : 'S_Llm' = 'Fetching' → 'llm.simple_read'[@office] > @reply | 'S_Llm' = 'Done' | 'S_Llm' = 'Failed'
 
 // T_Done：回执——就绪后单发（与取数分导线，避免失败侧仍执行 complete_str）
 § 'T_Done' : 'S_Llm' = 'Done' → 'oa.complete_str'[@office, @reply] | 'self.desc'["空闲待命", "", ""] | 'S_Llm' = 'Idle' | 'S_Llm' = 'Failed'

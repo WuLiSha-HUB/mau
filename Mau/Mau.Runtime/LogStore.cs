@@ -215,7 +215,19 @@ namespace Mau.Runtime
             lock (_writeGate)
             {
                 CloseWriters();
-                System.IO.Directory.CreateDirectory(runDir);
+                LastConfigureError = "";
+                // 目录创建失败不抛——返回错误串由调用方换落点重试（启动韧性：观测不可写不得阻断宿主启动）
+                try
+                {
+                    System.IO.Directory.CreateDirectory(runDir);
+                }
+                catch (System.Exception ex)
+                {
+                    LastConfigureError = ex.Message;
+                    _runDir = "";
+                    LogFilePath = "";
+                    return;
+                }
                 _runDir = runDir;
                 LogFilePath = System.IO.Path.Combine(runDir, "log_all.txt");
                 // 重试打开——瞬时占用（安全软件扫描 / 残留句柄）由退避重试化解；仍失败写诊断文件（失败可见）
@@ -569,6 +581,11 @@ namespace Mau.Runtime
 
         /// <summary>单日志文件轮转上限——5MB（R1-P1-02：磁盘三文件防无限膨胀）</summary>
         private const long MaxLogFileBytes = 5L * 1024 * 1024;
+        /// <summary>
+        /// 上次配置运行目录的结果——空=成功；非空=失败原因。
+        /// 调用方据此降级（换落点重试 / 仅内存运行），并登记启动降级项。
+        /// </summary>
+        public static string LastConfigureError { get; private set; } = "";
 
         /// <summary>
         /// 轮转检查——任一文件超上限 → 改名归档 + 新建同名继续写（R1-P1-02）。

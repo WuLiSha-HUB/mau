@@ -82,6 +82,11 @@ namespace Mau.Runtime
         /// schema 模板路径——宿主 Bootstrap 注入（如 config/schema.json.example）；声明通道同时改写模板与运行副本，避免启动期模板同步覆盖
         /// </summary>
         public string TemplatePath = "";
+        /// <summary>
+        /// 装载降级事实——空=正常；非空=格式 code|state|detail（读取失败 / JSON 损坏时已回退为空 schema）。
+        /// 宿主据此登记启动降级项（A260：配置损坏不得阻断启动）。
+        /// </summary>
+        public string LoadDegrade = "";
 
         /// <summary>
         /// 建立空 schema
@@ -108,7 +113,35 @@ namespace Mau.Runtime
             {
                 return schema;
             }
-            using (JsonDocument doc = JsonUtil.ParseStrict(File.ReadAllText(path)))
+            // [段1] 读取——权限 / 占用失败 → 空 schema + 降级事实（不阻断启动）
+            string text;
+            try
+            {
+                text = File.ReadAllText(path);
+            }
+            catch (Exception ex)
+            {
+                schema.LoadDegrade = "CFG_UNREADABLE|fallback|" + path + " | " + ex.Message;
+                return schema;
+            }
+            // [段2] 解析——JSON 损坏 → 备份坏档 + 空 schema + 降级事实
+            JsonDocument doc;
+            try
+            {
+                doc = JsonUtil.ParseStrict(text);
+            }
+            catch (Exception ex)
+            {
+                string backup = ConfigFileGuard.BackupCorrupt(path);
+                string note = "";
+                if (backup.Length > 0)
+                {
+                    note = "（坏档备份 " + backup + "）";
+                }
+                schema.LoadDegrade = "CFG_CORRUPT|fallback|" + path + note + " | " + ex.Message;
+                return schema;
+            }
+            using (doc)
             {
                 JsonElement root = doc.RootElement;
                 JsonElement itemsEl;

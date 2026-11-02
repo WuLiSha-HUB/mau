@@ -20,6 +20,12 @@ namespace Mau.Runtime
 
         /// <summary>统一 JSON 选项。</summary>
         private readonly JsonSerializerOptions CH_LlmApiConfigStore_JsonOptions;
+        /// <summary>配置目录是否可写——false=内存态运行（写入会失败；调用方据此登记启动降级）</summary>
+        public bool StorageWritable = true;
+        /// <summary>配置目录不可写原因（空=可写）</summary>
+        public string StorageError = "";
+        /// <summary>最近一次读取失败原因——空=正常（损坏 / 无副本 / 反序列化失败）</summary>
+        public string LastLoadError = "";
 
         /// <summary>读取秘密目录，供产品快捷打开。</summary>
         public string SecretsRoot
@@ -48,13 +54,26 @@ namespace Mau.Runtime
             }
             string safeSettingsRoot = Path.GetFullPath(settingsRoot);
             string safeSecretsRoot = Path.GetFullPath(secretsRoot);
-            Directory.CreateDirectory(safeSettingsRoot);
-            Directory.CreateDirectory(safeSecretsRoot);
+            // A260 目录创建失败不阻断启动——标记只读运行，由宿主登记降级
+            try
+            {
+                Directory.CreateDirectory(safeSettingsRoot);
+                Directory.CreateDirectory(safeSecretsRoot);
+                StorageWritable = true;
+            }
+            catch (Exception ex)
+            {
+                StorageWritable = false;
+                StorageError = ex.Message;
+            }
             CH_LlmApiConfigStore_ConfigPath = Path.Combine(safeSettingsRoot,
                 "llm-api.json");
             CH_LlmApiConfigStore_SecretPath = Path.Combine(safeSecretsRoot,
                 "llm-api.cfg");
-            CH_SecretTextFile.DeleteHistory(CH_LlmApiConfigStore_SecretPath);
+            if (StorageWritable)
+            {
+                CH_SecretTextFile.DeleteHistory(CH_LlmApiConfigStore_SecretPath);
+            }
             CH_LlmApiConfigStore_JsonOptions = new JsonSerializerOptions();
             CH_LlmApiConfigStore_JsonOptions.IncludeFields = true;
             CH_LlmApiConfigStore_JsonOptions.WriteIndented = true;
@@ -72,14 +91,30 @@ namespace Mau.Runtime
                 return Array.Empty<CH_LlmApiConfig>();
             }
             bool ignoredRecovery;
+            string readError;
             string json = CH_AtomicTextFile.ReadWithRecovery(
                 CH_LlmApiConfigStore_ConfigPath, IsValidConfigDocument,
-                out ignoredRecovery);
-            CH_LlmApiConfig[]? loaded = JsonSerializer.Deserialize<
-                CH_LlmApiConfig[]>(json, CH_LlmApiConfigStore_JsonOptions);
+                out ignoredRecovery, out readError);
+            if (json.Length == 0)
+            {
+                LastLoadError = readError;
+                return Array.Empty<CH_LlmApiConfig>();
+            }
+            CH_LlmApiConfig[]? loaded;
+            try
+            {
+                loaded = JsonSerializer.Deserialize<
+                    CH_LlmApiConfig[]>(json, CH_LlmApiConfigStore_JsonOptions);
+            }
+            catch (Exception ex)
+            {
+                LastLoadError = "反序列化失败：" + ex.Message;
+                return Array.Empty<CH_LlmApiConfig>();
+            }
             if (loaded == null)
             {
-                throw new InvalidDataException("LLM API config is null.");
+                LastLoadError = "配置反序列化为空";
+                return Array.Empty<CH_LlmApiConfig>();
             }
             for (int i = 0; i < loaded.Length; i = i + 1)
             {

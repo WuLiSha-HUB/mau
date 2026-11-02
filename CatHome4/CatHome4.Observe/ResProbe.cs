@@ -37,6 +37,12 @@ namespace CatHome4.Observe
         /// <summary>py 服务行缓存（TTL 内复用——构建新行集合时整体替换）</summary>
         private static readonly List<object> _pyCache = new List<object>();
 
+        /// <summary>上次 node 枚举时刻（Unix 毫秒；0 = 未枚举）</summary>
+        private static long _nodeAtMs;
+
+        /// <summary>node 服务行缓存（TTL 内复用——构建新行集合时整体替换）</summary>
+        private static readonly List<object> _nodeCache = new List<object>();
+
         // [段1] GPU 缓存（锁保护——后台写、主线程读）
         /// <summary>GPU 缓存锁</summary>
         private static readonly object _gpuGate = new object();
@@ -105,13 +111,30 @@ namespace CatHome4.Observe
                 DataBox.TryResolve<IPyService>(out py);
                 if (py != null)
                 {
-                    ParsePyServices(py.Enumerate(), fresh);
+                    ParseServices(py.Enumerate(), fresh, "py");
                 }
                 _pyAtMs = now;
                 _pyCache.Clear();
                 _pyCache.AddRange(fresh);
             }
             pyServices.AddRange(_pyCache);
+
+            // [段2b] node 服务——独立键与独立缓存（与 py 互不覆盖；两侧任一侧未注入即空段）
+            List<object> nodeServices = new List<object>();
+            if (now - _nodeAtMs >= PyTtlMs)
+            {
+                List<object> freshNode = new List<object>();
+                INodeService nodeSvc;
+                DataBox.TryResolve<INodeService>(out nodeSvc);
+                if (nodeSvc != null)
+                {
+                    ParseServices(nodeSvc.Enumerate(), freshNode, "node");
+                }
+                _nodeAtMs = now;
+                _nodeCache.Clear();
+                _nodeCache.AddRange(freshNode);
+            }
+            nodeServices.AddRange(_nodeCache);
 
             // [段3] GPU——只读缓存（后台刷新）
             Dictionary<string, object> gpu = new Dictionary<string, object>();
@@ -158,6 +181,7 @@ namespace CatHome4.Observe
             root["t"] = now;
             root["proc"] = proc;
             root["py"] = pyServices;
+            root["node"] = nodeServices;
             root["gpu"] = gpu;
             root["loop"] = loop;
             return root;
@@ -192,7 +216,8 @@ namespace CatHome4.Observe
         /// </summary>
         /// <param name="json">Enumerate 回执 JSON</param>
         /// <param name="sink">结果行输出</param>
-        private static void ParsePyServices(string json, List<object> sink)
+        /// <param name="tag">服务面标签（py / node——日志归因用）</param>
+        private static void ParseServices(string json, List<object> sink, string tag)
         {
             if (json == null || json.Length == 0)
             {
@@ -200,7 +225,7 @@ namespace CatHome4.Observe
             }
             if (json.StartsWith("ERR|", StringComparison.Ordinal))
             {
-                LogStore.Add("ResProbe", 2, "py 服务枚举失败（资源面缺该段）: " + json, "SYS");
+                LogStore.Add("ResProbe", 2, tag + " 服务枚举失败（资源面缺该段）: " + json, "SYS");
                 return;
             }
             try
@@ -227,7 +252,7 @@ namespace CatHome4.Observe
             }
             catch (Exception ex)
             {
-                LogStore.Add("ResProbe", 2, "py 服务枚举回执解析失败（资源面缺该段）: " + ex.Message, "SYS");
+                LogStore.Add("ResProbe", 2, tag + " 服务枚举回执解析失败（资源面缺该段）: " + ex.Message, "SYS");
             }
         }
 

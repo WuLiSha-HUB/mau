@@ -42,8 +42,8 @@ namespace CatHome4.Admin
             ChatSession session = null;
             if (special)
             {
-                running = _majorHost != null;
-                port = _majorPort;
+                running = CatHostService.MajorHostRunning;
+                port = CatHostService.MajorPort;
                 if (_chatBridge != null)
                 {
                     session = _chatBridge.DefaultSession;
@@ -55,7 +55,7 @@ namespace CatHome4.Admin
             }
             else
             {
-                CatEntry cat = FindCat(catKey);
+                CatHostService.CatEntry cat = CatHostService.FindCat(catKey);
                 if (cat == null)
                 {
                     return Results.Json(new { ok = false, error = "未找到猫: " + catKey });
@@ -67,7 +67,7 @@ namespace CatHome4.Admin
                 session = cat.Session;
             }
             // [段1] 状态字段——与 cat.info 同源（BuildCatInfoEntry 单一实现，不另起数据面）
-            Dictionary<string, object> resp = BuildCatInfoEntry(id, name, running, port, special, session, "");
+            Dictionary<string, object> resp = CatHostService.BuildCatInfoEntry(id, name, running, port, special, session, "");
             resp["ok"] = true;
             resp["cat"] = id;
             resp["isIdle"] = session == null || session.IsIdle;
@@ -113,7 +113,7 @@ namespace CatHome4.Admin
                 archive["text"] = archiveText;
                 resp["archive"] = archive;
             }
-            return Results.Text(JsonSerializer.Serialize(resp, InfoJsonOptions), "application/json");
+            return Results.Text(JsonSerializer.Serialize(resp, CatHostService.InfoJsonOptions), "application/json");
         }
 
         /// <summary>

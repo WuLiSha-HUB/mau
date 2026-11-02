@@ -14,6 +14,9 @@ namespace CatHome4.Admin
     /// </summary>
     internal static partial class AdminService
     {
+        /// <summary>数据根——Bootstrap 注入（Admin 全域共用；猫域经 using static 引用同一份，不另存副本）。</summary>
+        internal static string _dataRoot;
+
         // [段1] 依赖注入字段——入口壳 Configure 一次性设置（命名与入口壳原静态成员一致——引用零改动）
         /// <summary>会话协调桥——默认猫/多猫会话注册（Core 域；入口壳注入）</summary>
         public static ChatBridge _chatBridge;
@@ -53,11 +56,10 @@ namespace CatHome4.Admin
         /// <param name="snapshotBuilder">快照 JSON 构建</param>
         /// <param name="htmlRoot">html 根解析（入口壳适配）</param>
         /// <param name="apiStore">LLM API 配置池（catcfg.apply 重建 Runtime 消费）</param>
-        /// <param name="qqBotStore">QQ Bot 配置池</param>
         /// <param name="appearanceStore">外观配置池（每猫外观引用解析消费——A244）</param>
         /// <param name="globalConfig">全局配置存储（catcfg.apply 消费）</param>
         /// <param name="portBand">端口段（每猫与 majordomo 独立端口按区段分配——A74）</param>
-        public static void Configure(ChatBridge bridge, OA oa, string dataRoot, int mainThreadId, Func<string, string, string> executeTool, Func<bool, string> snapshotBuilder, IHtmlRootProvider htmlRoot, CH_LlmApiConfigStore apiStore, CH_QqBotConfigStore qqBotStore, CH_AppearanceConfigStore appearanceStore, ConfigStore globalConfig, PortBand portBand)
+        public static void Configure(ChatBridge bridge, OA oa, string dataRoot, int mainThreadId, Func<string, string, string> executeTool, Func<bool, string> snapshotBuilder, IHtmlRootProvider htmlRoot, CH_LlmApiConfigStore apiStore, CH_AppearanceConfigStore appearanceStore, ConfigStore globalConfig, PortBand portBand)
         {
             _chatBridge = bridge;
             _oa = oa;
@@ -67,7 +69,6 @@ namespace CatHome4.Admin
             BuildSnapshotJson = snapshotBuilder;
             HtmlRoot = htmlRoot;
             _apiStore = apiStore;
-            _qqBotStore = qqBotStore;
             _appearanceStore = appearanceStore;
             _globalConfig = globalConfig;
             PortBand = portBand;

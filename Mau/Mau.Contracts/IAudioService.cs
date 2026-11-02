@@ -20,5 +20,13 @@
         /// </summary>
         /// <returns>活跃 Key 数</returns>
         int ActiveKeyCount();
+
+        /// <summary>
+        /// 多段 WAV 拼接——按顺序读入，统一重采样到 44.1 kHz / 16bit / 立体声后写成单文件（A265：轮末总结三段成一条）。
+        /// </summary>
+        /// <param name="paths">源 WAV 路径（按播放顺序）</param>
+        /// <param name="outPath">目标 WAV 路径（覆盖写；目录不存在则创建）</param>
+        /// <returns>已写出返回空串；失败返回 "ERR|CODE|说明"（可见，不静默）</returns>
+        string Join(string[] paths, string outPath);
     }
 }

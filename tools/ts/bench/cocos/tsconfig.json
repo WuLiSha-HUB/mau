@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2015",
+    "module": "ES2015",
+    "moduleResolution": "node",
+    "lib": ["ES2015", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": true,
+    "experimentalDecorators": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "db://assets/*": ["assets/*"]
+    }
+  },
+  "include": ["assets/**/*.ts", "engine/**/*.d.ts"]
+}

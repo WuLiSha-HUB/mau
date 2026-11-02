@@ -67,7 +67,7 @@ namespace CH4
             tools[3] = new
             {
                 name = "info",
-                description = "本会话环境自省——返回分类 JSON 块：version（版本 + 编译时刻）/ time（当前时间）/ llm（本猫生效端点）/ endpoint（本地端点：对话页 + 管理面板）/ roots（可见受控根 id/writable/note/path——绝对路径）/ tokens（前文长度 + 最近前文变动时刻）/ packs（挂载包）/ qqbot（渠道说明）/ tools_drift（漂移——added 附用法摘要 name/desc/args（*=必填）· removed 给名字；仅不一致时输出）/ tools_defect（工具组定义缺陷——group/stage/reason；仅非空时输出）/ timeback（上下文作用域——active 活跃作用域 · recent 归档尾部 5 条 · archive 写面可用性；无数据时不出该键）（agent 的眼睛；R1.2）",
+                description = "本会话环境自省——返回分类 JSON 块：version（版本 + 编译时刻）/ time（当前时间）/ llm（本猫生效端点）/ endpoint（本地端点：对话页 + 管理面板）/ roots（可见受控根 id/writable/note/path——绝对路径）/ tokens（前文长度 + 最近前文变动时刻）/ packs（挂载包）/ tools_drift（漂移——added 附用法摘要 name/desc/args（*=必填）· removed 给名字；仅不一致时输出）/ tools_defect（工具组定义缺陷——group/stage/reason；仅非空时输出）/ timeback（上下文作用域——active 活跃作用域 · recent 归档尾部 5 条 · archive 写面可用性；无数据时不出该键）（agent 的眼睛；R1.2）",
                 parameters = new
                 {
                     type = "object",
@@ -149,13 +149,13 @@ namespace CH4
             tools[9] = new
             {
                 name = "timeback-start",
-                description = "上下文作用域·开锚——type 选域类型（决定域内可用工具白名单 / 回执骨架 / 资源预热），purpose 记用途；过程在作用域内膨胀，回收时用 timeback-back 回卷（膨胀过程从上下文销毁，只把 findings 带回主干——下一轮首条可见）。域类型枚举：browser_vision（浏览网页 + 识图：browser-* / image-* + 基础读面）· text_search（文本与文档检索：文本读面 + 文件结构面）· code_review（代码审查取证：基础读面 + cs 只读七件，不含跑测面）· code_write（代码实现：基础读面 + cs 全套十三件 + 文本写面 + mau-verify——读 / 改 / 编译 / 跑测一域内完成）。🔴 域内只放行本类型白名单——名单外调用被拒（ERR|TIMEBACK_PROFILE，需用则先 back 回主干，不在域内换类型）；系统信息类工具（info / host-flows）不进任何域；域内不做计划、不调 Note / sleep / timer。热重载 / 重启 / 部署不在域内（进程中断即失域）。🔴 开域判据（三闸门任一即开）：① 位置不确定（要搜 / 要枚举才知道在哪）② 结果不确定（编译 / 跑测 / 接口探测 / 渲染验收——不试不知道）③ 原文 >6KB 且主干不需原文；三条全不满足（知道确切位置 + 一次调用可得 + 输出 ≤6KB）留主干；闸底——预估域内 <1500 token 且一次收口不开域。v1 未闭合前禁止再次 start。",
+                description = "上下文作用域·开锚——type 选域类型（决定域内可用工具白名单 / 回执骨架 / 资源预热），purpose 记用途；过程在作用域内膨胀，回收时用 timeback-back 回卷（膨胀过程从上下文销毁，只把 findings 带回主干——下一轮首条可见）。域类型枚举：browser_vision（浏览网页取证：browser-* + 基础读面，**不含识图**）· image_vision（看图取证：image-* + 基础读面——回执给 ASCII 图证 + 结论）· text_search（文本与文档检索：文本读面 + 文件结构面）· code_review（代码审查取证：基础读面 + cs 只读七件，不含跑测面）· code_write（代码实现：基础读面 + cs 全套十三件 + 文本写面 + mau-verify——读 / 改 / 编译 / 跑测一域内完成）。🔴 域内只放行本类型白名单——名单外调用被拒（ERR|TIMEBACK_PROFILE，需用则先 back 回主干，不在域内换类型）；系统信息类工具（info / host-flows）不进任何域；域内不做计划、不调 Note / sleep / timer。热重载 / 重启 / 部署不在域内（进程中断即失域）。🔴 开域判据：本环节预期串接 ≥3 次工具调用才收口——单次 / 两次即得答案留主干。v1 未闭合前禁止再次 start。",
                 parameters = new
                 {
                     type = "object",
                     properties = new Dictionary<string, object>
                             {
-                                { "type", new { type = "string", description = "域类型（必填）——browser_vision | text_search | code_review | code_write" } },
+                                { "type", new { type = "string", description = "域类型（必填）——browser_vision | image_vision | text_search | code_review | code_write" } },
                                 { "purpose", new { type = "string", description = "用途标签（短）" } }
                             },
                     required = new string[] { "type", "purpose" }
@@ -164,7 +164,7 @@ namespace CH4
             tools[10] = new
             {
                 name = "timeback-back",
-                description = "上下文作用域·回卷回收——findings 即本次调用的返回值，回卷后作用域关闭（区间内容从上下文销毁）。findings 按 start 回执给出的骨架写（审查类给「成果位置」· 实现类给「变更 + 可复跑跑测」）——只写「在哪 / 改了什么」不写「结论是什么」；没读到的、凭印象复述的一律不写。回执另附宿主**工具台账**（域内用过的每个工具：工具名 · 目标 · 成败——含只读与被拒）。回收时本调用的思考内容会被替换为占位句（原文留视图层）——防「回域断言」被后续轮次误当事实。",
+                description = "上下文作用域·回卷回收——findings 即本次调用的返回值，回卷后作用域关闭（区间内容从上下文销毁）。findings 按 start 回执给出的骨架写（审查类给「成果位置」· 实现类给「变更 + 可复跑跑测」· 识图类给「ASCII 图证 + 结论」）——只写「在哪 / 改了什么 / 看到了什么」不写无证据的结论；没读到的、凭印象复述的一律不写。回执另附宿主**工具台账**（域内用过的每个工具：工具名 · 目标 · 成败——含只读与被拒）。回收时本调用的思考内容会被替换为占位句（原文留视图层）——防「回域断言」被后续轮次误当事实。",
                 parameters = new
                 {
                     type = "object",
@@ -251,45 +251,6 @@ namespace CH4
                 sb.Append(missing[i]);
             }
             LogStore.Add("CatHome4", 2, "域类型白名单含池外工具名（拼写漂移 / 工具退役漏改）| " + sb.ToString(), "TIMEBACK");
-        }
-
-        /// <summary>
-        /// 工具自检工单 ownerId——独立于会话 ToolOwnerId（避免与会话工单归属混淆）
-        /// </summary>
-        private const long ToolCheckOwnerId = 9001;
-
-        /// <summary>
-        /// 工具全链自检——投递一条真实工具单（OA 走单 → 工具组 Flow 认领 → 桥）→ 驱动帧至闭环 → 输出回执。
-        /// A23：工具交付自检须含一条全链实跑（单元测试直调桥会绕过宿主注入面）。
-        /// </summary>
-        /// <param name="name">工具名（如 text-read / cs-check）</param>
-        /// <param name="argsJson">参数整包 JSON</param>
-        /// <returns>退出码（0=闭环 / 3=挂单失败 / 4=未闭环）</returns>
-        private static int RunToolCheck(string name, string argsJson)
-        {
-            ToolOrderDog dog = new ToolOrderDog("tool-check", name, argsJson);
-            dog.Post(_oa, ToolCheckOwnerId);
-            if (dog.OfficeId == 0)
-            {
-                Console.WriteLine("[TOOLCHECK] name=" + name + " ERR|OA_POST_FAIL|工单提交失败（OA 不可用）");
-                return 3;
-            }
-            Console.WriteLine("[TOOLCHECK] name=" + name + " office=#" + dog.OfficeId + " timeoutFrames=" + dog.TimeoutFrames);
-            long frames = 0;
-            while (!dog.IsClosed && !dog.IsTimedOut && frames < dog.TimeoutFrames)
-            {
-                _runner.Tick();
-                dog.Tick(_oa);
-                frames = frames + 1;
-                Thread.Sleep(FrameTargetMs);
-            }
-            Console.WriteLine("[TOOLCHECK] frames=" + frames + " closed=" + dog.IsClosed + " timedOut=" + dog.IsTimedOut);
-            Console.WriteLine("[TOOLCHECK] result=" + (dog.Result == null ? "" : dog.Result));
-            if (dog.IsClosed && dog.Result != null && dog.Result.Length > 0 && !dog.Result.StartsWith("ERR|", StringComparison.Ordinal))
-            {
-                return 0;
-            }
-            return 4;
         }
 
         /// <summary>

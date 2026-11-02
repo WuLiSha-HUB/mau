@@ -167,5 +167,32 @@ namespace Mau.Providers.Tests
             Assert.Contains("\"usageFrames\":0", json, StringComparison.Ordinal);
             Assert.Contains("\"prompt\":0", json, StringComparison.Ordinal);
         }
+
+        /// <summary>
+        /// finish_reason 解析——length 被原样取出（截断可见性判据）。
+        /// </summary>
+        [Fact]
+        public void TryParseFinishReason_Length_ReturnsValue()
+        {
+            string reason = "";
+            bool ok = DeepSeekLlmRuntime.TryParseFinishReason("{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}", out reason);
+            Assert.True(ok);
+            Assert.Equal("length", reason);
+        }
+
+        /// <summary>
+        /// finish_reason 解析——帧内无该字段（含 null）早退返回 false 且输出空串。
+        /// </summary>
+        [Fact]
+        public void TryParseFinishReason_MissingOrNull_ReturnsFalse()
+        {
+            string reason = "keep";
+            bool ok = DeepSeekLlmRuntime.TryParseFinishReason("{\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}", out reason);
+            Assert.False(ok);
+            Assert.Equal("", reason);
+            bool nullOk = DeepSeekLlmRuntime.TryParseFinishReason("{\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":null}]}", out reason);
+            Assert.False(nullOk);
+            Assert.Equal("", reason);
+        }
     }
 }

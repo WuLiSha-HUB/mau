@@ -112,7 +112,7 @@ function linesOf(text) {
 }
 
 function isErrResult(text) {
-    // 失败态——ERR / ROLLED_BACK / FAIL 前缀，或结构化返回头 ok:false（单一出口，各骨架不再自加后缀）
+    // 失败态——ERR / FAIL 前缀，或结构化返回头 ok:false（单一出口，各骨架不再自加后缀）；ROLLED_BACK 仅兼容历史前文（2026-10-19 起 cs-* 不再产生）
     if (typeof text !== 'string' || text.length === 0) { return false; }
     if (text.indexOf('ERR') === 0 || text.indexOf('ROLLED_BACK') === 0 || text.indexOf('FAIL') === 0) { return true; }
     var head = metaHead(text);
