@@ -147,6 +147,9 @@ namespace CatHome4.Admin
             // [段3] 会话生命周期与 Note——全等项在前（避免被前缀项吞掉）
             InputRoute sessionNew = new InputRoute("session.new", false, true, RouteSessionNew, "新会话：清前文 + 按清单重注入");
             sessionNew.WaitIdle = true;
+            // A309 带初始消息形式——前缀项排在全等项之后（避免吞掉裸 session.new）
+            InputRoute sessionNewInline = new InputRoute("session.new ", true, true, RouteSessionNewInline, "新会话（带初始消息）：清前文 + 重注入 + 注入首条消息");
+            sessionNewInline.WaitIdle = true;
             InputRoute sessionClear = new InputRoute("session clear", false, true, RouteSessionCmd, "会话调试：清空");
             sessionClear.WaitIdle = true;
             InputRoute sessionCount = new InputRoute("session count", false, true, RouteSessionCmd, "会话调试：计数");
@@ -170,7 +173,7 @@ namespace CatHome4.Admin
             // [段7] 延迟指令族——调度器内部锁保护，任意线程可直执
             InputRoute delay = new InputRoute("delay.", true, false, RouteDelayCommand, "延迟指令队列（定时输入）");
 
-            return new InputRoute[] { chat, pause, cont, sessionNew, sessionClear, sessionCount, noteStart, noteAdd, rollback, fork, reload, catCmd, catCfgCmd, delay };
+            return new InputRoute[] { chat, pause, cont, sessionNew, sessionNewInline, sessionClear, sessionCount, noteStart, noteAdd, rollback, fork, reload, catCmd, catCfgCmd, delay };
         }
 
         /// <summary>
@@ -446,6 +449,18 @@ namespace CatHome4.Admin
             _chatBridge.HandleSessionNew(target.Session, target.Persona, target.InjectList, target.ToolSpecs);
             return true;
         }
+        /// <summary>
+        /// 新会话（带初始消息）——session.new &lt;内容&gt;；重建后立即注入该消息并起轮。
+        /// </summary>
+        /// <param name="target">目标选择器</param>
+        /// <param name="line">输入行</param>
+        /// <returns>true=已受理</returns>
+        private static bool RouteSessionNewInline(InputTarget target, string line)
+        {
+            string content = line.Length > 12 ? line.Substring(12).Trim() : "";
+            _chatBridge.HandleSessionNew(target.Session, target.Persona, target.InjectList, target.ToolSpecs, content, "");
+            return true;
+        }
 
         /// <summary>
         /// 会话调试指令——session clear / session count。
@@ -519,10 +534,68 @@ namespace CatHome4.Admin
         /// <returns>true=已受理</returns>
         private static bool RouteAdminLine(InputTarget target, string line)
         {
-            string result = HandleCatCommand(line);
+            string result;
+            // A309 跨猫会话重建——cat.session.new <key> [初始消息]（本猫重建走 session.new）
+            if (line.StartsWith("cat.session.new ", StringComparison.Ordinal))
+            {
+                result = HandleCatSessionNew(line.Substring(16).Trim());
+            }
+            else
+            {
+                result = HandleCatCommand(line);
+            }
             LogStore.Add("CatHome4", 1, "cat 指令: " + result, "CMD");
             Console.WriteLine("[CMD] " + result);
             return true;
+        }
+        /// <summary>
+        /// 跨猫会话重建解析——cat.session.new &lt;key&gt; [初始消息]。
+        /// </summary>
+        /// <param name="rest">key 与其后的初始消息</param>
+        /// <returns>结果文本</returns>
+        private static string HandleCatSessionNew(string rest)
+        {
+            string body = rest == null ? "" : rest.Trim();
+            if (body.Length == 0)
+            {
+                return "cat.session.new | 用法: cat.session.new <key> [初始消息]";
+            }
+            int sp = body.IndexOf(' ');
+            string key = sp < 0 ? body : body.Substring(0, sp).Trim();
+            string first = sp < 0 ? "" : body.Substring(sp + 1).Trim();
+            string result = RebuildCatSession(key, first, "");
+            if (result.StartsWith("ok|", StringComparison.Ordinal))
+            {
+                string tail = first.Length == 0 ? "（无初始消息）" : "（初始消息 " + first.Length.ToString() + " 字）";
+                return "cat.session.new | 已重建会话: " + key + tail;
+            }
+            return "cat.session.new | " + result;
+        }
+        /// <summary>
+        /// 跨猫会话重建——目标须空闲；供指令面与 Group 工具面共用。
+        /// </summary>
+        /// <param name="key">目标猫 key</param>
+        /// <param name="firstMessage">重建后注入的初始消息（空 = 只重建）</param>
+        /// <param name="origin">初始消息来源锚（组派单用 group:&lt;组&gt;:&lt;seq&gt;:delegation）</param>
+        /// <returns>ok| 前缀或 ERR| 前缀</returns>
+        internal static string RebuildCatSession(string key, string firstMessage, string origin)
+        {
+            string useKey = key == null ? "" : key.Trim();
+            if (useKey.Length == 0)
+            {
+                return "ERR|CAT_KEY_EMPTY|目标猫 key 不能为空";
+            }
+            CatEntry cat = CatHostService.FindCat(useKey);
+            if (cat == null || cat.Session == null)
+            {
+                return "ERR|CAT_OFFLINE|猫未运行: " + useKey;
+            }
+            if (!cat.Session.IsIdle)
+            {
+                return "ERR|CAT_BUSY|猫忙——仅在空闲时可重建: " + useKey;
+            }
+            _chatBridge.HandleSessionNew(cat.Session, cat.Persona, cat.InjectList, cat.ToolSpecs, firstMessage, origin);
+            return "ok|" + useKey;
         }
 
         /// <summary>

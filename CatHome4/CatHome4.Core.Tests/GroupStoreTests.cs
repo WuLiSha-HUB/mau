@@ -281,44 +281,58 @@ namespace CatHome4.Core.Tests
             Assert.Equal(2, GroupStore.ReadMessages("施工队", 0, 2).Count);
             Assert.Equal(5, GroupStore.ReadMessages("施工队", 0, 0).Count);
         }
-
         /// <summary>
-        /// 已读推进——只前进（回退请求幂等保持原值）；落盘后重新加载保持；未读按游标派生。
+        /// 停用门禁——停用组追加消息被拒（错误码明确「未启用」）；重新启用后恢复可写。
         /// </summary>
         [Fact]
-        public void MarkRead_AdvancesOnlyAndPersists()
+        public void DisabledGroup_AppendRejected()
         {
-            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "");
-            GroupStore.AppendMessage("施工队", "majordomo", "note", "一", "");
-            GroupStore.AppendMessage("施工队", "majordomo", "note", "二", "");
-            GroupStore.AppendMessage("施工队", "majordomo", "note", "三", "");
-            Assert.StartsWith("ok|", GroupStore.MarkRead("施工队", "coder1", 2), StringComparison.Ordinal);
-            Assert.Equal(1, GroupStore.GetUnread("施工队", "coder1"));
-            // 回退请求——幂等保持 2
-            Assert.StartsWith("ok|", GroupStore.MarkRead("施工队", "coder1", 1), StringComparison.Ordinal);
-            Assert.Equal(1, GroupStore.GetUnread("施工队", "coder1"));
-            // 无游标成员 = 全部未读
-            Assert.Equal(3, GroupStore.GetUnread("施工队", "majordomo"));
-            // 越界推进收敛到最大序号
-            GroupStore.MarkRead("施工队", "majordomo", 99);
-            Assert.Equal(0, GroupStore.GetUnread("施工队", "majordomo"));
-            // 落盘往返
+            GroupStore.CreateOrUpdate("停用队", new string[] { "majordomo" }, "");
+            Assert.True(GroupStore.IsRunning("停用队"));
+            Assert.StartsWith("ok|", GroupStore.SetEnabled("停用队", false), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.StopGroup("停用队"), StringComparison.Ordinal);
+            Assert.False(GroupStore.IsRunning("停用队"));
+            Assert.StartsWith("ERR|GROUP_NOT_RUNNING", GroupStore.AppendMessage("停用队", "majordomo", "note", "hi", "", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.StartGroup("停用队"), StringComparison.Ordinal);
+            Assert.True(GroupStore.IsRunning("停用队"));
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("停用队", "majordomo", "note", "hi", "", ""), StringComparison.Ordinal);
+        }
+        /// <summary>
+        /// 启动加载——停用组保持轻量条目（不扫消息流、统计归零）；运行态为 false。
+        /// </summary>
+        [Fact]
+        public void Load_DisabledGroup_KeepsLightEntry()
+        {
+            GroupStore.CreateOrUpdate("轻量队", new string[] { "majordomo" }, "");
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("轻量队", "majordomo", "note", "a", "", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("轻量队", "majordomo", "note", "b", "", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.SetEnabled("轻量队", false), StringComparison.Ordinal);
             GroupStore.Configure(_dir);
             GroupStore.Load();
-            Assert.Equal(1, GroupStore.GetUnread("施工队", "coder1"));
-            Assert.Equal(0, GroupStore.GetUnread("施工队", "majordomo"));
+            GroupSummary g = GroupStore.GetGroup("轻量队");
+            Assert.NotNull(g);
+            if (g == null)
+            {
+                return;
+            }
+            Assert.False(g.Running);
+            Assert.Equal(0, g.MsgCount);
+            Assert.Equal(0, g.LastSeq);
         }
-
         /// <summary>
-        /// 已读参数面——空猫 key / 负序号 / 组不存在一律拒绝。
+        /// 投影副本必须携带运行态——启用组 GetGroup 返回的副本 Running 为 true（防新增字段漏拷）。
         /// </summary>
         [Fact]
-        public void MarkRead_InvalidArgs_Rejected()
+        public void GetGroup_ProjectionCarriesRunning()
         {
-            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo" }, "");
-            Assert.StartsWith("ERR|GROUP_CAT_EMPTY", GroupStore.MarkRead("施工队", "", 1), StringComparison.Ordinal);
-            Assert.StartsWith("ERR|GROUP_SEQ_INVALID", GroupStore.MarkRead("施工队", "majordomo", -1), StringComparison.Ordinal);
-            Assert.StartsWith("ERR|GROUP_NOT_FOUND", GroupStore.MarkRead("不存在", "majordomo", 1), StringComparison.Ordinal);
+            GroupStore.CreateOrUpdate("投影队", new string[] { "majordomo" }, "");
+            GroupSummary g = GroupStore.GetGroup("投影队");
+            Assert.NotNull(g);
+            if (g == null)
+            {
+                return;
+            }
+            Assert.True(g.Running);
         }
     }
 }

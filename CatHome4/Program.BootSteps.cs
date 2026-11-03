@@ -561,6 +561,8 @@ namespace CH4
             ChatSession.RoundSummaryLlmProvider = CatHostService.ResolveRoundSummaryLlm;
             // 轮末总结播报接线——catKey → [启用标志, 音色槽位值]（A247：总结自动出声）
             ChatSession.SummaryAudioProvider = AdminService.ResolveSummaryAudio;
+            // A309 轮末重建接线——会话自请求 new（挂起到轮末；Core 不依赖 Admin 域）
+            ChatSession.SessionRebuilder = RebuildSessionForCat;
             // 延迟队列落盘接线——Data/runtime/delays.json（跨宿主重启保留；design-ch4-delay §七）
             DelayQueue.Configure(Path.Combine(dataRoot, "Data", "runtime", "delays.json"));
             DelayQueue.Load();
@@ -771,6 +773,24 @@ namespace CH4
             ctx.DefaultTools = defaultTools;
             ctx.ChatViewStore = chatViewStore;
             ctx.SessionReady = true;
+        }
+        /// <summary>
+        /// 轮末会话重建执行体——取该猫缓存的 persona / 注入清单 / 工具面，走统一 new 入口。
+        /// </summary>
+        /// <param name="session">目标会话</param>
+        /// <param name="firstMessage">重建后注入的初始消息（空 = 只重建）</param>
+        /// <param name="origin">初始消息来源锚</param>
+        /// <returns>true = 已重建</returns>
+        private static bool RebuildSessionForCat(ChatSession session, string firstMessage, string origin)
+        {
+            CatHostService.CatEntry cat = CatHostService.FindCat(session.Id);
+            if (cat == null)
+            {
+                LogStore.Add("CatHome4", 2, "轮末重建未执行（猫条目缺失）: cat=" + session.Id, "CHAT");
+                return false;
+            }
+            _chatBridge.HandleSessionNew(cat.Session, cat.Persona, cat.InjectList, cat.ToolSpecs, firstMessage, origin);
+            return true;
         }
     }
 }

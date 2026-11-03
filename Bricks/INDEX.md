@@ -35,6 +35,7 @@
 | BRIK-GROUP-002 | group.inbox | GROUP | GROUP/BRIK-GROUP-002_group.inbox.cs | 无 | active |  |
 | BRIK-GROUP-003 | group.say | GROUP | GROUP/BRIK-GROUP-003_group.say.cs | 无 | active |  |
 | BRIK-GROUP-004 | group.send | GROUP | GROUP/BRIK-GROUP-004_group.send.cs | 无 | active |  |
+| BRIK-GROUP-005 | group.new_session | GROUP | GROUP/BRIK-GROUP-005_group.new_session.cs | 无 | active |  |
 | BRIK-HOST-001 | host.restart | HOST | HOST/BRIK-HOST-001_host.restart.cs | 无 | active |  |
 | BRIK-HOST-002 | host.command | HOST | HOST/BRIK-HOST-002_host.command.cs | 无 | active |  |
 | BRIK-HOST-003 | host.catinfo | HOST | HOST/BRIK-HOST-003_host.catinfo.cs | 无 | active |  |

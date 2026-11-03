@@ -213,7 +213,8 @@ namespace CH4
         /// <param name="persona">角色段（空=仅基础角色）</param>
         /// <param name="injectList">注入清单（空=不注入）</param>
         /// <param name="specs">该会话工具声明面（裁剪后）</param>
-        public void HandleSessionNew(ChatSession session, string persona, string[] injectList, ToolSpec[] specs)
+        /// <param name="firstMessage">重建后注入的初始消息（空 = 只重建，回到空闲）</param>
+        public void HandleSessionNew(ChatSession session, string persona, string[] injectList, ToolSpec[] specs, string firstMessage = null, string origin = null)
         {
             WorkspaceConfig ws = null;
             DataBox.TryResolve<WorkspaceConfig>(out ws);
@@ -248,8 +249,22 @@ namespace CH4
                 injectCount = injectList.Length;
             }
             string summary = "会话已重建：注入 " + injectCount.ToString() + " 个知识文件，前文已清空";
+            // A309 初始消息——重建收尾后注入（user 路径；自然起轮；origin 供组回执锚定）
+            string first = firstMessage == null ? "" : firstMessage.Trim();
+            if (first.Length > 0)
+            {
+                string useOrigin = origin == null ? "" : origin;
+                if (session.PostUserMessage(first, "user", "", useOrigin))
+                {
+                    summary = summary + " · 已注入初始消息 " + first.Length.ToString() + " 字";
+                }
+                else
+                {
+                    summary = summary + " · 初始消息未受理";
+                    LogStore.Add("CatHome4", 2, "会话重建后初始消息未受理: cat=" + session.Id, "CHAT");
+                }
+            }
             LogStore.Add("CatHome4", 1, summary, "CHAT");
-
         }
 
         /// <summary>

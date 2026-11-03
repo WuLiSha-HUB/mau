@@ -38,6 +38,10 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_NOT_MEMBER|调用者不是本组成员: " + catId;
             }
+            if (!g.Running)
+            {
+                return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
+            }
             return BuildGroupJson(g);
         }
 
@@ -84,6 +88,10 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_NOT_MEMBER|调用者不是本组成员: " + catId;
             }
+            if (!g.Running)
+            {
+                return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
+            }
             List<GroupMessage> messages = GroupStore.ReadMessages(g.Name, after, limit);
             return BuildMessagesJson(g, messages);
         }
@@ -123,6 +131,10 @@ namespace CatHome4.Admin
             if (!IsMember(g, catId))
             {
                 return "ERR|GROUP_NOT_MEMBER|调用者不是本组成员: " + catId;
+            }
+            if (!g.Running)
+            {
+                return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
             }
             string result = GroupStore.AppendMessage(g.Name, catId, "note", text, "", to);
             if (!result.StartsWith("ok|", StringComparison.Ordinal))
@@ -172,6 +184,10 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_NOT_FOUND|组不存在: " + group;
             }
+            if (!g.Running)
+            {
+                return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
+            }
             if (!IsAdmin(g, catId))
             {
                 return "ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: " + catId;
@@ -207,6 +223,106 @@ namespace CatHome4.Admin
             reply["group"] = g.Name;
             reply["seq"] = seq;
             reply["to"] = to;
+            return JsonUtil.Serialize(reply);
+        }
+        /// <summary>重建会话（group-newsession）——管理员发起；目标须成员且运行中；目标是调用者自己时挂起到轮末。</summary>
+        /// <param name="argsJson">工具参数 JSON（group / to / reason 必填；firstMessage 可选）</param>
+        /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
+        public string NewSession(string argsJson)
+        {
+            string group = "";
+            string catId = "";
+            string err = ReadCommon(argsJson, out group, out catId);
+            if (err.Length > 0)
+            {
+                return err;
+            }
+            string to = "";
+            string reason = "";
+            string first = "";
+            try
+            {
+                using (JsonDocument doc = JsonUtil.ParseStrict(argsJson))
+                {
+                    JsonElement root = doc.RootElement;
+                    to = JsonString(root, "to").Trim();
+                    reason = JsonString(root, "reason").Trim();
+                    first = JsonString(root, "firstMessage");
+                }
+            }
+            catch (Exception ex)
+            {
+                return "ERR|BAD_ARGS|参数 JSON 解析失败: " + ex.Message;
+            }
+            GroupSummary g = GroupStore.GetGroup(group);
+            if (g == null)
+            {
+                return "ERR|GROUP_NOT_FOUND|组不存在: " + group;
+            }
+            if (!g.Running)
+            {
+                return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
+            }
+            if (!IsAdmin(g, catId))
+            {
+                return "ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: " + catId;
+            }
+            if (to.Length == 0)
+            {
+                return "ERR|BAD_ARGS|重建会话必须指定 to（@ 目标猫）";
+            }
+            if (!IsMember(g, to))
+            {
+                return "ERR|GROUP_TARGET_NOT_MEMBER|@ 目标不在组内: " + to;
+            }
+            if (reason.Length == 0)
+            {
+                return "ERR|BAD_ARGS|重建会话必须给出 reason（新会话唯一的上下文说明）";
+            }
+            CatHostService.CatEntry target = CatHostService.FindCat(to);
+            if (target == null || target.Session == null)
+            {
+                return "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + to;
+            }
+            string noteText = "[系统] 请求重建会话 → " + to + " | 原因 " + reason;
+            if (first.Length > 0)
+            {
+                noteText = noteText + " | 初始指令 " + first.Length.ToString() + " 字";
+            }
+            string appended = GroupStore.AppendMessage(g.Name, catId, "note", noteText, "", "");
+            if (!appended.StartsWith("ok|", StringComparison.Ordinal))
+            {
+                return appended;
+            }
+            long seq = ParseSeq(appended);
+            string origin = "group:" + g.Name + ":" + seq.ToString() + ":delegation";
+            if (first.Length == 0)
+            {
+                origin = "";
+            }
+            bool self = string.Equals(to, catId, StringComparison.Ordinal);
+            if (self)
+            {
+                if (!target.Session.RequestSessionRebuild(first, origin))
+                {
+                    return "ERR|GROUP_REBUILD_PENDING|本会话已有挂起的重建请求";
+                }
+            }
+            else
+            {
+                string result = AdminService.RebuildCatSession(to, first, origin);
+                if (!result.StartsWith("ok|", StringComparison.Ordinal))
+                {
+                    return result;
+                }
+            }
+            Dictionary<string, object> reply = new Dictionary<string, object>();
+            reply["ok"] = true;
+            reply["tool"] = "group-newsession";
+            reply["group"] = g.Name;
+            reply["seq"] = seq;
+            reply["to"] = to;
+            reply["mode"] = self ? "queued" : "rebuilt";
             return JsonUtil.Serialize(reply);
         }
 

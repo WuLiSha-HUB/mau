@@ -937,6 +937,58 @@ namespace CH4
                 return _phase == ChatPhase.Idle;
             }
         }
+        /// <summary>会话重建委托——(会话, 初始消息, origin) → 是否已重建；由组合根注入（Core 不依赖 Admin）</summary>
+        public static Func<ChatSession, string, string, bool> SessionRebuilder;
+        /// <summary>挂起的重建请求——true = 本轮收尾后执行（不在工具调用中途清前文）</summary>
+        private bool _pendingRebuild;
+        /// <summary>挂起重建的初始消息</summary>
+        private string _pendingRebuildFirst = "";
+        /// <summary>挂起重建的初始消息来源锚</summary>
+        private string _pendingRebuildOrigin = "";
+        /// <summary>是否存在挂起的重建请求</summary>
+        public bool HasPendingRebuild
+        {
+            get
+            {
+                return _pendingRebuild;
+            }
+        }
+        /// <summary>登记会话重建——本轮收尾后生效（重复登记返回 false，不覆盖首次请求）。</summary>
+        /// <param name="firstMessage">重建后注入的初始消息（空 = 只重建）</param>
+        /// <param name="origin">初始消息来源锚（空 = 非组来源）</param>
+        /// <returns>true = 已登记</returns>
+        public bool RequestSessionRebuild(string firstMessage, string origin)
+        {
+            if (_pendingRebuild)
+            {
+                return false;
+            }
+            _pendingRebuild = true;
+            _pendingRebuildFirst = firstMessage == null ? "" : firstMessage;
+            _pendingRebuildOrigin = origin == null ? "" : origin;
+            LogStore.Add("CatHome4", 1, "会话重建已登记（轮末生效）: cat=" + _catKey, "CHAT");
+            return true;
+        }
+        /// <summary>轮末执行挂起重建——委托未注入视为失败并出声。</summary>
+        /// <returns>true = 已重建</returns>
+        private bool FlushPendingRebuild()
+        {
+            if (!_pendingRebuild)
+            {
+                return false;
+            }
+            _pendingRebuild = false;
+            string first = _pendingRebuildFirst;
+            string origin = _pendingRebuildOrigin;
+            _pendingRebuildFirst = "";
+            _pendingRebuildOrigin = "";
+            if (SessionRebuilder == null)
+            {
+                LogStore.Add("CatHome4", 2, "会话重建未执行（SessionRebuilder 未注入）: cat=" + _catKey, "CHAT");
+                return false;
+            }
+            return SessionRebuilder(this, first, origin);
+        }
 
         /// <summary>当前相位（快照观测面）</summary>
         public ChatPhase Phase
@@ -3038,6 +3090,8 @@ namespace CH4
             // RoundSummary——轮末调度总结服务（开关开 + 配置可用；块固定插在 roundsum 之后 = ts + 1）
             PostRoundSummary(sumTs + 1);
             PostGroupReceiptIfNeeded();
+            // A309 挂起重建——轮末执行（回执已落盘后才清前文）
+            FlushPendingRebuild();
             SetChatState("idle");
             // B4 对话区：轮末状态段推送——v2 契约下会话终态由 state 段承载（runState 回 idle + Token 三级就位；前端零推断）
             PushState();

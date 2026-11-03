@@ -29,20 +29,20 @@ namespace CH4
         /// <summary>创建时刻——Unix 毫秒（UTC）</summary>
         public long CreatedAt;
 
-        /// <summary>层级——预留字段（P6 条件唤醒）</summary>
+        /// <summary>层级——预留字段（分组维度，当前未消费）</summary>
         public string Layer = "";
 
-        /// <summary>启用标记——false = 组停用（不参与派单与巡检）</summary>
+        /// <summary>启用标记——false = 组停用（落盘意图；运行态见 Running）</summary>
         public bool Enabled = true;
+
+        /// <summary>运行态——true = 已加载并在运行（工具面可用）；false = 未启用（不扫消息流、工具面拒绝）</summary>
+        public bool Running;
 
         /// <summary>组内最大消息序号——0 = 无消息</summary>
         public long LastSeq;
 
         /// <summary>消息条数</summary>
         public int MsgCount;
-
-        /// <summary>成员已读游标——catKey → lastReadSeq（members.json；未读 = LastSeq − 游标）</summary>
-        public Dictionary<string, long> MemberReads = new Dictionary<string, long>();
 
         /// <summary>最新消息时刻——Unix 毫秒（0 = 无消息）</summary>
         public long LastAt;
@@ -76,7 +76,7 @@ namespace CH4
     }
 
     /// <summary>
-    /// 组数据面（A300）——Data/group/&lt;组名&gt;/{group.json, messages.jsonl, members.json}。
+    /// 组数据面（A300）——Data/group/&lt;组名&gt;/{group.json, messages.jsonl}。
     /// 语义：组配置与消息流是 Harness 的核心数据面；落盘范式照 delays.json（变更即原子写 + 重启续接）。
     /// 线程模型：全部操作锁内完成（HTTP 线程 / 主线程 / 后续轻宿主）。
     /// </summary>
@@ -160,8 +160,12 @@ namespace CH4
                     {
                         continue;
                     }
-                    ScanMessages(dirs[i], info);
-                    ReadMembersFile(dirs[i], info);
+                    // 启用组才扫消息流并进入运行态；停用组保持轻量条目（配置在内存、统计归零、零消息流 IO）
+                    if (info.Enabled)
+                    {
+                        ScanMessages(dirs[i], info);
+                        info.Running = true;
+                    }
                     _groups[info.Name] = info;
                     loaded = loaded + 1;
                 }
@@ -431,14 +435,10 @@ namespace CH4
             copy.CreatedAt = src.CreatedAt;
             copy.Layer = src.Layer;
             copy.Enabled = src.Enabled;
+            copy.Running = src.Running;
             copy.LastSeq = src.LastSeq;
             copy.MsgCount = src.MsgCount;
             copy.LastAt = src.LastAt;
-            copy.MemberReads = new Dictionary<string, long>();
-            foreach (KeyValuePair<string, long> kv in src.MemberReads)
-            {
-                copy.MemberReads[kv.Key] = kv.Value;
-            }
             return copy;
         }
 
@@ -619,6 +619,7 @@ namespace CH4
                     info.Name = useName;
                     info.CreatedAt = Now();
                     info.Enabled = true;
+                    info.Running = true;
                     _groups[useName] = info;
                 }
                 info.MemberKeys = members;
@@ -640,7 +641,7 @@ namespace CH4
         }
 
         /// <summary>
-        /// 组启用 / 停用——落 group.json；停用组不参与派单与巡检（P5 消费）。
+        /// 组启用 / 停用——落 group.json 的启用意图；运行态由 StartGroup / StopGroup 管理。
         /// </summary>
         /// <param name="name">组名</param>
         /// <param name="enabled">true 启用 / false 停用</param>
@@ -664,6 +665,82 @@ namespace CH4
                 }
                 LogStore.Add("CatHome4", 1, verb + info.Name, "GROUP");
                 return "ok|" + info.Name;
+            }
+        }
+
+        /// <summary>
+        /// 组启用——进入运行态：扫描消息流统计并置 Running；重复启用幂等。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <returns>结果文本</returns>
+        public static string StartGroup(string name)
+        {
+            string useName = name == null ? "" : name.Trim();
+            lock (StoreLock)
+            {
+                GroupSummary info;
+                if (!_groups.TryGetValue(useName, out info))
+                {
+                    return "ERR|GROUP_NOT_FOUND|组不存在: " + useName;
+                }
+                if (info.Running)
+                {
+                    return "ok|" + info.Name;
+                }
+                info.LastSeq = 0;
+                info.MsgCount = 0;
+                info.LastAt = 0;
+                ScanMessages(GetGroupDir(info.Name), info);
+                info.Running = true;
+                LogStore.Add("CatHome4", 1, "组启动: " + info.Name + " | 消息 " + info.MsgCount.ToString() + " 条", "GROUP");
+                return "ok|" + info.Name;
+            }
+        }
+
+        /// <summary>
+        /// 组停用——退出运行态：统计归零（不删配置、不动磁盘）；重复停用幂等。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <returns>结果文本</returns>
+        public static string StopGroup(string name)
+        {
+            string useName = name == null ? "" : name.Trim();
+            lock (StoreLock)
+            {
+                GroupSummary info;
+                if (!_groups.TryGetValue(useName, out info))
+                {
+                    return "ERR|GROUP_NOT_FOUND|组不存在: " + useName;
+                }
+                if (!info.Running)
+                {
+                    return "ok|" + info.Name;
+                }
+                info.Running = false;
+                info.LastSeq = 0;
+                info.MsgCount = 0;
+                info.LastAt = 0;
+                LogStore.Add("CatHome4", 1, "组停止: " + info.Name, "GROUP");
+                return "ok|" + info.Name;
+            }
+        }
+
+        /// <summary>
+        /// 运行态查询——工具面门禁用（停用组一律拒绝）。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <returns>true = 运行中</returns>
+        public static bool IsRunning(string name)
+        {
+            string useName = name == null ? "" : name.Trim();
+            lock (StoreLock)
+            {
+                GroupSummary info;
+                if (!_groups.TryGetValue(useName, out info))
+                {
+                    return false;
+                }
+                return info.Running;
             }
         }
 
@@ -743,6 +820,10 @@ namespace CH4
                 if (!_groups.TryGetValue(useName, out info))
                 {
                     return "ERR|GROUP_NOT_FOUND|组不存在: " + useName;
+                }
+                if (!info.Running)
+                {
+                    return "ERR|GROUP_NOT_RUNNING|组未启用: " + useName;
                 }
                 string dir = GetGroupDir(info.Name);
                 // [段1.5] @ 目标校验——组内成员才可指向；自 @ 拒绝（自激一轮且无业务意义）
@@ -879,138 +960,6 @@ namespace CH4
                 }
             }
             return list;
-        }
-
-        /// <summary>
-        /// 已读游标读取——members.json（缺失 = 空表；坏 JSON 出声后按空表继续，不阻断组加载）。
-        /// </summary>
-        /// <param name="dir">组目录</param>
-        /// <param name="info">组投影（就地填 MemberReads）</param>
-        private static void ReadMembersFile(string dir, GroupSummary info)
-        {
-            string path = Path.Combine(dir, "members.json");
-            if (!File.Exists(path))
-            {
-                return;
-            }
-            try
-            {
-                using (JsonDocument doc = JsonUtil.ParseStrict(File.ReadAllText(path)))
-                {
-                    if (doc.RootElement.ValueKind != JsonValueKind.Object)
-                    {
-                        return;
-                    }
-                    foreach (JsonProperty prop in doc.RootElement.EnumerateObject())
-                    {
-                        if (prop.Value.ValueKind != JsonValueKind.Number)
-                        {
-                            continue;
-                        }
-                        long seq;
-                        if (prop.Value.TryGetInt64(out seq))
-                        {
-                            info.MemberReads[prop.Name] = seq;
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "组已读游标解析失败（按空表继续）: " + path + " | " + ex.Message, "GROUP");
-            }
-        }
-
-        /// <summary>
-        /// 已读游标写入——members.json 原子写（唯一出口）。
-        /// </summary>
-        /// <param name="info">组投影</param>
-        private static void WriteMembersFile(GroupSummary info)
-        {
-            string dir = GetGroupDir(info.Name);
-            Directory.CreateDirectory(dir);
-            Dictionary<string, object> map = new Dictionary<string, object>();
-            foreach (KeyValuePair<string, long> kv in info.MemberReads)
-            {
-                map[kv.Key] = kv.Value;
-            }
-            ConfigStore.AtomicWrite(Path.Combine(dir, "members.json"), JsonUtil.Serialize(map));
-        }
-
-        /// <summary>
-        /// 已读推进——只允许前进（seq ≤ 旧游标时幂等返回）；落盘 members.json。
-        /// 唯一诚实入口 = 猫真实拉取消息后主动上报（禁止打开即推进 / 投递即读）。
-        /// </summary>
-        /// <param name="name">组名</param>
-        /// <param name="catKey">猫 key</param>
-        /// <param name="seq">已读到的序号</param>
-        /// <returns>结果文本（ok|组名|read=N）</returns>
-        public static string MarkRead(string name, string catKey, long seq)
-        {
-            string useName = name == null ? "" : name.Trim();
-            string useCat = catKey == null ? "" : catKey.Trim();
-            if (useCat.Length == 0)
-            {
-                return "ERR|GROUP_CAT_EMPTY|猫 key 为空";
-            }
-            if (seq < 0)
-            {
-                return "ERR|GROUP_SEQ_INVALID|已读序号非法: " + seq.ToString();
-            }
-            lock (StoreLock)
-            {
-                GroupSummary info;
-                if (!_groups.TryGetValue(useName, out info))
-                {
-                    return "ERR|GROUP_NOT_FOUND|组不存在: " + useName;
-                }
-                long current = 0;
-                if (info.MemberReads.TryGetValue(useCat, out current))
-                {
-                    if (seq <= current)
-                    {
-                        return "ok|" + info.Name + "|read=" + current.ToString();
-                    }
-                }
-                if (seq > info.LastSeq)
-                {
-                    seq = info.LastSeq;
-                }
-                info.MemberReads[useCat] = seq;
-                WriteMembersFile(info);
-                return "ok|" + info.Name + "|read=" + seq.ToString();
-            }
-        }
-
-        /// <summary>
-        /// 未读数——组内最大序号 − 该猫游标（无游标 = 全部未读）。
-        /// </summary>
-        /// <param name="name">组名</param>
-        /// <param name="catKey">猫 key</param>
-        /// <returns>未读条数（组不存在 = 0）</returns>
-        public static long GetUnread(string name, string catKey)
-        {
-            string useName = name == null ? "" : name.Trim();
-            string useCat = catKey == null ? "" : catKey.Trim();
-            lock (StoreLock)
-            {
-                GroupSummary info;
-                if (!_groups.TryGetValue(useName, out info))
-                {
-                    return 0;
-                }
-                long read = 0;
-                if (useCat.Length > 0)
-                {
-                    info.MemberReads.TryGetValue(useCat, out read);
-                }
-                long unread = info.LastSeq - read;
-                if (unread < 0)
-                {
-                    unread = 0;
-                }
-                return unread;
-            }
         }
 
         /// <summary>

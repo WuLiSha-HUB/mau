@@ -27,5 +27,10 @@
         /// <param name="argsJson">工具参数 JSON（group / to / text 必填；refs 可选）</param>
         /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
         string Send(string argsJson);
+
+        /// <summary>重建会话（group-newsession）——目标须空闲；目标为调用者自己时挂起到轮末。</summary>
+        /// <param name="argsJson">工具参数 JSON（group / to / reason 必填；firstMessage 可选）</param>
+        /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
+        string NewSession(string argsJson);
     }
 }

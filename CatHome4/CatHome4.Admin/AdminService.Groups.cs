@@ -50,14 +50,7 @@ namespace CatHome4.Admin
             for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
             {
                 string key = g.MemberKeys[i];
-                long read = 0;
-                g.MemberReads.TryGetValue(key, out read);
-                long unread = g.LastSeq - read;
-                if (unread < 0)
-                {
-                    unread = 0;
-                }
-                members.Add(new { key = key, displayName = CatHostService.ResolveCatDisplayName(key), lastReadSeq = read, unread = unread });
+                members.Add(new { key = key, displayName = CatHostService.ResolveCatDisplayName(key) });
             }
             // [段2] 行装配
             return new
@@ -123,6 +116,7 @@ namespace CatHome4.Admin
                 GroupSummary created = GroupStore.GetGroup(name.Trim());
                 if (created != null && created.Enabled)
                 {
+                    GroupStore.StartGroup(created.Name);
                     CatHostService.StartGroupHost(created.Name);
                 }
             }
@@ -159,13 +153,16 @@ namespace CatHome4.Admin
             string result = GroupStore.SetEnabled(name, enabled);
             if (result.StartsWith("ok|", StringComparison.Ordinal))
             {
+                // 真实启停——运行态与宿主同步联动（停用组：不扫消息流、不占端口、工具面拒绝）
                 if (enabled)
                 {
+                    GroupStore.StartGroup(name.Trim());
                     CatHostService.StartGroupHost(name.Trim());
                 }
                 else
                 {
                     CatHostService.StopGroupHost(name.Trim());
+                    GroupStore.StopGroup(name.Trim());
                 }
             }
             return BuildMutationResult(result);
@@ -362,82 +359,6 @@ namespace CatHome4.Admin
                 return Results.Json(new { ok = false, error = "body 非 JSON" });
             }
             return AppendGroupMessageResult(name, from, type, text, refs, to);
-        }
-
-        /// <summary>
-        /// 已读推进——POST /api/v1/groups/read（body: {group, catKey, seq}）。
-        /// </summary>
-        /// <param name="ctx">HTTP 上下文</param>
-        /// <returns>回执 JSON</returns>
-        internal static async Task<IResult> HandleGroupsReadPost(HttpContext ctx)
-        {
-            string body = await ReadBodyText(ctx);
-            string group = "";
-            string catKey = "";
-            long seq = 0;
-            try
-            {
-                using (JsonDocument doc = JsonUtil.ParseStrict(body))
-                {
-                    JsonElement root = doc.RootElement;
-                    group = GetJsonString(root, "group").Trim();
-                    catKey = GetJsonString(root, "catKey").Trim();
-                    JsonElement seqEl;
-                    if (root.TryGetProperty("seq", out seqEl) && seqEl.ValueKind == JsonValueKind.Number)
-                    {
-                        seq = seqEl.GetInt64();
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                return Results.Json(new { ok = false, error = "body 非 JSON" });
-            }
-            return MarkGroupReadResult(group, catKey, seq);
-        }
-
-        /// <summary>
-        /// 已读推进（共用实现）——只前进语义由 GroupStore 保证。
-        /// </summary>
-        /// <param name="group">组名</param>
-        /// <param name="catKey">猫 key</param>
-        /// <param name="seq">已读到序号</param>
-        /// <returns>回执 JSON</returns>
-        internal static IResult MarkGroupReadResult(string group, string catKey, long seq)
-        {
-            string result = GroupStore.MarkRead(group, catKey, seq);
-            return BuildMutationResult(result);
-        }
-
-        /// <summary>
-        /// 已读推进——组端口版（POST /api/v1/group/read；组名由端口绑定）。
-        /// </summary>
-        /// <param name="name">组名</param>
-        /// <param name="ctx">HTTP 上下文</param>
-        /// <returns>回执 JSON</returns>
-        internal static async Task<IResult> BuildGroupRead(string name, HttpContext ctx)
-        {
-            string body = await ReadBodyText(ctx);
-            string catKey = "";
-            long seq = 0;
-            try
-            {
-                using (JsonDocument doc = JsonUtil.ParseStrict(body))
-                {
-                    JsonElement root = doc.RootElement;
-                    catKey = GetJsonString(root, "catKey").Trim();
-                    JsonElement seqEl;
-                    if (root.TryGetProperty("seq", out seqEl) && seqEl.ValueKind == JsonValueKind.Number)
-                    {
-                        seq = seqEl.GetInt64();
-                    }
-                }
-            }
-            catch (Exception)
-            {
-                return Results.Json(new { ok = false, error = "body 非 JSON" });
-            }
-            return MarkGroupReadResult(name, catKey, seq);
         }
 
         /// <summary>

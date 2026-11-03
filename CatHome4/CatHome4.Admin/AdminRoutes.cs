@@ -70,7 +70,6 @@ namespace CatHome4.Admin
             sink.MapPost("/api/v1/groups/delete", (Delegate)AdminService.HandleGroupsDelete);
             sink.MapGet("/api/v1/groups/{name}/messages", (Delegate)AdminService.HandleGroupsMessagesGet);
             sink.MapPost("/api/v1/groups/messages", (Delegate)AdminService.HandleGroupsMessagesPost);
-            sink.MapPost("/api/v1/groups/read", (Delegate)AdminService.HandleGroupsReadPost);
             sink.MapGet("/api/v1/groups/host", (Delegate)AdminService.HandleGroupsHostGet);
         }
     }

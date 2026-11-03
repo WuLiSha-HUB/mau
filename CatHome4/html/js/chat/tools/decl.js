@@ -147,6 +147,7 @@ var TOOL_SKELETONS = {
     'group-inbox': 'listing',
     'group-say': 'text',
     'group-send': 'text',
+    'group-newsession': 'text',
     // ts——TypeScript 编码工具面（TsCat · A294）
     'ts-check': 'diagnostics',
     'ts-list': 'listing',

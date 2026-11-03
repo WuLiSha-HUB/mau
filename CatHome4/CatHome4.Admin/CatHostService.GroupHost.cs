@@ -252,9 +252,8 @@ namespace CatHome4.Admin
             // [段1] 组信息与消息流
             sink.MapGet("/api/v1/group/info", (Delegate)((Func<IResult>)(() => BuildGroupInfoResult(name))));
             sink.MapGet("/api/v1/group/messages", (Delegate)((Func<HttpContext, IResult>)((HttpContext c) => BuildGroupMessagesResult(name, c))));
-            // [段2] 投递与已读推进（组名由端口决定——投递不接受 group 参数）
+            // [段2] 投递（组名由端口决定——投递不接受 group 参数）
             sink.MapPost("/api/v1/group/messages", (Delegate)((Func<HttpContext, Task<IResult>>)((HttpContext c) => BuildGroupMessageAppend(name, c))));
-            sink.MapPost("/api/v1/group/read", (Delegate)((Func<HttpContext, Task<IResult>>)((HttpContext c) => BuildGroupRead(name, c))));
         }
     }
 }

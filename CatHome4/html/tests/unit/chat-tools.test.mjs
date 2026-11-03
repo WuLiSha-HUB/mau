@@ -48,8 +48,8 @@ const POOL = [
     'dbAdmin-libs', 'dbAdmin-create', 'dbAdmin-drop',
     // TsCat 5（A294——TS 编码工具面）
     'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
-    // GroupCat 4（A306——群聊 / 派单回执）
-    'group-info', 'group-inbox', 'group-say', 'group-send',
+    // GroupCat 5（A306 / A309——群聊 / 派单回执 / 会话重建）
+    'group-info', 'group-inbox', 'group-say', 'group-send', 'group-newsession',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -73,9 +73,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 90 件', () => {
+    it('落位表 = 工具池 91 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(90);
+        expect(POOL.length).toBe(91);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
