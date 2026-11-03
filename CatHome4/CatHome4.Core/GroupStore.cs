@@ -20,6 +20,8 @@ namespace CH4
 
         /// <summary>管理员猫 key 列表（显式配置；@ 派单权限来源）</summary>
         public string[] AdminKeys = new string[0];
+        /// <summary>订阅自动转发的猫 key 列表（成员子集；组内新消息自动投递给这些猫）</summary>
+        public string[] SubscriberKeys = new string[0];
 
         /// <summary>项目绑定——自由文本（可空）</summary>
         public string Project = "";
@@ -94,6 +96,10 @@ namespace CH4
 
         /// <summary>存储锁——全部读写锁内完成</summary>
         private static readonly object StoreLock = new object();
+        /// <summary>
+        /// 消息追加钩子——(组名, 消息)；由组合根接线做「订阅自动转发」，Core 不依赖会话面。
+        /// </summary>
+        public static Action<string, GroupMessage> MessageAppended;
 
         /// <summary>
         /// 配置组根目录——宿主启动期注入（Core 不依赖配置面，路径由入口壳给）。
@@ -206,6 +212,7 @@ namespace CH4
                     }
                     info.MemberKeys = GetStringArrayProp(root, "memberKeys");
                     info.AdminKeys = GetStringArrayProp(root, "adminKeys");
+                    info.SubscriberKeys = GetStringArrayProp(root, "subscriberKeys");
                     info.Project = GetStringProp(root, "project");
                     info.Layer = GetStringProp(root, "layer");
                     JsonElement createdEl;
@@ -243,6 +250,7 @@ namespace CH4
             map["name"] = info.Name;
             map["memberKeys"] = info.MemberKeys;
             map["adminKeys"] = info.AdminKeys;
+            map["subscriberKeys"] = info.SubscriberKeys;
             map["project"] = info.Project;
             map["createdAt"] = info.CreatedAt;
             map["layer"] = info.Layer;
@@ -417,6 +425,8 @@ namespace CH4
             GroupSummary copy = new GroupSummary();
             copy.Name = src.Name;
             copy.MemberKeys = (string[])src.MemberKeys.Clone();
+            copy.AdminKeys = (string[])src.AdminKeys.Clone();
+            copy.SubscriberKeys = (string[])src.SubscriberKeys.Clone();
             copy.Project = src.Project;
             copy.CreatedAt = src.CreatedAt;
             copy.Layer = src.Layer;
@@ -514,6 +524,29 @@ namespace CH4
             }
             return true;
         }
+        /// <summary>
+        /// 名单收敛——只保留同时出现在成员名单里的项（管理员 / 订阅者恒为成员子集）。
+        /// </summary>
+        /// <param name="wanted">候选名单（可 null）</param>
+        /// <param name="members">组成员名单</param>
+        /// <returns>收敛后数组（保持入参序）</returns>
+        private static string[] KeepMembers(string[] wanted, string[] members)
+        {
+            List<string> kept = new List<string>();
+            string[] want = NormalizeMembers(wanted);
+            for (int i = 0; i < want.Length; i = i + 1)
+            {
+                for (int k = 0; k < members.Length; k = k + 1)
+                {
+                    if (string.Equals(want[i], members[k], StringComparison.Ordinal))
+                    {
+                        kept.Add(want[i]);
+                        break;
+                    }
+                }
+            }
+            return kept.ToArray();
+        }
 
         /// <summary>
         /// 成员清洗——去空白 / 去空项 / 去重（保持入参序）。
@@ -562,8 +595,9 @@ namespace CH4
         /// <param name="memberKeys">成员猫 key 数组</param>
         /// <param name="project">项目绑定（可空）</param>
         /// <param name="adminKeys">管理员猫 key 数组（null = 保留原值；非成员项自动剔除）</param>
+        /// <param name="subscriberKeys">订阅自动转发的猫 key 数组（null = 保留原值；非成员项自动剔除）</param>
         /// <returns>结果文本</returns>
-        public static string CreateOrUpdate(string name, string[] memberKeys, string project, string[] adminKeys = null)
+        public static string CreateOrUpdate(string name, string[] memberKeys, string project, string[] adminKeys = null, string[] subscriberKeys = null)
         {
             string useName = name == null ? "" : name.Trim();
             if (!IsValidName(useName))
@@ -589,30 +623,18 @@ namespace CH4
                 }
                 info.MemberKeys = members;
                 info.Project = project == null ? "" : project.Trim();
-                if (adminKeys != null)
-                {
-                    string[] admins = NormalizeMembers(adminKeys);
-                    List<string> kept = new List<string>();
-                    for (int i = 0; i < admins.Length; i = i + 1)
-                    {
-                        for (int k = 0; k < members.Length; k = k + 1)
-                        {
-                            if (string.Equals(admins[i], members[k], StringComparison.Ordinal))
-                            {
-                                kept.Add(admins[i]);
-                                break;
-                            }
-                        }
-                    }
-                    info.AdminKeys = kept.ToArray();
-                }
+                // 管理员 / 订阅者恒为成员子集——未显式给出时按原名单随成员变更收敛（不静默保留非成员）
+                string[] wantAdmins = adminKeys == null ? info.AdminKeys : adminKeys;
+                string[] wantSubs = subscriberKeys == null ? info.SubscriberKeys : subscriberKeys;
+                info.AdminKeys = KeepMembers(wantAdmins, members);
+                info.SubscriberKeys = KeepMembers(wantSubs, members);
                 WriteGroupFile(info);
                 string verb = "组新建: ";
                 if (found)
                 {
                     verb = "组更新: ";
                 }
-                LogStore.Add("CatHome4", 1, verb + useName + " | 成员 " + members.Length.ToString() + " 名", "GROUP");
+                LogStore.Add("CatHome4", 1, verb + useName + " | 成员 " + members.Length.ToString() + " 名 | 管理员 " + info.AdminKeys.Length.ToString() + " 名 | 订阅 " + info.SubscriberKeys.Length.ToString() + " 名", "GROUP");
                 return "ok|" + useName;
             }
         }
@@ -712,6 +734,9 @@ namespace CH4
             {
                 return "ERR|GROUP_TEXT_EMPTY|消息正文为空";
             }
+            string nameOut = "";
+            long seqOut = 0;
+            GroupMessage appended = null;
             lock (StoreLock)
             {
                 GroupSummary info;
@@ -765,8 +790,31 @@ namespace CH4
                 info.LastSeq = nextSeq;
                 info.MsgCount = info.MsgCount + 1;
                 info.LastAt = now;
-                return "ok|" + info.Name + "|seq=" + info.LastSeq.ToString();
+                nameOut = info.Name;
+                seqOut = nextSeq;
+                appended = new GroupMessage();
+                appended.Seq = nextSeq;
+                appended.From = from == null ? "" : from.Trim();
+                appended.To = useTo;
+                appended.Type = useType;
+                appended.Text = useText;
+                appended.Ts = now;
+                appended.Refs = refs == null ? "" : refs.Trim();
             }
+            // [段2] 订阅自动转发钩子——锁外触发（处理器碰会话面，不持存储锁回调；异常不吞写入结果）
+            Action<string, GroupMessage> hook = MessageAppended;
+            if (hook != null && appended != null)
+            {
+                try
+                {
+                    hook(nameOut, appended);
+                }
+                catch (Exception ex)
+                {
+                    LogStore.Add("CatHome4", 3, "组消息转发钩子异常: " + nameOut + " | " + ex.Message, "GROUP");
+                }
+            }
+            return "ok|" + nameOut + "|seq=" + seqOut.ToString();
         }
 
         /// <summary>

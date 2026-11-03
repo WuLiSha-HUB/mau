@@ -269,3 +269,20 @@ function ovPayload(r) {
     }
     return null;
 }
+
+/// 整段 JSON 回执解析——结果本身即单行 JSON（无结构化头与正文分离，如 group-*）；失败 null
+function ovWholeJson(r) {
+    if (typeof r !== 'string') {
+        return null;
+    }
+    var t = r.replace(/^\s+|\s+$/g, '');
+    if (t.charAt(0) !== '{') {
+        return null;
+    }
+    try {
+        var o = JSON.parse(t);
+        return (o && typeof o === 'object') ? o : null;
+    } catch (e) {
+        return null;
+    }
+}

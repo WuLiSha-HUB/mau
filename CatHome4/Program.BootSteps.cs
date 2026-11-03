@@ -567,6 +567,8 @@ namespace CH4
             // 配队（Group）数据面接线——Data/group/<组名>/{group.json, messages.jsonl, members.json}（A300）
             GroupStore.Configure(Path.Combine(dataRoot, "Data", "group"));
             GroupStore.Load();
+            // 订阅自动转发接线——组内新消息按 subscriberKeys 投递订阅猫（Core 不依赖会话面，钩子由组合根挂）
+            GroupStore.MessageAppended = CatHome4.Admin.GroupAutoForward.Handle;
             // 待处理消息队列落盘接线——Data/runtime/pending_<catKey>.json（A232：入队即物化 · 跨宿主重启保留；须先于会话创建）
             ChatSession.ConfigurePendingStore(Path.Combine(dataRoot, "Data", "runtime"));
             // 网页资产下载接线——任务表落盘 + 产物目录（workspace 根下 Downloads）+ 完成注入回调（design-ch4-webfetch）

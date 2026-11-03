@@ -96,9 +96,11 @@ function groupBtn(text, className, onclick) {
     return btn;
 }
 
-// 成员 chip 渲染——显示名主、key 副（key 是落盘主键）
-function appendMemberChips(container, members) {
+// 成员 chip 渲染——显示名主、key 副（key 是落盘主键）；管理员 ★ / 订阅 🔔 标记
+function appendMemberChips(container, members, adminKeys, subscriberKeys) {
     var list = members || [];
+    var admins = adminKeys || [];
+    var subs = subscriberKeys || [];
     if (list.length === 0) {
         var none = document.createElement('span');
         none.style.cssText = 'color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)';
@@ -111,7 +113,14 @@ function appendMemberChips(container, members) {
         chip.style.cssText = 'display:inline-flex;align-items:baseline;gap:5px;background:var(--ch-bg-raised);border:1px solid var(--ch-line);border-radius:10px;padding:2px 8px;font-size:var(--ch-fs-tag)';
         var name = document.createElement('span');
         name.style.color = 'var(--ch-fg)';
-        name.textContent = list[i].displayName || list[i].key;
+        var text = list[i].displayName || list[i].key;
+        if (admins.indexOf(list[i].key) >= 0) {
+            text = '★ ' + text;
+        }
+        if (subs.indexOf(list[i].key) >= 0) {
+            text = text + ' 🔔';
+        }
+        name.textContent = text;
         chip.appendChild(name);
         var keyEl = document.createElement('span');
         keyEl.style.color = 'var(--ch-fg-faint)';
@@ -168,7 +177,7 @@ function createGroupCard(g) {
     // [段3] 成员
     var members = document.createElement('div');
     members.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;margin-top:8px';
-    appendMemberChips(members, g.members);
+    appendMemberChips(members, g.members, g.adminKeys, g.subscriberKeys);
     card.appendChild(members);
     // [段4] 消息统计——消息数 / 最新时刻
     var foot = document.createElement('div');
@@ -247,20 +256,28 @@ function openGroupCfg(name) {
     groupShowModal('groupCfgModal', true);
     fetch('/api/v1/cats')
         .then(function (r) { return r.json(); })
-        .then(function (d) { renderGroupMembers(d.cats || [], g ? g.members : []); })
+        .then(function (d) { renderGroupMembers(d.cats || [], g ? g.members : [], g ? g.adminKeys : [], g ? g.subscriberKeys : []); })
         .catch(function () {
             document.getElementById('groupCfgMembers').textContent = '猫列表读取失败——宿主未运行？';
         });
 }
 
-// 成员勾选渲染——cats 来自 /api/v1/cats；checkedMembers 为组行 members
-function renderGroupMembers(cats, checkedMembers) {
+// 成员勾选渲染——cats 来自 /api/v1/cats；每只猫三列（成员 / 管理员 / 订阅自动转发）
+function renderGroupMembers(cats, checkedMembers, adminKeys, subscriberKeys) {
     var box = document.getElementById('groupCfgMembers');
     box.textContent = '';
     var checked = {};
+    var admins = {};
+    var subs = {};
     var i;
     for (i = 0; i < (checkedMembers || []).length; i = i + 1) {
         checked[checkedMembers[i].key] = true;
+    }
+    for (i = 0; i < (adminKeys || []).length; i = i + 1) {
+        admins[adminKeys[i]] = true;
+    }
+    for (i = 0; i < (subscriberKeys || []).length; i = i + 1) {
+        subs[subscriberKeys[i]] = true;
     }
     if (!cats || cats.length === 0) {
         box.textContent = '（无猫——先在「多猫」页新建）';
@@ -268,25 +285,39 @@ function renderGroupMembers(cats, checkedMembers) {
     }
     for (i = 0; i < cats.length; i = i + 1) {
         var cat = cats[i];
-        var label = document.createElement('label');
-        label.style.cssText = 'display:flex;align-items:center;gap:4px;font-size:var(--ch-fs-tag);color:var(--ch-fg-muted);cursor:pointer';
-        var cb = document.createElement('input');
-        cb.type = 'checkbox';
-        cb.className = 'group-member-cb';
-        cb.value = cat.id;
-        cb.checked = checked[cat.id] === true;
-        label.appendChild(cb);
-        var text = document.createElement('span');
-        text.textContent = (cat.special ? '★ ' : '') + (cat.name || cat.id) + '（' + cat.id + '）';
-        label.appendChild(text);
-        box.appendChild(label);
+        var row = document.createElement('div');
+        row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:var(--ch-fs-tag);color:var(--ch-fg-muted)';
+        var nameEl = document.createElement('span');
+        nameEl.style.cssText = 'min-width:150px';
+        nameEl.textContent = (cat.special ? '★ ' : '') + (cat.name || cat.id) + '（' + cat.id + '）';
+        row.appendChild(nameEl);
+        row.appendChild(groupMemberFlag('成员', 'group-member-cb', cat.id, checked[cat.id] === true));
+        row.appendChild(groupMemberFlag('管理员', 'group-admin-cb', cat.id, admins[cat.id] === true));
+        row.appendChild(groupMemberFlag('订阅', 'group-sub-cb', cat.id, subs[cat.id] === true));
+        box.appendChild(row);
     }
 }
 
-// 已勾选成员收集——cat key 数组
-function collectGroupMembers() {
+// 单列勾选件——标签文案 + 类名 + cat key + 初始勾选态
+function groupMemberFlag(text, className, catKey, isChecked) {
+    var label = document.createElement('label');
+    label.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = className;
+    cb.value = catKey;
+    cb.checked = isChecked;
+    label.appendChild(cb);
+    var span = document.createElement('span');
+    span.textContent = text;
+    label.appendChild(span);
+    return label;
+}
+
+// 勾选集合收集——按类名取选中的 cat key 数组
+function groupCheckedKeys(className) {
     var out = [];
-    var boxes = document.querySelectorAll('#groupCfgMembers input.group-member-cb');
+    var boxes = document.querySelectorAll('#groupCfgMembers input.' + className);
     for (var i = 0; i < boxes.length; i = i + 1) {
         if (boxes[i].checked) {
             out.push(boxes[i].value);
@@ -295,11 +326,28 @@ function collectGroupMembers() {
     return out;
 }
 
+// 已勾选成员收集——cat key 数组
+function collectGroupMembers() {
+    return groupCheckedKeys('group-member-cb');
+}
+
+// 已勾选管理员收集——cat key 数组（保存时后端按成员交集收敛）
+function collectGroupAdmins() {
+    return groupCheckedKeys('group-admin-cb');
+}
+
+// 已勾选订阅者收集——cat key 数组（组内新消息自动转发目标）
+function collectGroupSubscribers() {
+    return groupCheckedKeys('group-sub-cb');
+}
+
 // 保存组——新建 / 更新成员与项目（组名创建后不可改名）
 function saveGroupCfg() {
     var name = document.getElementById('groupCfgName').value.trim();
     var project = document.getElementById('groupCfgProject').value.trim();
     var members = collectGroupMembers();
+    var admins = collectGroupAdmins();
+    var subs = collectGroupSubscribers();
     var msgEl = document.getElementById('groupCfgMsg');
     if (name.length === 0) {
         msgEl.textContent = '组名不能为空';
@@ -309,7 +357,7 @@ function saveGroupCfg() {
         msgEl.textContent = '至少勾选一名成员';
         return;
     }
-    groupPost('/api/v1/groups', { name: name, project: project, memberKeys: members }, function (d) {
+    groupPost('/api/v1/groups', { name: name, project: project, memberKeys: members, adminKeys: admins, subscriberKeys: subs }, function (d) {
         if (!d.ok) {
             msgEl.textContent = '保存失败: ' + (d.error || '');
             return;

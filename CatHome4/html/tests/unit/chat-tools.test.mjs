@@ -19,7 +19,7 @@ beforeAll(async () => {
     await bootChatPage();
 });
 
-// 工具池基准——86 件（按工具组；新增工具须同批登记落位表 + 落件 + 本表）
+// 工具池基准——90 件（按工具组；新增工具须同批登记落位表 + 落件 + 本表）
 const POOL = [
     // TextCat 7
     'text-read', 'text-read_lines', 'text-read_between', 'text-write', 'text-append', 'text-replace', 'text-grep',
@@ -48,6 +48,8 @@ const POOL = [
     'dbAdmin-libs', 'dbAdmin-create', 'dbAdmin-drop',
     // TsCat 5（A294——TS 编码工具面）
     'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
+    // GroupCat 4（A306——群聊 / 派单回执）
+    'group-info', 'group-inbox', 'group-say', 'group-send',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -71,9 +73,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 86 件', () => {
+    it('落位表 = 工具池 90 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(86);
+        expect(POOL.length).toBe(90);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -513,5 +515,58 @@ describe('TsCat——TS 编码工具面渲染（A294）', () => {
         const text = node.textContent;
         expect(text).toContain('服务失败');
         expect(text).toContain('BAD_OP');
+    });
+});
+
+describe('GroupCat——群聊 / 派单工具（A306）', () => {
+    it('group-info——成员逐行（显示名 / key / 角色）', () => {
+        const res = JSON.stringify({
+            ok: true, tool: 'group-info', name: '猫窝施工大队', project: 'CatHome4',
+            enabled: true, msgCount: 6, lastSeq: 6, lastAt: 0,
+            members: [
+                { key: 'k1', displayName: '猫窝程序员', admin: true, subscriber: true },
+                { key: 'k2', displayName: 'GroupTest', admin: false, subscriber: false }
+            ]
+        });
+        const node = window.buildToolBlock(card('group-info', { group: '猫窝施工大队' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('2 名成员');
+        expect(text).toContain('猫窝程序员（k1） — 管理员 / 订阅');
+        expect(text).toContain('GroupTest（k2）');
+    });
+
+    it('group-inbox——逐条列（#seq / 类型 / 发方 → 收方 / 摘要）', () => {
+        const res = JSON.stringify({
+            ok: true, tool: 'group-inbox', name: '猫窝施工大队', lastSeq: 6,
+            messages: [
+                { seq: 5, from: 'k1', fromName: '猫窝程序员', to: 'k2', toName: 'GroupTest', type: 'delegation', text: '任务：只回一句话\n第二行', ts: 0, refs: '' },
+                { seq: 6, from: 'k2', fromName: 'GroupTest', to: '', toName: '', type: 'receipt', text: 'A306 回执 OK', ts: 0, refs: '5' }
+            ]
+        });
+        const node = window.buildToolBlock(card('group-inbox', { group: '猫窝施工大队', after: 4 }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('2 条');
+        expect(text).toContain('#5 [派单] 猫窝程序员 → GroupTest');
+        expect(text).toContain('#6 [回执] GroupTest');
+    });
+
+    it('group-send——落位序号进折叠行，两行交付说明', () => {
+        const res = JSON.stringify({ ok: true, tool: 'group-send', group: '猫窝施工大队', seq: 7, to: 'k2' });
+        const node = window.buildToolBlock(card('group-send', { group: '猫窝施工大队', to: 'k2', text: '干活' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('派单 → k2 · #7 已投递');
+        expect(text).toContain('已入组 #7');
+        expect(text).toContain('已投递给 k2');
+    });
+
+    it('group-say——发言只记流水（不投递）；失败态机器码可见', () => {
+        const ok = window.buildToolBlock(card('group-say', { group: '猫窝施工大队', text: '讨论' },
+            JSON.stringify({ ok: true, tool: 'group-say', group: '猫窝施工大队', seq: 8 })), 'toolcard');
+        expect(ok.textContent).toContain('#8');
+        expect(ok.textContent).toContain('不投递');
+
+        const err = window.buildToolBlock(card('group-send', { group: '猫窝施工大队', to: 'x', text: 'y' },
+            'ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: k9'), 'toolcard');
+        expect(err.textContent).toContain('GROUP_NOT_ADMIN');
     });
 });

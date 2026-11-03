@@ -65,6 +65,7 @@ namespace CatHome4.Admin
                 name = g.Name,
                 members = members,
                 adminKeys = g.AdminKeys,
+                subscriberKeys = g.SubscriberKeys,
                 project = g.Project,
                 createdAt = g.CreatedAt,
                 layer = g.Layer,
@@ -90,6 +91,7 @@ namespace CatHome4.Admin
             string project = "";
             string[] memberKeys = new string[0];
             string[] adminKeys = null;
+            string[] subscriberKeys = null;
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -103,6 +105,11 @@ namespace CatHome4.Admin
                     {
                         adminKeys = ParseStringArray(root, "adminKeys");
                     }
+                    JsonElement subEl;
+                    if (root.TryGetProperty("subscriberKeys", out subEl) && subEl.ValueKind == JsonValueKind.Array)
+                    {
+                        subscriberKeys = ParseStringArray(root, "subscriberKeys");
+                    }
                 }
             }
             catch (Exception)
@@ -110,7 +117,7 @@ namespace CatHome4.Admin
                 return Results.Json(new { ok = false, error = "body 非 JSON" });
             }
             // [段2] 落盘 + 回执（新建的组 enabled 默认 true → 同步拉起宿主，与「启动」语义一致）
-            string result = GroupStore.CreateOrUpdate(name, memberKeys, project, adminKeys);
+            string result = GroupStore.CreateOrUpdate(name, memberKeys, project, adminKeys, subscriberKeys);
             if (result.StartsWith("ok|", StringComparison.Ordinal))
             {
                 GroupSummary created = GroupStore.GetGroup(name.Trim());

@@ -66,6 +66,57 @@ namespace CatHome4.Core.Tests
             Assert.True(g.Enabled);
             Assert.Single(GroupStore.ListGroups());
         }
+        /// <summary>
+        /// 管理员投影——adminKeys 落盘并在 GetGroup / ListGroups 投影中保留；非成员项自动剔除（派单权限判据源）。
+        /// </summary>
+        [Fact]
+        public void Create_AdminKeys_SurviveProjection()
+        {
+            string result = GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", new string[] { "majordomo", "outsider" });
+            Assert.StartsWith("ok|", result, StringComparison.Ordinal);
+            GroupSummary g = GroupStore.GetGroup("施工队");
+            Assert.NotNull(g);
+            if (g == null)
+            {
+                return;
+            }
+            Assert.Equal(new string[] { "majordomo" }, g.AdminKeys);
+            List<GroupSummary> list = GroupStore.ListGroups();
+            Assert.Single(list);
+            Assert.Equal(new string[] { "majordomo" }, list[0].AdminKeys);
+        }
+        /// <summary>
+        /// 订阅名单——subscriberKeys 只保留成员；消息追加后转发钩子带组名与序号触发一次（订阅面接线判据）。
+        /// </summary>
+        [Fact]
+        public void Subscribers_KeepMembers_And_HookFires()
+        {
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", null, new string[] { "coder1", "outsider" });
+            GroupSummary g = GroupStore.GetGroup("施工队");
+            Assert.NotNull(g);
+            if (g == null)
+            {
+                return;
+            }
+            Assert.Equal(new string[] { "coder1" }, g.SubscriberKeys);
+            string hookedGroup = "";
+            long hookedSeq = 0;
+            GroupStore.MessageAppended = delegate (string groupName, GroupMessage msg)
+            {
+                hookedGroup = groupName;
+                hookedSeq = msg.Seq;
+            };
+            try
+            {
+                Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "第一条", ""), StringComparison.Ordinal);
+            }
+            finally
+            {
+                GroupStore.MessageAppended = null;
+            }
+            Assert.Equal("施工队", hookedGroup);
+            Assert.Equal(1, hookedSeq);
+        }
 
         /// <summary>
         /// 组名非法——路径分隔 / 空名 / 超长一律拒绝（容器 Key 空间约束）。

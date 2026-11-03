@@ -142,6 +142,11 @@ var TOOL_SKELETONS = {
     'dbAdmin-libs': 'listing',
     'dbAdmin-create': 'text',
     'dbAdmin-drop': 'text',
+    // group——群聊 / 派单回执（GroupCat · A306）
+    'group-info': 'listing',
+    'group-inbox': 'listing',
+    'group-say': 'text',
+    'group-send': 'text',
     // ts——TypeScript 编码工具面（TsCat · A294）
     'ts-check': 'diagnostics',
     'ts-list': 'listing',

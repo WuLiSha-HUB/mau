@@ -70,7 +70,7 @@ test('成员勾选渲染——全猫列出、已选中的勾上', () => {
   expect(window.collectGroupMembers()).toEqual(['coder1']);
 });
 
-test('保存载荷——name / project / memberKeys（cat key）', async () => {
+test('保存载荷——name / project / memberKeys / adminKeys / subscriberKeys（cat key）', async () => {
   let captured = null;
   globalThis.fetch = async (url, opt) => {
     if (opt && opt.body) { captured = JSON.parse(opt.body); }
@@ -78,11 +78,31 @@ test('保存载荷——name / project / memberKeys（cat key）', async () => {
   };
   document.getElementById('groupCfgName').value = '施工队';
   document.getElementById('groupCfgProject').value = 'CH4';
-  window.renderGroupMembers([{ id: 'majordomo', name: '雾理莎' }], []);
+  window.renderGroupMembers([{ id: 'majordomo', name: '雾理莎' }], [], ['majordomo'], []);
   document.querySelector('#groupCfgMembers input.group-member-cb').checked = true;
+  document.querySelector('#groupCfgMembers input.group-admin-cb').checked = true;
   window.saveGroupCfg();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(captured).toEqual({ name: '施工队', project: 'CH4', memberKeys: ['majordomo'] });
+  expect(captured).toEqual({ name: '施工队', project: 'CH4', memberKeys: ['majordomo'], adminKeys: ['majordomo'], subscriberKeys: [] });
+});
+
+test('三列勾选渲染——成员 / 管理员 / 订阅各自的初始态与收集口', () => {
+  window.renderGroupMembers(
+    [{ id: 'majordomo', name: '雾理莎' }, { id: 'coder1', name: 'Coder' }],
+    [{ key: 'majordomo' }, { key: 'coder1' }],
+    ['majordomo'],
+    ['coder1']
+  );
+  const admins = document.querySelectorAll('#groupCfgMembers input.group-admin-cb');
+  const subs = document.querySelectorAll('#groupCfgMembers input.group-sub-cb');
+  expect(admins.length).toBe(2);
+  expect(subs.length).toBe(2);
+  expect(admins[0].checked).toBe(true);
+  expect(admins[1].checked).toBe(false);
+  expect(subs[0].checked).toBe(false);
+  expect(subs[1].checked).toBe(true);
+  expect(window.collectGroupAdmins()).toEqual(['majordomo']);
+  expect(window.collectGroupSubscribers()).toEqual(['coder1']);
 });
 
 test('保存拦截——组名为空 / 未勾成员均不发请求', async () => {

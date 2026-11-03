@@ -287,6 +287,25 @@ namespace CatHome4.Admin
             }
             return false;
         }
+        /// <summary>订阅者判定——显式 subscriberKeys 名单（空 = 不自动转发）。</summary>
+        /// <param name="g">组投影</param>
+        /// <param name="key">猫 key</param>
+        /// <returns>true=订阅者</returns>
+        private static bool IsSubscriber(GroupSummary g, string key)
+        {
+            if (key == null || key.Length == 0)
+            {
+                return false;
+            }
+            for (int i = 0; i < g.SubscriberKeys.Length; i = i + 1)
+            {
+                if (string.Equals(g.SubscriberKeys[i], key, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         /// <summary>管理员判定——显式 adminKeys 名单（空 = 无人可派单，失败可见）。</summary>
         /// <param name="g">组投影</param>
@@ -320,6 +339,7 @@ namespace CatHome4.Admin
                 row["key"] = g.MemberKeys[i];
                 row["displayName"] = CatHostService.ResolveCatDisplayName(g.MemberKeys[i]);
                 row["admin"] = IsAdmin(g, g.MemberKeys[i]);
+                row["subscriber"] = IsSubscriber(g, g.MemberKeys[i]);
                 members.Add(row);
             }
             Dictionary<string, object> body = new Dictionary<string, object>();
