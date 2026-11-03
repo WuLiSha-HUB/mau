@@ -5,7 +5,7 @@
 // 作用: 组信息读取（成员 / 管理员 / 统计）——调用者须为本组成员
 // 依赖: 无
 // 引用: Mau.Runtime（DataBox / IGroupService）
-// 原理: DataBox.TryResolve<IGroupService> → Info(argsJson) → 回执原文（JSON 或 ERR|）
+// 原理: DataBox.TryResolve<IGroupService> → Info(argsJson) → 回执原文（A214 头 + 摘要行 + 正文行，或 ERR|）
 // 常用: group_cat.mau 认领线——'group.info'[@args] > @res
 // ═══════════════════════════════════════════════════
 using System;
@@ -45,4 +45,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:BE0C39BAD304D4CBCD54D14841F241E0E022C715BB6F533DBF3B6A94FFD59E1B
+// #MAU_CHECKSUM:SHA256:04EE799CE961B4B7A5CA8D5A2C17CC03F04E99ABCD53A6A4D9CD1ADF178E05BF

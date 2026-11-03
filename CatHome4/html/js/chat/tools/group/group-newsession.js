@@ -2,7 +2,7 @@
 // chat/tools/group/group-newsession.js —— group-newsession / 重建会话（GroupCat）
 // 声明：专属图标 ♻️ + 输入意图行（组名 / @ 目标 / 原因字数 / 初始指令字数）
 //       + 输出两行（已入组 / 已挂起或已重建）。
-// 回执形态：整行 JSON {ok,tool,group,seq,to,mode}；mode ∈ queued（轮末生效）/ rebuilt；失败为 ERR| 前缀文本。
+// 回执形态（A214）：首行元数据头 {ok,tool,target,seq,to,mode}（mode ∈ queued / rebuilt）+ 摘要行。
 // ═══════════════════════════════════════════
 
 toolDecl('group-newsession', {
@@ -20,11 +20,11 @@ toolDecl('group-newsession', {
         if (r === undefined) {
             return head + ' · 处理中';
         }
-        var o = ovWholeJson(r);
-        if (!o) {
+        var h = ovHead(r);
+        if (!h) {
             return head;
         }
-        if (ovMetaStr(o, 'mode') === 'queued') {
+        if (ovMetaStr(h.meta, 'mode') === 'queued') {
             return head + ' · 已挂起（轮末生效）';
         }
         return head + ' · 已重建';
@@ -33,16 +33,16 @@ toolDecl('group-newsession', {
         if (isErr || r === undefined) {
             return null;
         }
-        var o = ovWholeJson(r);
-        if (!o) {
+        var h = ovHead(r);
+        if (!h) {
             return null;
         }
-        var to = ovMetaStr(o, 'to');
+        var to = ovMetaStr(h.meta, 'to');
         if (to.length === 0) {
             to = ovText(a.to);
         }
-        var lines = ['已入组 #' + ovMetaNum(o, 'seq', 0) + '（组 ' + ovMetaStr(o, 'group') + '）'];
-        if (ovMetaStr(o, 'mode') === 'queued') {
+        var lines = ['已入组 #' + ovMetaNum(h.meta, 'seq', 0) + '（组 ' + ovMetaStr(h.meta, 'target') + '）'];
+        if (ovMetaStr(h.meta, 'mode') === 'queued') {
             lines.push(to + ' 的会话将在本轮收尾后重建');
         } else {
             lines.push(to + ' 的会话已重建（前文清空 + 重注入）');

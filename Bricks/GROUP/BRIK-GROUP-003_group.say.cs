@@ -5,7 +5,7 @@
 // 作用: 发讨论消息（note）——只写组消息流，不投递
 // 依赖: 无
 // 引用: Mau.Runtime（DataBox / IGroupService）
-// 原理: DataBox.TryResolve<IGroupService> → Say(argsJson) → 回执原文（JSON 或 ERR|）
+// 原理: DataBox.TryResolve<IGroupService> → Say(argsJson) → 回执原文（A214 头 + 摘要行，或 ERR|）
 // 常用: group_cat.mau 认领线——'group.say'[@args] > @res
 // ═══════════════════════════════════════════════════
 using System;
@@ -45,4 +45,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:5D0288ADDAAC4DD6490548EDC70AF86EF9EEF081D66E941576309810B9AC7CFF
+// #MAU_CHECKSUM:SHA256:A9142B9054C52DD260E21E3861A8094E17C0537ED962DD24124FE2BC670EEE3F

@@ -1,8 +1,8 @@
 // ═══════════════════════════════════════════
 // chat/tools/group/group-inbox.js —— group-inbox / 组消息拉取（GroupCat）
 // 声明：专属图标 📥 + 输入意图行（组名 / 起始序号 / 上限）+ 折叠行读条数与最新序号
-//       + 输出逐条列（#seq · 类型 · 发方 → 收方 · 摘要）。
-// 回执形态：整行 JSON {ok,tool,name,lastSeq,messages[{seq,from,fromName,to,toName,type,text,ts,refs}]}
+//       + 输出逐条列（服务端已格式化为「#seq [类型] 发方 → 收方 · 正文」）。
+// 回执形态（A214）：首行元数据头 {ok,tool,target,items,lastSeq} + 摘要行 + 逐消息行。
 // ═══════════════════════════════════════════
 
 toolDecl('group-inbox', {
@@ -17,43 +17,22 @@ toolDecl('group-inbox', {
         if (r === undefined) {
             return head + ' · 处理中';
         }
-        var o = ovWholeJson(r);
-        if (!o) {
+        var h = ovHead(r);
+        if (!h) {
             return head;
         }
-        var msgs = Array.isArray(o.messages) ? o.messages : [];
-        return head + ' · ' + msgs.length + ' 条 · 最新 #' + ovMetaNum(o, 'lastSeq', 0);
+        return head + ' · ' + ovMetaNum(h.meta, 'items', 0) + ' 条 · 最新 #' + ovMetaNum(h.meta, 'lastSeq', 0);
     },
     outputLines: function (r, a, isErr) {
         if (isErr || r === undefined) {
             return null;
         }
-        var o = ovWholeJson(r);
-        if (!o) {
-            return null;
-        }
-        var msgs = Array.isArray(o.messages) ? o.messages : [];
+        var lines = ovBodyLines(r);
         var out = [];
-        for (var i = 0; i < msgs.length; i = i + 1) {
-            var m = msgs[i];
-            var type = ovMetaStr(m, 'type');
-            var label = '发言';
-            if (type === 'delegation') {
-                label = '派单';
-            } else if (type === 'receipt') {
-                label = '回执';
+        for (var i = 1; i < lines.length; i = i + 1) {
+            if (lines[i].replace(/\s/g, '').length > 0) {
+                out.push(lines[i]);
             }
-            var from = ovMetaStr(m, 'fromName');
-            if (from.length === 0) {
-                from = ovMetaStr(m, 'from');
-            }
-            var to = ovMetaStr(m, 'toName');
-            var route = (to.length > 0) ? (from + ' → ' + to) : from;
-            var body = ovMetaStr(m, 'text').replace(/\s+/g, ' ');
-            if (body.length > 60) {
-                body = body.slice(0, 60) + '…';
-            }
-            out.push('#' + ovMetaNum(m, 'seq', 0) + ' [' + label + '] ' + route + ' · ' + body);
         }
         if (out.length === 0) {
             out.push('（无消息）');

@@ -5,7 +5,7 @@
 // 作用: 派单（delegation）——写组消息 + 以 origin 投递目标猫（宿主实现内顺序完成）
 // 依赖: 无
 // 引用: Mau.Runtime（DataBox / IGroupService）
-// 原理: DataBox.TryResolve<IGroupService> → Send(argsJson) → 回执原文（JSON 或 ERR|）
+// 原理: DataBox.TryResolve<IGroupService> → Send(argsJson) → 回执原文（A214 头 + 摘要行，或 ERR|）
 // 常用: group_cat.mau 认领线——'group.send'[@args] > @res
 // ═══════════════════════════════════════════════════
 using System;
@@ -45,4 +45,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:DF206FCFBB80153E4EB06C8E5356770582EA11249690C95D9C8334F26B0FDE3A
+// #MAU_CHECKSUM:SHA256:1C4EA0356534211AA03D064AD56DBE1A1E90E91C3890E746D557C39D36079322

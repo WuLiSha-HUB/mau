@@ -5,7 +5,7 @@
 // 作用: 重建会话（group-newsession）——清前文 + 重注入 + 可选注入首条消息（宿主实现内完成）
 // 依赖: 无
 // 引用: Mau.Runtime（DataBox / IGroupService）
-// 原理: DataBox.TryResolve<IGroupService> → NewSession(argsJson) → 回执原文（JSON 或 ERR|）
+// 原理: DataBox.TryResolve<IGroupService> → NewSession(argsJson) → 回执原文（A214 头 + 摘要行，或 ERR|）
 // 常用: group_cat.mau 认领线——'group.new_session'[@args] > @res
 // ═══════════════════════════════════════════════════
 using System;
@@ -45,4 +45,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:1F729F90497B2FDEBAE64E819AD937941AB0EF9E989C55DD6B7BB87A28B454CA
+// #MAU_CHECKSUM:SHA256:C24293136527FD99290202328A09F892F240C56CAABCE17F2C8BEA12D71C7F92

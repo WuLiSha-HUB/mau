@@ -2,7 +2,7 @@
 // chat/tools/group/group-send.js —— group-send / 派单（GroupCat）
 // 声明：专属图标 📤 + 输入意图行（组名 / @ 目标 / 正文字数）+ 折叠行读落位序号
 //       + 输出两行（已入组 / 已投递）。
-// 回执形态：整行 JSON {ok,tool,group,seq,to}；失败为 ERR| 前缀文本（走失败态）。
+// 回执形态（A214）：首行元数据头 {ok,tool,target,seq,to} + 摘要行（无载荷正文）。
 // ═══════════════════════════════════════════
 
 toolDecl('group-send', {
@@ -20,25 +20,24 @@ toolDecl('group-send', {
         if (r === undefined) {
             return head + ' · 处理中';
         }
-        var o = ovWholeJson(r);
-        if (!o) {
+        var h = ovHead(r);
+        if (!h) {
             return head;
         }
-        return head + ' · #' + ovMetaNum(o, 'seq', 0) + ' 已投递';
+        return head + ' · #' + ovMetaNum(h.meta, 'seq', 0) + ' 已投递';
     },
     outputLines: function (r, a, isErr) {
         if (isErr || r === undefined) {
             return null;
         }
-        var o = ovWholeJson(r);
-        if (!o) {
+        var h = ovHead(r);
+        if (!h) {
             return null;
         }
-        var seq = ovMetaNum(o, 'seq', 0);
-        var to = ovMetaStr(o, 'to');
+        var to = ovMetaStr(h.meta, 'to');
         if (to.length === 0) {
             to = ovText(a.to);
         }
-        return ['已入组 #' + seq + '（组 ' + ovMetaStr(o, 'group') + '）', '已投递给 ' + to + ' —— 目标猫轮末自动回执'];
+        return ['已入组 #' + ovMetaNum(h.meta, 'seq', 0) + '（组 ' + ovMetaStr(h.meta, 'target') + '）', '已投递给 ' + to + ' —— 目标猫轮末自动回执'];
     }
 });

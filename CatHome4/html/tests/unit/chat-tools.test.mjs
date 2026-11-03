@@ -520,14 +520,10 @@ describe('TsCat——TS 编码工具面渲染（A294）', () => {
 
 describe('GroupCat——群聊 / 派单工具（A306）', () => {
     it('group-info——成员逐行（显示名 / key / 角色）', () => {
-        const res = JSON.stringify({
-            ok: true, tool: 'group-info', name: '猫窝施工大队', project: 'CatHome4',
-            enabled: true, msgCount: 6, lastSeq: 6, lastAt: 0,
-            members: [
-                { key: 'k1', displayName: '猫窝程序员', admin: true, subscriber: true },
-                { key: 'k2', displayName: 'GroupTest', admin: false, subscriber: false }
-            ]
-        });
+        const res = '{"ok":true,"tool":"group-info","target":"猫窝施工大队","items":2,"project":"CatHome4","enabled":true,"msgCount":6,"lastSeq":6,"lastAt":0}'
+            + '\n猫窝施工大队 | 2 名成员 · 消息 6 条 · 最新 #6'
+            + '\n· 猫窝程序员（k1） — 管理员 / 订阅'
+            + '\n· GroupTest（k2）';
         const node = window.buildToolBlock(card('group-info', { group: '猫窝施工大队' }, res), 'toolcard');
         const text = node.textContent;
         expect(text).toContain('2 名成员');
@@ -536,13 +532,10 @@ describe('GroupCat——群聊 / 派单工具（A306）', () => {
     });
 
     it('group-inbox——逐条列（#seq / 类型 / 发方 → 收方 / 摘要）', () => {
-        const res = JSON.stringify({
-            ok: true, tool: 'group-inbox', name: '猫窝施工大队', lastSeq: 6,
-            messages: [
-                { seq: 5, from: 'k1', fromName: '猫窝程序员', to: 'k2', toName: 'GroupTest', type: 'delegation', text: '任务：只回一句话\n第二行', ts: 0, refs: '' },
-                { seq: 6, from: 'k2', fromName: 'GroupTest', to: '', toName: '', type: 'receipt', text: 'A306 回执 OK', ts: 0, refs: '5' }
-            ]
-        });
+        const res = '{"ok":true,"tool":"group-inbox","target":"猫窝施工大队","items":2,"lastSeq":6}'
+            + '\n猫窝施工大队 | 2 条 · 最新 #6'
+            + '\n#5 [派单] 猫窝程序员 → GroupTest · 任务：只回一句话 第二行'
+            + '\n#6 [回执] GroupTest · A306 回执 OK（关联 5）';
         const node = window.buildToolBlock(card('group-inbox', { group: '猫窝施工大队', after: 4 }, res), 'toolcard');
         const text = node.textContent;
         expect(text).toContain('2 条');
@@ -551,7 +544,8 @@ describe('GroupCat——群聊 / 派单工具（A306）', () => {
     });
 
     it('group-send——落位序号进折叠行，两行交付说明', () => {
-        const res = JSON.stringify({ ok: true, tool: 'group-send', group: '猫窝施工大队', seq: 7, to: 'k2' });
+        const res = '{"ok":true,"tool":"group-send","target":"猫窝施工大队","seq":7,"to":"k2"}'
+            + '\n猫窝施工大队 | 已派单 → GroupTest · #7';
         const node = window.buildToolBlock(card('group-send', { group: '猫窝施工大队', to: 'k2', text: '干活' }, res), 'toolcard');
         const text = node.textContent;
         expect(text).toContain('派单 → k2 · #7 已投递');
@@ -561,7 +555,7 @@ describe('GroupCat——群聊 / 派单工具（A306）', () => {
 
     it('group-say——发言只记流水（不投递）；失败态机器码可见', () => {
         const ok = window.buildToolBlock(card('group-say', { group: '猫窝施工大队', text: '讨论' },
-            JSON.stringify({ ok: true, tool: 'group-say', group: '猫窝施工大队', seq: 8 })), 'toolcard');
+            '{"ok":true,"tool":"group-say","target":"猫窝施工大队","seq":8}\n猫窝施工大队 | 已记 #8'), 'toolcard');
         expect(ok.textContent).toContain('#8');
         expect(ok.textContent).toContain('不投递');
 

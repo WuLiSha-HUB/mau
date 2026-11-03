@@ -1,7 +1,8 @@
 // ═══════════════════════════════════════════
 // chat/tools/group/group-info.js —— group-info / 组信息（GroupCat）
-// 声明：专属图标 👥 + 输入意图行（组名）+ 折叠行读成员数 / 消息数 + 输出逐成员列（显示名 / key / 角色）。
-// 回执形态：整行 JSON {ok,tool,name,project,enabled,msgCount,lastSeq,lastAt,members[{key,displayName,admin,subscriber}]}
+// 声明：专属图标 👥 + 输入意图行（组名）+ 折叠行读成员数 / 消息数 + 输出逐成员列。
+// 回执形态（A214）：首行元数据头 {ok,tool,target,items,project,enabled,msgCount,lastSeq,lastAt}
+//                   + 摘要行 + 逐成员行（· 显示名（key）— 角色）。
 // ═══════════════════════════════════════════
 
 toolDecl('group-info', {
@@ -14,43 +15,28 @@ toolDecl('group-info', {
         if (r === undefined) {
             return head + ' · 处理中';
         }
-        var o = ovWholeJson(r);
-        if (!o) {
+        var h = ovHead(r);
+        if (!h) {
             return head;
         }
-        var members = Array.isArray(o.members) ? o.members : [];
-        return head + ' · ' + members.length + ' 名成员 · 消息 ' + ovMetaNum(o, 'msgCount', 0) + ' 条';
+        var proj = ovMetaStr(h.meta, 'project');
+        var tail = (proj.length > 0) ? (' · 项目 ' + proj) : '';
+        return head + tail + ' · ' + ovMetaNum(h.meta, 'items', 0) + ' 名成员 · 消息 ' + ovMetaNum(h.meta, 'msgCount', 0) + ' 条';
     },
     outputLines: function (r, a, isErr) {
         if (isErr || r === undefined) {
             return null;
         }
-        var o = ovWholeJson(r);
-        if (!o) {
-            return null;
-        }
-        var members = Array.isArray(o.members) ? o.members : [];
+        var lines = ovBodyLines(r);
         var out = [];
-        for (var i = 0; i < members.length; i = i + 1) {
-            var m = members[i];
-            var roles = [];
-            if (m.admin === true) {
-                roles.push('管理员');
+        for (var i = 1; i < lines.length; i = i + 1) {
+            if (lines[i].replace(/\s/g, '').length > 0) {
+                out.push(lines[i]);
             }
-            if (m.subscriber === true) {
-                roles.push('订阅');
-            }
-            var line = '· ' + ovMetaStr(m, 'displayName') + '（' + ovMetaStr(m, 'key') + '）';
-            if (roles.length > 0) {
-                line = line + ' — ' + roles.join(' / ');
-            }
-            out.push(line);
         }
         if (out.length === 0) {
             out.push('（无成员）');
         }
-        var proj = ovMetaStr(o, 'project');
-        out.unshift('组 ' + ovMetaStr(o, 'name') + (proj.length > 0 ? (' · 项目 ' + proj) : '') + ' · 最新 #' + ovMetaNum(o, 'lastSeq', 0));
         return out;
     }
 });

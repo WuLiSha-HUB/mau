@@ -5,7 +5,7 @@
 // 作用: 拉取组消息流（after / limit）——调用者须为本组成员
 // 依赖: 无
 // 引用: Mau.Runtime（DataBox / IGroupService）
-// 原理: DataBox.TryResolve<IGroupService> → Inbox(argsJson) → 回执原文（JSON 或 ERR|）
+// 原理: DataBox.TryResolve<IGroupService> → Inbox(argsJson) → 回执原文（A214 头 + 摘要行 + 正文行，或 ERR|）
 // 常用: group_cat.mau 认领线——'group.inbox'[@args] > @res
 // ═══════════════════════════════════════════════════
 using System;
@@ -45,4 +45,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:70D4F386B3BC5B30500BE5A603DF3823794EE76E9A70B218F3EB36C521B705A7
+// #MAU_CHECKSUM:SHA256:7E4897753F6EC263FA5AC81CA930C76782AB6ABB70377CE9486B362EA80792E2

@@ -1,4 +1,4 @@
-﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 四件独立 Flow）
+﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 五件独立 Flow）
 // 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-say / group-send / group-newsession
 // 权限：组成员（info / inbox / say）；派单与重建会话（send / newsession）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
 // 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 5 线认领执行 → complete_str 回执
@@ -6,17 +6,19 @@
 // 线程模型：全部主线程同步——投递触碰会话面（ThreadGuard 主线程守卫），不得 par 化
 // 服务面：积木经 DataBox.TryResolve<IGroupService>（宿主 S1 段绑定；未注入即 ERR|GROUP_NO_SERVICE）
 
-// ── 状态机（4 线——每线独立生命周期）──
+// ── 状态机（5 线——每线独立生命周期）──
 § 'S_Info' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_Inbox' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_Say' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_Send' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_New' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 
-// ── 主动传感器壳——4 线各自探测（纯只读判断积木 → bool 落盒）──
+// ── 主动传感器壳——5 线各自探测（纯只读判断积木 → bool 落盒）──
 § 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-info"] > @giOpen
 § 'P_InboxOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-inbox"] > @gxOpen
 § 'P_SayOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-say"] > @gsOpen
 § 'P_SendOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-send"] > @gdOpen
+§ 'P_NewOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-newsession"] > @gnOpen
 
 // ══════════════ group-info 线 ══════════════
 § 'T_InfoClaim' : @giOpen & 'S_Info' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-info"] > @giOffice | 'S_Info' = 'Claimed' | 'S_Info' = 'Idle'
@@ -47,10 +49,6 @@
 § 'T_SendAbort' : 'S_Send' = 'Failed' → 'oa.complete_str'[@gdOffice, @gdRes] | 'S_Send' = 'Idle' | 'S_Send' = 'Idle'
 
 // ══════════════ group-newsession 线（重建会话：管理员发起 + 组内留痕）══════════════
-§ 'S_New' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
-
-§ 'P_NewOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-newsession"] > @gnOpen
-
 § 'T_NewClaim' : @gnOpen & 'S_New' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-newsession"] > @gnOffice | 'S_New' = 'Claimed' | 'S_New' = 'Idle'
 § 'T_NewArgs' : 'S_New' = 'Claimed' → 'oa.get_str'[@gnOffice, "args"] > @gnArgs | 'self.desc'["group-newsession 执行中", "", ""] | 'S_New' = 'Ready' | 'S_New' = 'Failed'
 § 'T_NewExec' : 'S_New' = 'Ready' → 'group.new_session'[@gnArgs] > @gnRes | 'S_New' = 'Done' | 'S_New' = 'Failed'

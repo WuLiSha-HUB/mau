@@ -7,9 +7,10 @@ using Mau.Runtime;
 namespace CatHome4.Admin
 {
     /// <summary>
-    /// 群组服务实现（IGroupService）——Group 工具面 group-info / group-inbox / group-say / group-send。
-    /// 权限：调用者须为组成员（Info / Inbox / Say）；Send（@ 派单）须为组管理员（group.json adminKeys）。
+    /// 群组服务实现（IGroupService）——Group 工具面五件：group-info / group-inbox / group-say / group-send / group-newsession。
+    /// 权限：调用者须为组成员（Info / Inbox / Say）；Send 与 NewSession 另须组管理员（group.json adminKeys）。
     /// 投递：Send 在同一方法内顺序完成「写组消息 → 以 origin 投递目标猫」——不拆两步（避免单有记录或单有投递）。
+    /// 返回体：统一口径 A214——首行元数据头（ok / tool / target / items + 专有字段）+ 摘要行 + 正文行；失败走 ERR| 前缀。
     /// 线程模型：主线程同步（工具组 Flow 认领线调用；投递触碰会话面）。
     /// </summary>
     internal sealed class GroupService : IGroupService
@@ -19,7 +20,7 @@ namespace CatHome4.Admin
 
         /// <summary>组信息——组行 JSON（成员 / 管理员带显示名 + 统计）。</summary>
         /// <param name="argsJson">工具参数 JSON（group 必填；catId 为宿主注入保留键）</param>
-        /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
+        /// <returns>A214 回执（头行 + 摘要行 + 正文行）；失败为 ERR| 前缀</returns>
         public string Info(string argsJson)
         {
             string group = "";
@@ -42,12 +43,45 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
             }
-            return BuildGroupJson(g);
+            // [段1] 成员行——显示名 + key + 角色标记
+            List<string> lines = new List<string>();
+            for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
+            {
+                string key = g.MemberKeys[i];
+                string line = "· " + CatHostService.ResolveCatDisplayName(key) + "（" + key + "）";
+                List<string> roles = new List<string>();
+                if (IsAdmin(g, key))
+                {
+                    roles.Add("管理员");
+                }
+                if (IsSubscriber(g, key))
+                {
+                    roles.Add("订阅");
+                }
+                if (roles.Count > 0)
+                {
+                    line = line + " — " + string.Join(" / ", roles.ToArray());
+                }
+                lines.Add(line);
+            }
+            if (lines.Count == 0)
+            {
+                lines.Add("（无成员）");
+            }
+            // [段2] 专有字段 + 摘要行
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["project"] = g.Project;
+            extras["enabled"] = g.Enabled;
+            extras["msgCount"] = g.MsgCount;
+            extras["lastSeq"] = g.LastSeq;
+            extras["lastAt"] = g.LastAt;
+            string summary = g.Name + " | " + g.MemberKeys.Length.ToString() + " 名成员 · 消息 " + g.MsgCount.ToString() + " 条 · 最新 #" + g.LastSeq.ToString();
+            return BuildReply("group-info", g.Name, g.MemberKeys.Length, extras, summary, lines);
         }
 
         /// <summary>拉取消息——按 after / limit 取组内消息流（seq 升序）。</summary>
         /// <param name="argsJson">工具参数 JSON（group 必填；after / limit 可选）</param>
-        /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
+        /// <returns>A214 回执（头行 + 摘要行 + 正文行）；失败为 ERR| 前缀</returns>
         public string Inbox(string argsJson)
         {
             string group = "";
@@ -93,12 +127,47 @@ namespace CatHome4.Admin
                 return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
             }
             List<GroupMessage> messages = GroupStore.ReadMessages(g.Name, after, limit);
-            return BuildMessagesJson(g, messages);
+            // [段1] 消息行——#seq [类型] 发方 → 收方 · 正文（单行化，不截断）
+            List<string> lines = new List<string>();
+            for (int i = 0; i < messages.Count; i = i + 1)
+            {
+                GroupMessage m = messages[i];
+                string from = "";
+                if (m.From.Length > 0)
+                {
+                    from = CatHostService.ResolveCatDisplayName(m.From);
+                }
+                string to = "";
+                if (m.To.Length > 0)
+                {
+                    to = CatHostService.ResolveCatDisplayName(m.To);
+                }
+                string route = from;
+                if (to.Length > 0)
+                {
+                    route = from + " → " + to;
+                }
+                string line = "#" + m.Seq.ToString() + " [" + LabelOf(m.Type) + "] " + route + " · " + Flatten(m.Text);
+                if (m.Refs.Length > 0)
+                {
+                    line = line + "（关联 " + m.Refs + "）";
+                }
+                lines.Add(line);
+            }
+            if (lines.Count == 0)
+            {
+                lines.Add("（无消息）");
+            }
+            // [段2] 专有字段 + 摘要行
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["lastSeq"] = g.LastSeq;
+            string summary = g.Name + " | " + messages.Count.ToString() + " 条 · 最新 #" + g.LastSeq.ToString();
+            return BuildReply("group-inbox", g.Name, messages.Count, extras, summary, lines);
         }
 
         /// <summary>发讨论消息（note）——只写组消息流，不投递。</summary>
         /// <param name="argsJson">工具参数 JSON（group / text 必填；to 可选）</param>
-        /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
+        /// <returns>A214 回执（头行 + 摘要行 + 正文行）；失败为 ERR| 前缀</returns>
         public string Say(string argsJson)
         {
             string group = "";
@@ -142,17 +211,15 @@ namespace CatHome4.Admin
                 return result;
             }
             long seq = ParseSeq(result);
-            Dictionary<string, object> reply = new Dictionary<string, object>();
-            reply["ok"] = true;
-            reply["tool"] = "group-say";
-            reply["group"] = g.Name;
-            reply["seq"] = seq;
-            return JsonUtil.Serialize(reply);
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["seq"] = seq;
+            string summary = g.Name + " | 已记 #" + seq.ToString();
+            return BuildReply("group-say", g.Name, -1, extras, summary, new List<string>());
         }
 
         /// <summary>派单（delegation）——写组消息 + 投递目标猫（同一方法内顺序完成）。</summary>
         /// <param name="argsJson">工具参数 JSON（group / to / text 必填；refs 可选）</param>
-        /// <returns>JSON 文本；失败为 ERR| 前缀（消息已入组时在文本中带 seq）</returns>
+        /// <returns>A214 回执（头行 + 摘要行）；失败为 ERR| 前缀（消息已入组时在文本中带 seq）</returns>
         public string Send(string argsJson)
         {
             string group = "";
@@ -217,17 +284,16 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_DELIVER_FAIL|投递未受理: " + to + "（消息已入组 #" + seq.ToString() + "）";
             }
-            Dictionary<string, object> reply = new Dictionary<string, object>();
-            reply["ok"] = true;
-            reply["tool"] = "group-send";
-            reply["group"] = g.Name;
-            reply["seq"] = seq;
-            reply["to"] = to;
-            return JsonUtil.Serialize(reply);
+            string toName = CatHostService.ResolveCatDisplayName(to);
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["seq"] = seq;
+            extras["to"] = to;
+            string summary = g.Name + " | 已派单 → " + toName + " · #" + seq.ToString();
+            return BuildReply("group-send", g.Name, -1, extras, summary, new List<string>());
         }
         /// <summary>重建会话（group-newsession）——管理员发起；目标须成员且运行中；目标是调用者自己时挂起到轮末。</summary>
         /// <param name="argsJson">工具参数 JSON（group / to / reason 必填；firstMessage 可选）</param>
-        /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
+        /// <returns>A214 回执（头行 + 摘要行 + 正文行）；失败为 ERR| 前缀</returns>
         public string NewSession(string argsJson)
         {
             string group = "";
@@ -316,14 +382,89 @@ namespace CatHome4.Admin
                     return result;
                 }
             }
-            Dictionary<string, object> reply = new Dictionary<string, object>();
-            reply["ok"] = true;
-            reply["tool"] = "group-newsession";
-            reply["group"] = g.Name;
-            reply["seq"] = seq;
-            reply["to"] = to;
-            reply["mode"] = self ? "queued" : "rebuilt";
-            return JsonUtil.Serialize(reply);
+            string mode = "rebuilt";
+            if (self)
+            {
+                mode = "queued";
+            }
+            string toName = CatHostService.ResolveCatDisplayName(to);
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["seq"] = seq;
+            extras["to"] = to;
+            extras["mode"] = mode;
+            string summary = g.Name + " | 已重建 → " + toName + " · #" + seq.ToString();
+            if (self)
+            {
+                summary = g.Name + " | 已排队 → " + toName + " · #" + seq.ToString();
+            }
+            return BuildReply("group-newsession", g.Name, -1, extras, summary, new List<string>());
+        }
+        /// <summary>
+        /// A214 回执构造——首行元数据头（ok / tool / target / items + 专有字段）+ 摘要行 + 正文行。
+        /// </summary>
+        /// <param name="tool">工具名</param>
+        /// <param name="target">主来源（组名；空串 = 省略）</param>
+        /// <param name="items">主计数（负值 = 省略）</param>
+        /// <param name="extras">专有字段（null = 无）</param>
+        /// <param name="summary">摘要行（正文首行）</param>
+        /// <param name="bodyLines">正文行（可为空列表）</param>
+        /// <returns>完整回执文本</returns>
+        private static string BuildReply(string tool, string target, int items, Dictionary<string, object> extras, string summary, List<string> bodyLines)
+        {
+            Dictionary<string, object> head = new Dictionary<string, object>();
+            head["ok"] = true;
+            head["tool"] = tool;
+            if (target.Length > 0)
+            {
+                head["target"] = target;
+            }
+            if (items >= 0)
+            {
+                head["items"] = items;
+            }
+            if (extras != null)
+            {
+                foreach (KeyValuePair<string, object> pair in extras)
+                {
+                    head[pair.Key] = pair.Value;
+                }
+            }
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.Append(JsonUtil.Serialize(head));
+            sb.Append("\n");
+            sb.Append(summary);
+            for (int i = 0; i < bodyLines.Count; i = i + 1)
+            {
+                sb.Append("\n");
+                sb.Append(bodyLines[i]);
+            }
+            return sb.ToString();
+        }
+        /// <summary>正文单行化——换行压平为空格（正文行式定界不被破坏）。</summary>
+        /// <param name="text">原文</param>
+        /// <returns>单行文本</returns>
+        private static string Flatten(string text)
+        {
+            if (text == null || text.Length == 0)
+            {
+                return "";
+            }
+            return text.Replace("\r", " ").Replace("\n", " ");
+        }
+        /// <summary>消息类型中文标签——派单 / 回执 / 发言。</summary>
+        /// <param name="type">消息类型</param>
+        /// <returns>标签文本</returns>
+        private static string LabelOf(string type)
+        {
+            if (type == "delegation")
+            {
+                return "派单";
+            }
+            if (type == "receipt")
+            {
+                return "回执";
+            }
+            return "发言";
         }
 
         /// <summary>
@@ -441,65 +582,6 @@ namespace CatHome4.Admin
                 }
             }
             return false;
-        }
-
-        /// <summary>组行 JSON——成员与管理员带显示名（key 为主键）。</summary>
-        /// <param name="g">组投影</param>
-        /// <returns>JSON 文本</returns>
-        private static string BuildGroupJson(GroupSummary g)
-        {
-            List<object> members = new List<object>();
-            for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
-            {
-                Dictionary<string, object> row = new Dictionary<string, object>();
-                row["key"] = g.MemberKeys[i];
-                row["displayName"] = CatHostService.ResolveCatDisplayName(g.MemberKeys[i]);
-                row["admin"] = IsAdmin(g, g.MemberKeys[i]);
-                row["subscriber"] = IsSubscriber(g, g.MemberKeys[i]);
-                members.Add(row);
-            }
-            Dictionary<string, object> body = new Dictionary<string, object>();
-            body["ok"] = true;
-            body["tool"] = "group-info";
-            body["name"] = g.Name;
-            body["project"] = g.Project;
-            body["enabled"] = g.Enabled;
-            body["msgCount"] = g.MsgCount;
-            body["lastSeq"] = g.LastSeq;
-            body["lastAt"] = g.LastAt;
-            body["members"] = members;
-            return JsonUtil.Serialize(body);
-        }
-
-        /// <summary>消息流 JSON——消息带 from/to 显示名。</summary>
-        /// <param name="g">组投影</param>
-        /// <param name="messages">消息列表</param>
-        /// <returns>JSON 文本</returns>
-        private static string BuildMessagesJson(GroupSummary g, List<GroupMessage> messages)
-        {
-            List<object> list = new List<object>();
-            for (int i = 0; i < messages.Count; i = i + 1)
-            {
-                GroupMessage m = messages[i];
-                Dictionary<string, object> row = new Dictionary<string, object>();
-                row["seq"] = m.Seq;
-                row["from"] = m.From;
-                row["fromName"] = m.From.Length > 0 ? CatHostService.ResolveCatDisplayName(m.From) : "";
-                row["to"] = m.To;
-                row["toName"] = m.To.Length > 0 ? CatHostService.ResolveCatDisplayName(m.To) : "";
-                row["type"] = m.Type;
-                row["text"] = m.Text;
-                row["ts"] = m.Ts;
-                row["refs"] = m.Refs;
-                list.Add(row);
-            }
-            Dictionary<string, object> body = new Dictionary<string, object>();
-            body["ok"] = true;
-            body["tool"] = "group-inbox";
-            body["group"] = g.Name;
-            body["lastSeq"] = g.LastSeq;
-            body["messages"] = list;
-            return JsonUtil.Serialize(body);
         }
 
         /// <summary>解析 AppendMessage 回执中的 seq（ok|组名|seq=N）。</summary>
