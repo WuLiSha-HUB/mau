@@ -18,6 +18,9 @@ namespace CH4
         /// <summary>成员猫 key 列表（= Data/sessions/&lt;key&gt; 目录名；显示名由消费方解析）</summary>
         public string[] MemberKeys = new string[0];
 
+        /// <summary>管理员猫 key 列表（显式配置；@ 派单权限来源）</summary>
+        public string[] AdminKeys = new string[0];
+
         /// <summary>项目绑定——自由文本（可空）</summary>
         public string Project = "";
 
@@ -53,6 +56,9 @@ namespace CH4
 
         /// <summary>发送方猫 key（空 = 系统/管理员）</summary>
         public string From = "";
+
+        /// <summary>@ 目标猫 key（空 = 不指向具体猫；非空 = 定向投递/提醒）</summary>
+        public string To = "";
 
         /// <summary>消息类型——delegation 派单 / receipt 回执 / note 其它</summary>
         public string Type = "note";
@@ -199,6 +205,7 @@ namespace CH4
                         info.Name = name;
                     }
                     info.MemberKeys = GetStringArrayProp(root, "memberKeys");
+                    info.AdminKeys = GetStringArrayProp(root, "adminKeys");
                     info.Project = GetStringProp(root, "project");
                     info.Layer = GetStringProp(root, "layer");
                     JsonElement createdEl;
@@ -235,6 +242,7 @@ namespace CH4
             Dictionary<string, object> map = new Dictionary<string, object>();
             map["name"] = info.Name;
             map["memberKeys"] = info.MemberKeys;
+            map["adminKeys"] = info.AdminKeys;
             map["project"] = info.Project;
             map["createdAt"] = info.CreatedAt;
             map["layer"] = info.Layer;
@@ -326,6 +334,7 @@ namespace CH4
                     GroupMessage msg = new GroupMessage();
                     msg.Seq = seqEl.GetInt64();
                     msg.From = GetStringProp(root, "from");
+                    msg.To = GetStringProp(root, "to");
                     string type = GetStringProp(root, "type");
                     if (type.Length > 0)
                     {
@@ -552,8 +561,9 @@ namespace CH4
         /// <param name="name">组名</param>
         /// <param name="memberKeys">成员猫 key 数组</param>
         /// <param name="project">项目绑定（可空）</param>
+        /// <param name="adminKeys">管理员猫 key 数组（null = 保留原值；非成员项自动剔除）</param>
         /// <returns>结果文本</returns>
-        public static string CreateOrUpdate(string name, string[] memberKeys, string project)
+        public static string CreateOrUpdate(string name, string[] memberKeys, string project, string[] adminKeys = null)
         {
             string useName = name == null ? "" : name.Trim();
             if (!IsValidName(useName))
@@ -579,6 +589,23 @@ namespace CH4
                 }
                 info.MemberKeys = members;
                 info.Project = project == null ? "" : project.Trim();
+                if (adminKeys != null)
+                {
+                    string[] admins = NormalizeMembers(adminKeys);
+                    List<string> kept = new List<string>();
+                    for (int i = 0; i < admins.Length; i = i + 1)
+                    {
+                        for (int k = 0; k < members.Length; k = k + 1)
+                        {
+                            if (string.Equals(admins[i], members[k], StringComparison.Ordinal))
+                            {
+                                kept.Add(admins[i]);
+                                break;
+                            }
+                        }
+                    }
+                    info.AdminKeys = kept.ToArray();
+                }
                 WriteGroupFile(info);
                 string verb = "组新建: ";
                 if (found)
@@ -663,11 +690,13 @@ namespace CH4
         /// <param name="type">消息类型（delegation / receipt / note；空 = note）</param>
         /// <param name="text">正文（必填）</param>
         /// <param name="refs">关联锚（可空）</param>
+        /// <param name="to">@ 目标猫 key（空 = 不指向；非空须为组内成员且非自己）</param>
         /// <returns>结果文本（ok|组名|seq=N）</returns>
-        public static string AppendMessage(string name, string from, string type, string text, string refs)
+        public static string AppendMessage(string name, string from, string type, string text, string refs, string to = "")
         {
             string useName = name == null ? "" : name.Trim();
             string useType = type == null ? "" : type.Trim();
+            string useTo = to == null ? "" : to.Trim();
             if (useType.Length == 0)
             {
                 useType = "note";
@@ -691,11 +720,34 @@ namespace CH4
                     return "ERR|GROUP_NOT_FOUND|组不存在: " + useName;
                 }
                 string dir = GetGroupDir(info.Name);
+                // [段1.5] @ 目标校验——组内成员才可指向；自 @ 拒绝（自激一轮且无业务意义）
+                if (useTo.Length > 0)
+                {
+                    bool isMember = false;
+                    for (int i = 0; i < info.MemberKeys.Length; i = i + 1)
+                    {
+                        if (string.Equals(info.MemberKeys[i], useTo, StringComparison.Ordinal))
+                        {
+                            isMember = true;
+                            break;
+                        }
+                    }
+                    if (!isMember)
+                    {
+                        return "ERR|GROUP_TARGET_NOT_MEMBER|@ 目标不在组内: " + useTo;
+                    }
+                    string fromKey = from == null ? "" : from.Trim();
+                    if (fromKey.Length > 0 && string.Equals(useTo, fromKey, StringComparison.Ordinal))
+                    {
+                        return "ERR|GROUP_TARGET_SELF|不能 @ 自己: " + useTo;
+                    }
+                }
                 long nextSeq = info.LastSeq + 1;
                 long now = Now();
                 string line = JsonUtil.Object(
                     ("seq", nextSeq),
                     ("from", from == null ? "" : from.Trim()),
+                    ("to", useTo),
                     ("type", useType),
                     ("text", useText),
                     ("ts", now),

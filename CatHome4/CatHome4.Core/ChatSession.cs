@@ -183,6 +183,9 @@ namespace CH4
         /// <summary>LLM 后台结果——完整回复文本</summary>
         private string _llmResultText;
 
+        /// <summary>轮级来源锚——本批首条非空 origin（group:&lt;组名&gt;:&lt;seq&gt;:&lt;类型&gt;）；空 = 非组注入</summary>
+        private string _roundOrigin = "";
+
         /// <summary>LLM 后台结果——完整思考文本（工具轮次回传铁律）</summary>
         private string _llmReasoning;
         /// <summary>
@@ -1438,6 +1441,7 @@ namespace CH4
         private void StartContinueRound()
         {
             ResetRoundCounters();
+            _roundOrigin = "";
             SetChatState("working");
             LaunchLlm();
         }
@@ -1453,6 +1457,16 @@ namespace CH4
             }
             // 轮首计数与相位复位（与继续轮共用）
             ResetRoundCounters();
+            // 轮级来源锚——本批首条非空 origin（回执归位判据；空 = 非组注入）
+            _roundOrigin = "";
+            for (int i = 0; i < batch.Count; i = i + 1)
+            {
+                if (batch[i].Origin != null && batch[i].Origin.Length > 0)
+                {
+                    _roundOrigin = batch[i].Origin;
+                    break;
+                }
+            }
             // sleep 作废——主干被「非 sleep 输入」启动即销毁未到点 sleep（等待语义）
             string notice = ConsumeSleepOnWake(batch[0].Source);
             if (notice.Length > 0)
@@ -3023,6 +3037,7 @@ namespace CH4
             _viewStore.AppendRoundSummary(roundsumJson, sumTs);
             // RoundSummary——轮末调度总结服务（开关开 + 配置可用；块固定插在 roundsum 之后 = ts + 1）
             PostRoundSummary(sumTs + 1);
+            PostGroupReceiptIfNeeded();
             SetChatState("idle");
             // B4 对话区：轮末状态段推送——v2 契约下会话终态由 state 段承载（runState 回 idle + Token 三级就位；前端零推断）
             PushState();
@@ -3057,6 +3072,36 @@ namespace CH4
             _usagePrompt = 0;
             _usageCompletion = 0;
             _usageCacheHit = 0;
+        }
+        /// <summary>
+        /// 组回执——本轮 origin 为 group:&lt;组名&gt;:&lt;seq&gt;:delegation 时，把本轮最终回复追加为一条 receipt。
+        /// 全局规则：被 @ 后的一轮自动回执；回执不带 @（不唤醒任何人），由订阅汇总或拉取消费。
+        /// </summary>
+        private void PostGroupReceiptIfNeeded()
+        {
+            string origin = _roundOrigin;
+            _roundOrigin = "";
+            if (origin == null || origin.Length == 0)
+            {
+                return;
+            }
+            // 解析 group:<组名>:<seq>:<类型>——非法形态出声，不静默跳过（组名清洗不含冒号）
+            string[] parts = origin.Split(':');
+            if (parts.Length != 4 || !string.Equals(parts[0], "group", StringComparison.Ordinal))
+            {
+                LogStore.Add("CatHome4", 2, "origin 形态非法（非 group 四段）: cat=" + _catKey + " | origin=" + origin, "GROUP");
+                return;
+            }
+            if (!string.Equals(parts[3], "delegation", StringComparison.Ordinal))
+            {
+                return;
+            }
+            string text = _llmResultText == null ? "" : _llmResultText;
+            string result = GroupStore.AppendMessage(parts[1], _catKey, "receipt", text, parts[2], "");
+            if (!result.StartsWith("ok|", StringComparison.Ordinal))
+            {
+                LogStore.Add("CatHome4", 2, "组回执未写入: cat=" + _catKey + " | " + result, "GROUP");
+            }
         }
         /// <summary>
         /// RoundSummary 前段提示词——按猫身份生成的第一人称视角（向用户交代，不做第三方总结）。

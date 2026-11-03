@@ -343,6 +343,8 @@ namespace CH4
             DataBox.Bind<IWebFetchService>(webFetchSvc);
             // 宿主指令服务——工具面触达内核指令族（host.command 积木 → IHostCommandService；与 CLI/HTTP 面板同源单内核）
             DataBox.Bind<IHostCommandService>(new HostCommandService());
+            // 群组服务——Group 工具面（group.* 积木 → IGroupService；权限与投递语义在宿主实现）
+            DataBox.Bind<IGroupService>(new CatHome4.Admin.GroupService());
             // A239 音频播放服务——per-Key 串行 + 组间并发（NAudio.Wasapi；design-mau-audio §三）
             DataBox.Bind<Mau.Contracts.IAudioService>(new Mau.Audio.AudioService());
             AuditStore audit = new AuditStore();

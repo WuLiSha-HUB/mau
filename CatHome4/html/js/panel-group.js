@@ -170,7 +170,7 @@ function createGroupCard(g) {
     members.style.cssText = 'display:flex;flex-wrap:wrap;gap:5px;margin-top:8px';
     appendMemberChips(members, g.members);
     card.appendChild(members);
-    // [段4] 消息统计
+    // [段4] 消息统计——消息数 / 最新时刻
     var foot = document.createElement('div');
     foot.className = 'cat-foot';
     var line = document.createElement('div');

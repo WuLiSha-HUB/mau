@@ -64,6 +64,7 @@ namespace CatHome4.Admin
             {
                 name = g.Name,
                 members = members,
+                adminKeys = g.AdminKeys,
                 project = g.Project,
                 createdAt = g.CreatedAt,
                 layer = g.Layer,
@@ -88,6 +89,7 @@ namespace CatHome4.Admin
             string name = "";
             string project = "";
             string[] memberKeys = new string[0];
+            string[] adminKeys = null;
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -96,6 +98,11 @@ namespace CatHome4.Admin
                     name = GetJsonString(root, "name").Trim();
                     project = GetJsonString(root, "project").Trim();
                     memberKeys = ParseStringArray(root, "memberKeys");
+                    JsonElement adminEl;
+                    if (root.TryGetProperty("adminKeys", out adminEl) && adminEl.ValueKind == JsonValueKind.Array)
+                    {
+                        adminKeys = ParseStringArray(root, "adminKeys");
+                    }
                 }
             }
             catch (Exception)
@@ -103,7 +110,7 @@ namespace CatHome4.Admin
                 return Results.Json(new { ok = false, error = "body 非 JSON" });
             }
             // [段2] 落盘 + 回执（新建的组 enabled 默认 true → 同步拉起宿主，与「启动」语义一致）
-            string result = GroupStore.CreateOrUpdate(name, memberKeys, project);
+            string result = GroupStore.CreateOrUpdate(name, memberKeys, project, adminKeys);
             if (result.StartsWith("ok|", StringComparison.Ordinal))
             {
                 GroupSummary created = GroupStore.GetGroup(name.Trim());
@@ -245,11 +252,18 @@ namespace CatHome4.Admin
                 {
                     display = CatHostService.ResolveCatDisplayName(m.From);
                 }
+                string toDisplay = "";
+                if (m.To.Length > 0)
+                {
+                    toDisplay = CatHostService.ResolveCatDisplayName(m.To);
+                }
                 list.Add(new
                 {
                     seq = m.Seq,
                     from = m.From,
                     displayName = display,
+                    to = m.To,
+                    toDisplayName = toDisplay,
                     type = m.Type,
                     text = m.Text,
                     ts = m.Ts,
@@ -273,6 +287,7 @@ namespace CatHome4.Admin
             string type = "";
             string text = "";
             string refs = "";
+            string to = "";
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -283,13 +298,14 @@ namespace CatHome4.Admin
                     type = GetJsonString(root, "type").Trim();
                     text = GetJsonString(root, "text");
                     refs = GetJsonString(root, "refs").Trim();
+                    to = GetJsonString(root, "to").Trim();
                 }
             }
             catch (Exception)
             {
                 return Results.Json(new { ok = false, error = "body 非 JSON" });
             }
-            return AppendGroupMessageResult(group, from, type, text, refs);
+            return AppendGroupMessageResult(group, from, type, text, refs, to);
         }
 
         /// <summary>
@@ -300,10 +316,11 @@ namespace CatHome4.Admin
         /// <param name="type">类型（delegation / receipt / note）</param>
         /// <param name="text">正文</param>
         /// <param name="refs">关联锚</param>
+        /// <param name="to">@ 目标猫 key（空 = 不指向）</param>
         /// <returns>回执 JSON</returns>
-        internal static IResult AppendGroupMessageResult(string group, string from, string type, string text, string refs)
+        internal static IResult AppendGroupMessageResult(string group, string from, string type, string text, string refs, string to)
         {
-            string result = GroupStore.AppendMessage(group, from, type, text, refs);
+            string result = GroupStore.AppendMessage(group, from, type, text, refs, to);
             return BuildMutationResult(result);
         }
 
@@ -320,6 +337,7 @@ namespace CatHome4.Admin
             string type = "";
             string text = "";
             string refs = "";
+            string to = "";
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -329,13 +347,14 @@ namespace CatHome4.Admin
                     type = GetJsonString(root, "type").Trim();
                     text = GetJsonString(root, "text");
                     refs = GetJsonString(root, "refs").Trim();
+                    to = GetJsonString(root, "to").Trim();
                 }
             }
             catch (Exception)
             {
                 return Results.Json(new { ok = false, error = "body 非 JSON" });
             }
-            return AppendGroupMessageResult(name, from, type, text, refs);
+            return AppendGroupMessageResult(name, from, type, text, refs, to);
         }
 
         /// <summary>

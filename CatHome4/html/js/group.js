@@ -1,10 +1,13 @@
-// CH4 群聊页（A301 · 每组一端口）——group.html 脚本：本组信息 / 消息流 / 发送 / 已读推进
+// CH4 群聊页（A301 · 每组一端口）——group.html 脚本：本组信息 / 消息流 / 发送 / 增量轮询
 // 端点（同源 = 本组专属端口）：GET /api/v1/group/info · GET /api/v1/group/messages
-//                                POST /api/v1/group/messages · POST /api/v1/group/read · GET /api/v1/cats
-// 语义：端口即组身份——页面不做组切换；成员与发送方一律按 cat key，显示名只是附属；已读只允许前进
+//                                POST /api/v1/group/messages · GET /api/v1/cats
+// 语义：端口即组身份——页面不做组切换；成员与发送方一律按 cat key，显示名只是附属
 
 var gName = '';
 var gLastSeq = 0;
+var gPollTimer = 0;     // 增量轮询句柄（0 = 未启动）
+var gPollMs = 5000;     // 轮询间隔（毫秒）
+var gPolling = false;   // 防重入——上一次增量拉取未回不叠发
 
 var gTitleEl = document.getElementById('groupTitle');
 var gMetaEl = document.getElementById('groupMeta');
@@ -87,44 +90,71 @@ function gLoadMessages() {
             }
             gLastSeq = Number(d.lastSeq) || 0;
             gRenderMessages(d.messages || []);
+            gStartPoll();
         })
         .catch(function () {
             gMessagesEl.textContent = '读取失败——宿主未运行？';
         });
 }
 
-// 渲染消息行——序号 / 发送方（显示名 + key）/ 类型 / 时刻 / 正文
+// 单条消息行——序号 / 发送方（显示名 + key）/ 类型 / 时刻 / 正文
+function gBuildRow(m) {
+    var row = document.createElement('div');
+    row.className = 'msg';
+    var head = document.createElement('div');
+    head.className = 'msg-head';
+    var sender = m.displayName || m.from || '人';
+    if (m.from && m.displayName && m.displayName !== m.from) {
+        sender = m.displayName + '（' + m.from + '）';
+    }
+    var target = '';
+    if (m.to) {
+        target = ' → @' + (m.toDisplayName || m.to);
+    }
+    head.textContent = '#' + m.seq + ' · ' + sender + target + ' · ' + gTypeLabel(m.type) + ' · ' + gTimeText(m.ts);
+    row.appendChild(head);
+    var text = document.createElement('div');
+    text.className = 'msg-text';
+    text.textContent = m.text || '';
+    row.appendChild(text);
+    return row;
+}
+
+// 全量重建——首次加载 / 手动刷新（滚到最新）
 function gRenderMessages(list) {
     gMessagesEl.textContent = '';
     if (list.length === 0) {
         var empty = document.createElement('div');
         empty.className = 'empty';
-        empty.textContent = '（本组还没有消息——派单与回执链归 P5）';
+        empty.textContent = '（本组还没有消息）';
         gMessagesEl.appendChild(empty);
         return;
     }
     for (var i = 0; i < list.length; i = i + 1) {
-        var m = list[i];
-        var row = document.createElement('div');
-        row.className = 'msg';
-        var head = document.createElement('div');
-        head.className = 'msg-head';
-        var sender = m.displayName || m.from || '人';
-        if (m.from && m.displayName && m.displayName !== m.from) {
-            sender = m.displayName + '（' + m.from + '）';
-        }
-        head.textContent = '#' + m.seq + ' · ' + sender + ' · ' + gTypeLabel(m.type) + ' · ' + gTimeText(m.ts);
-        row.appendChild(head);
-        var text = document.createElement('div');
-        text.className = 'msg-text';
-        text.textContent = m.text || '';
-        row.appendChild(text);
-        gMessagesEl.appendChild(row);
+        gMessagesEl.appendChild(gBuildRow(list[i]));
     }
     gMessagesEl.scrollTop = gMessagesEl.scrollHeight;
 }
 
-// [段3] 发送与已读
+// 增量追加——轮询用（不重建；贴底时自动跟底，读旧消息时不打断位置）
+function gAppendMessages(list) {
+    if (list.length === 0) {
+        return;
+    }
+    var empty = gMessagesEl.querySelector('.empty');
+    if (empty) {
+        gMessagesEl.removeChild(empty);
+    }
+    var atBottom = (gMessagesEl.scrollHeight - gMessagesEl.scrollTop - gMessagesEl.clientHeight) < 24;
+    for (var i = 0; i < list.length; i = i + 1) {
+        gMessagesEl.appendChild(gBuildRow(list[i]));
+    }
+    if (atBottom) {
+        gMessagesEl.scrollTop = gMessagesEl.scrollHeight;
+    }
+}
+
+// [段3] 发送
 
 // 发送一条讨论消息（type=note；组名由端口决定，body 不带 group）
 function gSend() {
@@ -146,7 +176,7 @@ function gSend() {
             }
             gTextInput.value = '';
             gMsgEl.textContent = '已发送';
-            gLoadMessages();
+            gPollTick();
             gLoadInfo();
         })
         .catch(function (e) {
@@ -154,32 +184,64 @@ function gSend() {
         });
 }
 
-// 标记已读——仅猫身份可用；推进到当前最新序号（只允许前进）
-function gMarkRead() {
-    var catKey = gFromSel.value;
-    if (catKey.length === 0) {
-        gMsgEl.textContent = '「标记已读」需把身份切到某只猫';
+// [段4] 增量轮询——after 增量拉取；页面隐藏暂停，回到前台立即补一次
+
+// 单次增量拉取——新消息追加进消息区，并刷新页头统计
+function gPollTick() {
+    if (gPolling) {
         return;
     }
-    fetch('/api/v1/group/read', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ catKey: catKey, seq: gLastSeq })
-    })
+    if (document.hidden) {
+        return;
+    }
+    gPolling = true;
+    fetch('/api/v1/group/messages?after=' + gLastSeq + '&limit=200', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (d) {
+            gPolling = false;
             if (!d.ok) {
-                gMsgEl.textContent = '标记失败: ' + (d.error || '');
                 return;
             }
-            gMsgEl.textContent = '已读至 #' + gLastSeq + '（' + catKey + '）';
+            var list = d.messages || [];
+            gLastSeq = Number(d.lastSeq) || gLastSeq;
+            if (list.length > 0) {
+                gAppendMessages(list);
+                gLoadInfo();
+            }
         })
-        .catch(function (e) {
-            gMsgEl.textContent = '标记失败: ' + e;
+        .catch(function () {
+            gPolling = false;
         });
 }
 
-// [段4] 身份下拉与初始化
+// 启动轮询——已启动则幂等（句柄类型不定：浏览器 number / Node Timeout 对象 → 只比 0）
+function gStartPoll() {
+    if (gPollTimer !== 0) {
+        return;
+    }
+    gPollTimer = setInterval(gPollTick, gPollMs);
+}
+
+// 停止轮询——页面隐藏时释放定时器
+function gStopPoll() {
+    if (gPollTimer === 0) {
+        return;
+    }
+    clearInterval(gPollTimer);
+    gPollTimer = 0;
+}
+
+// 可见性联动——回到前台立即补一次（不等到下一个 tick）
+function gOnVisibilityChange() {
+    if (document.hidden) {
+        gStopPoll();
+        return;
+    }
+    gPollTick();
+    gStartPoll();
+}
+
+// [段5] 身份下拉与初始化
 
 // 猫列表——发送身份可选（空 = 人 / 匿名）
 function gLoadCats() {
@@ -213,12 +275,12 @@ document.getElementById('refreshBtn').onclick = function () {
     gLoadMessages();
 };
 document.getElementById('sendBtn').onclick = gSend;
-document.getElementById('readBtn').onclick = gMarkRead;
 gTextInput.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') {
         gSend();
     }
 });
+document.addEventListener('visibilitychange', gOnVisibilityChange);
 
 gLoadCats();
 gLoadInfo();
