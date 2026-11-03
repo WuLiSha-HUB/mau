@@ -5,41 +5,66 @@
     <title>CH4 群聊</title>
     <link rel="icon" href="/favicon.ico?v=__V__">
     <link rel="stylesheet" href="css/tokens.css?v=__V__">
+    <link rel="stylesheet" href="css/chat.css?v=__V__">
     <style>
-        html, body { margin: 0; height: 100%; background: var(--ch-bg-root, #14171c); color: var(--ch-fg, #d8dee9); font-family: "Sarasa Mono SC", Consolas, monospace; font-size: 13px; }
-        #layout { display: flex; flex-direction: column; height: 100%; }
-        header { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-bottom: 1px solid var(--ch-line, #2a2f37); }
-        #groupTitle { font-weight: bold; color: var(--ch-identity, #8fd3ff); font-size: 15px; }
-        #groupMeta { color: var(--ch-fg-weak, #7c8595); font-size: 12px; }
-        #msg { color: var(--ch-fg-weak, #7c8595); font-size: 12px; }
-        #messages { flex: 1; overflow-y: auto; padding: 12px 14px; }
-        .msg { padding: 7px 0; border-bottom: 1px solid var(--ch-line-faint, #232830); }
-        .msg-head { color: var(--ch-fg-weak, #7c8595); font-size: 11px; }
-        .msg-text { white-space: pre-wrap; margin-top: 3px; }
-        footer { display: flex; gap: 6px; padding: 10px 14px; border-top: 1px solid var(--ch-line, #2a2f37); align-items: center; }
-        footer select, footer input { background: var(--ch-bg-panel, #1a1e25); border: 1px solid var(--ch-line, #2a2f37); color: var(--ch-fg, #d8dee9); padding: 7px 8px; font-family: inherit; font-size: 12px; }
-        #textInput { flex: 1; }
-        button { background: var(--ch-bg-raised, #1c2129); border: 1px solid var(--ch-line, #2a2f37); color: var(--ch-fg-muted, #a9b3c1); padding: 7px 14px; cursor: pointer; font-family: inherit; font-size: 12px; }
-        button.primary { background: var(--ch-bg-accent, #2b7fd4); border: none; color: var(--ch-fg-inverse, #fff); }
-        .empty { color: var(--ch-fg-weak, #7c8595); }
+        /* 群聊页专属补充（A311）——布局 / 气泡 / MD 全部复用 chat.css，本段只补对话页没有的三处：
+           ① 发送身份行（与内容列同左缘）② 消息首行 meta（来源 / 类型 / 目标）③ 空态 */
+        .group-from-row { display: grid; grid-template-columns: var(--ch-col-left) var(--ch-col-w) 1fr; align-items: center; padding: 4px 0; }
+        #fromSel { grid-column: 2; justify-self: start; background: var(--ch-bg-panel); border: 1px solid var(--ch-line); border-radius: 4px; color: var(--ch-fg); padding: 4px 8px; font-family: inherit; font-size: var(--ch-fs-tag); }
+        #fromSel:focus { outline: none; border-color: var(--ch-focus); }
+        #groupMsg { grid-column: 3; margin-left: 8px; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
+        /* 消息首行——略大字号描述来源类型与目标（A311 莎定）；时间靠右弱化 */
+        .msg-meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: var(--ch-fs-strong); color: var(--ch-fg-muted); white-space: normal; word-break: break-all; }
+        .msg-meta .mm-kind { color: var(--ch-chat-ai-fg); }
+        .msg-meta .mm-who { color: var(--ch-identity); }
+        .msg-meta .mm-target { color: var(--ch-state-run); }
+        .msg-meta .mm-refs { color: var(--ch-state-all); }
+        .msg-meta .mm-seq { color: var(--ch-fg-faint); font-size: var(--ch-fs-tag); }
+        .msg-meta .mm-time { margin-left: auto; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
+        /* 人（user 泡）内首行字色——深底上按反色系走 */
+        .chat-row.user .msg-meta { color: var(--ch-chat-user-fg); }
+        .chat-row.user .msg-meta .mm-kind,
+        .chat-row.user .msg-meta .mm-who,
+        .chat-row.user .msg-meta .mm-target,
+        .chat-row.user .msg-meta .mm-refs { color: var(--ch-chat-user-fg); }
+        .chat-row.user .msg-meta .mm-seq,
+        .chat-row.user .msg-meta .mm-time { color: var(--ch-chat-user-fg); opacity: 0.75; }
+        .group-empty { color: var(--ch-fg-weak); padding: 0 12px; }
     </style>
 </head>
 <body>
-    <div id="layout">
-        <header>
-            <span id="groupTitle">加载中…</span>
-            <span id="groupMeta"></span>
-            <span style="flex:1"></span>
-            <span id="msg"></span>
-            <button id="refreshBtn">刷新</button>
-        </header>
-        <div id="messages"></div>
-        <footer>
-            <select id="fromSel" title="发送身份（人 / 某只猫）"></select>
-            <input id="textInput" placeholder="输入消息（回车发送）…">
-            <button id="sendBtn" class="primary">发送</button>
-        </footer>
+    <!-- ═══ 顶部栏（A311 · 与对话页 #chatbar 同构）——左：组名 + 现状简介；右：UI 版本号 + 刷新 ═══ -->
+    <div id="chatbar">
+        <span class="sid" id="chatTitle">加载中…</span>
+        <span id="chatInfo">—</span>
+        <span style="flex:1"></span>
+        <span id="uiVer" data-version title="前端版本——每次 Vitest 自动递增 + 最后更新时间">UI v?</span>
+        <button id="chatRefresh" title="刷新——重新拉取组信息与消息">刷新</button>
     </div>
+
+    <!-- ═══ 消息区——与对话页同一容器 id（列宽 / gap / 原生滚动条隐藏 / 自绘带几何全部同源） ═══ -->
+    <div id="chatMsgs"></div>
+    <!-- 自绘滚动带（js/chat/fx/scroll.js 原样复用）——视口指示块 + 消息刻度 + 点击跳转 + 拖拽 -->
+    <div id="chatScrollBand"><div id="sbScopes"></div><div id="sbThumb"></div><div id="sbTicks"></div></div>
+
+    <!-- ═══ 发送身份行——与内容列同左缘（端口即组身份，页面不做组切换） ═══ -->
+    <div id="groupFromRow" class="group-from-row">
+        <select id="fromSel" title="发送身份（人 / 某只猫）"></select>
+        <span id="groupMsg"></span>
+    </div>
+
+    <!-- ═══ 输入区——与对话页 #chatinput 同构（内容列 + 右预留带动作列） ═══ -->
+    <div id="chatinput">
+        <textarea id="chatSendInput" rows="3" placeholder="输入消息…（Enter 发送；Shift+Enter 换行）"></textarea>
+        <div id="chatActions">
+            <button id="chatSendBtn" class="ch-iabtn ch-iabtn-send">发送</button>
+        </div>
+    </div>
+
+    <!-- 脚本顺序即依赖顺序：版本填充 → MD 渲染器 → 滚动带 → 本页逻辑 -->
+    <script src="js/ui-common.js?v=__V__"></script>
+    <script src="js/chat/lib/md.js?v=__V__"></script>
+    <script src="js/chat/fx/scroll.js?v=__V__"></script>
     <script src="js/group.js?v=__V__"></script>
 </body>
 </html>

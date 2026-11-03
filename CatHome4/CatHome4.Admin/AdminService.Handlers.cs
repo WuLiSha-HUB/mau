@@ -517,7 +517,12 @@ namespace CatHome4.Admin
                     displayName = GetJsonString(root, "displayName");
                     persona = GetJsonString(root, "persona");
                     typeValue = GetJsonString(root, "type");
-                    toolNames = GetJsonString(root, "toolNames");
+                    // 形态统一（A310 / 缺陷 T25）——字符串与数组两形态皆收；非法形态出声，不静默吞成空串
+                    string toolNamesFormError;
+                    if (!TryReadToolNamesParam(root, out toolNames, out toolNamesFormError))
+                    {
+                        return Results.Json(new { ok = false, error = toolNamesFormError });
+                    }
                     userInjectIdleOnly = GetBoolProp(root, "userInjectIdleOnly");
                     reasoningEffort = GetJsonString(root, "reasoningEffort");
                     appearanceIdValue = GetJsonString(root, "appearanceId");
@@ -1232,6 +1237,59 @@ namespace CatHome4.Admin
                 }
             }
             return "";
+        }
+        /// <summary>
+        /// 读取工具名单形参——接受逗号分隔字符串与字符串数组两种形态（同端点其余授权面字段均支持数组）。
+        /// 非法形态出声：返回 false 并给出错误文案（不静默回落空串——静默族 T25）。
+        /// </summary>
+        /// <param name="obj">请求体根元素</param>
+        /// <param name="joined">逗号拼接的工具名单（缺字段为空串）</param>
+        /// <param name="error">形态非法时的错误文案（合法为空串）</param>
+        /// <returns>true=形态合法；false=形态非法（调用方按 error 回执）</returns>
+        internal static bool TryReadToolNamesParam(JsonElement obj, out string joined, out string error)
+        {
+            joined = "";
+            error = "";
+            JsonElement value;
+            if (!obj.TryGetProperty("toolNames", out value))
+            {
+                return true;
+            }
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                string got = value.GetString();
+                if (got != null)
+                {
+                    joined = got;
+                }
+                return true;
+            }
+            if (value.ValueKind == JsonValueKind.Array)
+            {
+                List<string> names = new List<string>();
+                for (int i = 0; i < value.GetArrayLength(); i = i + 1)
+                {
+                    JsonElement item = value[i];
+                    if (item.ValueKind != JsonValueKind.String)
+                    {
+                        error = "toolNames 数组第 " + (i + 1).ToString() + " 项不是字符串（元素只接受字符串）";
+                        return false;
+                    }
+                    string part = item.GetString();
+                    if (part != null)
+                    {
+                        string trimmed = part.Trim();
+                        if (trimmed.Length > 0)
+                        {
+                            names.Add(trimmed);
+                        }
+                    }
+                }
+                joined = string.Join(",", names.ToArray());
+                return true;
+            }
+            error = "toolNames 形态非法（只接受逗号分隔字符串或字符串数组）";
+            return false;
         }
 
         /// <summary>
