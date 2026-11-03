@@ -1,8 +1,8 @@
-﻿// group_cat.mau —— GroupCat 语料（群组工具组——group.* 四件独立 Flow）
-// 角色：工具组 Flow——认领 TOOL 域 group.info / group.inbox / group.say / group.send
+﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 四件独立 Flow）
+// 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-say / group-send
 // 权限：组成员（info / inbox / say）；派单（send）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
 // 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 4 线认领执行 → complete_str 回执
-// 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（含宿主注入保留键 catId）
+// 载荷协议：officeName = 工具名（连字符分隔）；载荷 key "args" = 整包工具参数 JSON（含宿主注入保留键 catId）
 // 线程模型：全部主线程同步——投递触碰会话面（ThreadGuard 主线程守卫），不得 par 化
 // 服务面：积木经 DataBox.TryResolve<IGroupService>（宿主 S1 段绑定；未注入即 ERR|GROUP_NO_SERVICE）
 
@@ -13,35 +13,35 @@
 § 'S_Send' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 
 // ── 主动传感器壳——4 线各自探测（纯只读判断积木 → bool 落盒）──
-§ 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group.info"] > @giOpen
-§ 'P_InboxOpen' ↻ [1]: 'oa.is_open'["TOOL", "group.inbox"] > @gxOpen
-§ 'P_SayOpen' ↻ [1]: 'oa.is_open'["TOOL", "group.say"] > @gsOpen
-§ 'P_SendOpen' ↻ [1]: 'oa.is_open'["TOOL", "group.send"] > @gdOpen
+§ 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-info"] > @giOpen
+§ 'P_InboxOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-inbox"] > @gxOpen
+§ 'P_SayOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-say"] > @gsOpen
+§ 'P_SendOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-send"] > @gdOpen
 
-// ══════════════ group.info 线 ══════════════
-§ 'T_InfoClaim' : @giOpen & 'S_Info' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group.info"] > @giOffice | 'S_Info' = 'Claimed' | 'S_Info' = 'Idle'
-§ 'T_InfoArgs' : 'S_Info' = 'Claimed' → 'oa.get_str'[@giOffice, "args"] > @giArgs | 'self.desc'["group.info 执行中", "", ""] | 'S_Info' = 'Ready' | 'S_Info' = 'Failed'
+// ══════════════ group-info 线 ══════════════
+§ 'T_InfoClaim' : @giOpen & 'S_Info' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-info"] > @giOffice | 'S_Info' = 'Claimed' | 'S_Info' = 'Idle'
+§ 'T_InfoArgs' : 'S_Info' = 'Claimed' → 'oa.get_str'[@giOffice, "args"] > @giArgs | 'self.desc'["group-info 执行中", "", ""] | 'S_Info' = 'Ready' | 'S_Info' = 'Failed'
 § 'T_InfoExec' : 'S_Info' = 'Ready' → 'group.info'[@giArgs] > @giRes | 'S_Info' = 'Done' | 'S_Info' = 'Failed'
 § 'T_InfoReply' : 'S_Info' = 'Done' → 'oa.complete_str'[@giOffice, @giRes] | 'self.desc'["空闲待命", "", ""] | 'S_Info' = 'Idle' | 'S_Info' = 'Idle'
 § 'T_InfoAbort' : 'S_Info' = 'Failed' → 'oa.complete_str'[@giOffice, @giRes] | 'S_Info' = 'Idle' | 'S_Info' = 'Idle'
 
-// ══════════════ group.inbox 线 ══════════════
-§ 'T_InboxClaim' : @gxOpen & 'S_Inbox' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group.inbox"] > @gxOffice | 'S_Inbox' = 'Claimed' | 'S_Inbox' = 'Idle'
-§ 'T_InboxArgs' : 'S_Inbox' = 'Claimed' → 'oa.get_str'[@gxOffice, "args"] > @gxArgs | 'self.desc'["group.inbox 执行中", "", ""] | 'S_Inbox' = 'Ready' | 'S_Inbox' = 'Failed'
+// ══════════════ group-inbox 线 ══════════════
+§ 'T_InboxClaim' : @gxOpen & 'S_Inbox' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-inbox"] > @gxOffice | 'S_Inbox' = 'Claimed' | 'S_Inbox' = 'Idle'
+§ 'T_InboxArgs' : 'S_Inbox' = 'Claimed' → 'oa.get_str'[@gxOffice, "args"] > @gxArgs | 'self.desc'["group-inbox 执行中", "", ""] | 'S_Inbox' = 'Ready' | 'S_Inbox' = 'Failed'
 § 'T_InboxExec' : 'S_Inbox' = 'Ready' → 'group.inbox'[@gxArgs] > @gxRes | 'S_Inbox' = 'Done' | 'S_Inbox' = 'Failed'
 § 'T_InboxReply' : 'S_Inbox' = 'Done' → 'oa.complete_str'[@gxOffice, @gxRes] | 'self.desc'["空闲待命", "", ""] | 'S_Inbox' = 'Idle' | 'S_Inbox' = 'Idle'
 § 'T_InboxAbort' : 'S_Inbox' = 'Failed' → 'oa.complete_str'[@gxOffice, @gxRes] | 'S_Inbox' = 'Idle' | 'S_Inbox' = 'Idle'
 
-// ══════════════ group.say 线 ══════════════
-§ 'T_SayClaim' : @gsOpen & 'S_Say' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group.say"] > @gsOffice | 'S_Say' = 'Claimed' | 'S_Say' = 'Idle'
-§ 'T_SayArgs' : 'S_Say' = 'Claimed' → 'oa.get_str'[@gsOffice, "args"] > @gsArgs | 'self.desc'["group.say 执行中", "", ""] | 'S_Say' = 'Ready' | 'S_Say' = 'Failed'
+// ══════════════ group-say 线 ══════════════
+§ 'T_SayClaim' : @gsOpen & 'S_Say' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-say"] > @gsOffice | 'S_Say' = 'Claimed' | 'S_Say' = 'Idle'
+§ 'T_SayArgs' : 'S_Say' = 'Claimed' → 'oa.get_str'[@gsOffice, "args"] > @gsArgs | 'self.desc'["group-say 执行中", "", ""] | 'S_Say' = 'Ready' | 'S_Say' = 'Failed'
 § 'T_SayExec' : 'S_Say' = 'Ready' → 'group.say'[@gsArgs] > @gsRes | 'S_Say' = 'Done' | 'S_Say' = 'Failed'
 § 'T_SayReply' : 'S_Say' = 'Done' → 'oa.complete_str'[@gsOffice, @gsRes] | 'self.desc'["空闲待命", "", ""] | 'S_Say' = 'Idle' | 'S_Say' = 'Idle'
 § 'T_SayAbort' : 'S_Say' = 'Failed' → 'oa.complete_str'[@gsOffice, @gsRes] | 'S_Say' = 'Idle' | 'S_Say' = 'Idle'
 
-// ══════════════ group.send 线（派单：写组消息 + 投递目标猫）══════════════
-§ 'T_SendClaim' : @gdOpen & 'S_Send' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group.send"] > @gdOffice | 'S_Send' = 'Claimed' | 'S_Send' = 'Idle'
-§ 'T_SendArgs' : 'S_Send' = 'Claimed' → 'oa.get_str'[@gdOffice, "args"] > @gdArgs | 'self.desc'["group.send 执行中", "", ""] | 'S_Send' = 'Ready' | 'S_Send' = 'Failed'
+// ══════════════ group-send 线（派单：写组消息 + 投递目标猫）══════════════
+§ 'T_SendClaim' : @gdOpen & 'S_Send' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-send"] > @gdOffice | 'S_Send' = 'Claimed' | 'S_Send' = 'Idle'
+§ 'T_SendArgs' : 'S_Send' = 'Claimed' → 'oa.get_str'[@gdOffice, "args"] > @gdArgs | 'self.desc'["group-send 执行中", "", ""] | 'S_Send' = 'Ready' | 'S_Send' = 'Failed'
 § 'T_SendExec' : 'S_Send' = 'Ready' → 'group.send'[@gdArgs] > @gdRes | 'S_Send' = 'Done' | 'S_Send' = 'Failed'
 § 'T_SendReply' : 'S_Send' = 'Done' → 'oa.complete_str'[@gdOffice, @gdRes] | 'self.desc'["空闲待命", "", ""] | 'S_Send' = 'Idle' | 'S_Send' = 'Idle'
 § 'T_SendAbort' : 'S_Send' = 'Failed' → 'oa.complete_str'[@gdOffice, @gdRes] | 'S_Send' = 'Idle' | 'S_Send' = 'Idle'

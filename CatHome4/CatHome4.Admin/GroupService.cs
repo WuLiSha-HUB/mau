@@ -7,7 +7,7 @@ using Mau.Runtime;
 namespace CatHome4.Admin
 {
     /// <summary>
-    /// 群组服务实现（IGroupService）——Group 工具面 group.info / group.inbox / group.say / group.send。
+    /// 群组服务实现（IGroupService）——Group 工具面 group-info / group-inbox / group-say / group-send。
     /// 权限：调用者须为组成员（Info / Inbox / Say）；Send（@ 派单）须为组管理员（group.json adminKeys）。
     /// 投递：Send 在同一方法内顺序完成「写组消息 → 以 origin 投递目标猫」——不拆两步（避免单有记录或单有投递）。
     /// 线程模型：主线程同步（工具组 Flow 认领线调用；投递触碰会话面）。
@@ -132,7 +132,7 @@ namespace CatHome4.Admin
             long seq = ParseSeq(result);
             Dictionary<string, object> reply = new Dictionary<string, object>();
             reply["ok"] = true;
-            reply["tool"] = "group.say";
+            reply["tool"] = "group-say";
             reply["group"] = g.Name;
             reply["seq"] = seq;
             return JsonUtil.Serialize(reply);
@@ -203,7 +203,7 @@ namespace CatHome4.Admin
             }
             Dictionary<string, object> reply = new Dictionary<string, object>();
             reply["ok"] = true;
-            reply["tool"] = "group.send";
+            reply["tool"] = "group-send";
             reply["group"] = g.Name;
             reply["seq"] = seq;
             reply["to"] = to;
@@ -324,7 +324,7 @@ namespace CatHome4.Admin
             }
             Dictionary<string, object> body = new Dictionary<string, object>();
             body["ok"] = true;
-            body["tool"] = "group.info";
+            body["tool"] = "group-info";
             body["name"] = g.Name;
             body["project"] = g.Project;
             body["enabled"] = g.Enabled;
@@ -359,7 +359,7 @@ namespace CatHome4.Admin
             }
             Dictionary<string, object> body = new Dictionary<string, object>();
             body["ok"] = true;
-            body["tool"] = "group.inbox";
+            body["tool"] = "group-inbox";
             body["group"] = g.Name;
             body["lastSeq"] = g.LastSeq;
             body["messages"] = list;
