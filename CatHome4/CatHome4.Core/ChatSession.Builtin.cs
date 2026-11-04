@@ -203,33 +203,38 @@ namespace CH4
                     return "ERR|BAD_ARGS|sleep 参数解析失败: " + ex.Message;
                 }
             }
-            // [段1] 时长校验——合计 1..3600 秒（LLM 自主挂起防呆；人工登记不受此限）
+            // [段1] 时长校验——合计 1..99 秒（同轮等待口径：100ms/帧 → 秒数 × 10 = 帧数）
+            // 超过 99 秒属跨轮排程语义，走 timer（不置等待、本轮照常收尾）
             long total = hours * 3600 + minutes * 60 + seconds;
-            if (total < DelayQueue.MinSleepSeconds || total > DelayQueue.MaxSleepSeconds)
+            if (total < 1 || total > MaxSleepWaitSeconds)
             {
-                return "ERR|BAD_ARGS|sleep 时长需在 " + DelayQueue.MinSleepSeconds.ToString() + ".." + DelayQueue.MaxSleepSeconds.ToString() + " 秒之间（当前 " + total.ToString() + " 秒）";
+                return "ERR|BAD_ARGS|sleep 时长需在 1.." + MaxSleepWaitSeconds.ToString() + " 秒之间（当前 " + total.ToString() + " 秒；更长等待请用 timer）";
             }
-            // [段2] 登记——到点由调度器注入唤醒消息（本轮正常继续）
-            long dueAt = DelayQueue.Now() + total * 1000;
-            string content = "（定时唤醒 · " + total.ToString() + " 秒已到 · " + DelayQueue.FormatTime(dueAt) + "）";
-            string added = DelayQueue.Add(_catKey, content, "sleep", dueAt, total * 1000, false);
-            if (added.StartsWith("ERR|", StringComparison.Ordinal))
+            if (_sleepDueFrame >= 0)
             {
-                return added;
+                return "ERR|BAD_ARGS|本批已有 sleep 在等待——同批只允许一个（剩余 " + _sleepDueFrame.ToString() + " 帧）";
             }
-            // 工具主动 done——本轮结束语义为「等待」（QQ 转发面据此续约来源：唤醒轮才是回复轮）
-            _toolDone = true;
+            // [段2] 帧登记——工具单保持未闭合，PumpToolBatch 每帧推进，到点补结果；本轮不结束（同轮续跑）
+            long waitFrames = total * FramesPerSecond;
+            _sleepDueFrame = waitFrames;
             Dictionary<string, object> sleepFields = new Dictionary<string, object>();
             sleepFields["hours"] = hours;
             sleepFields["minutes"] = minutes;
             sleepFields["seconds"] = seconds;
-            sleepFields["dueAt"] = dueAt;
-            string body = "唤醒 | " + DelayQueue.FormatTime(dueAt) + "（" + total.ToString() + " 秒后）——本轮请正常回复，到点会自动唤醒。";
-            return ToolMetaHead.With("sleep", true, "", -1, sleepFields, body);
+            sleepFields["waitFrames"] = waitFrames;
+            string body = "等待 | " + total.ToString() + " 秒（" + waitFrames.ToString() + " 帧）——到点即回本批，本轮继续，不结束轮次。";
+            _sleepReply = ToolMetaHead.With("sleep", true, "", -1, sleepFields, body);
+            return SleepSuspendMark;
         }
 
         /// <summary>timer 时长上限（秒）——24 小时（排程语义允许长周期；与 sleep 的 1 小时挂起防呆不同）</summary>
         private const long MaxTimerSeconds = 86400;
+        /// <summary>sleep 同轮等待上限（秒）——100ms/帧口径下 99 秒 = 990 帧；超过即属跨轮排程，走 timer</summary>
+        private const long MaxSleepWaitSeconds = 99;
+        /// <summary>每秒帧数——主循环节拍 100ms/帧（Program.FrameTargetMs）</summary>
+        private const long FramesPerSecond = 10;
+        /// <summary>sleep 挂起标记——ExecuteSleep 返回它表示「工具单保持未闭合，由帧等待补齐」</summary>
+        private const string SleepSuspendMark = "SUSPEND|SLEEP";
 
         /// <summary>
         /// timer 执行体——登记延迟指令注入（design-ch4-delay §5.4）：本轮正常继续（不挂起、不阻塞），

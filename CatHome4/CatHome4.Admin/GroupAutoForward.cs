@@ -83,7 +83,7 @@ namespace CatHome4.Admin
                 {
                     continue;
                 }
-                CatHostService.CatEntry cat = CatHostService.FindCat(sub);
+                CatHostService.CatEntry cat = CatHostService.FindDeliveryCat(sub);
                 if (cat == null || cat.Session == null)
                 {
                     LogStore.Add("CatHome4", 2, "订阅推送跳过（订阅猫未运行）: " + g.Name + " | " + sub, "GROUP");

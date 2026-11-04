@@ -557,6 +557,8 @@ namespace CH4
             ChatSession.PackPayloadProvider = AdminService.BuildPackPayload;
             // 授权面实时查询接线——工具调用判定按当前 cat.cfg 名单实时解析（design-ch4-tools §三·十一：注入面=提示，授权面=真相）
             ChatSession.AuthorizedToolNamesProvider = CatHostService.ResolveCatAuthorizedToolNames;
+            // 方案丙接线——派单方显式要求回执时投递回派单方（Core 域不依赖 Admin；未接线时回执照写、通知出声）
+            ChatSession.GroupReceiptNotifier = AdminService.DeliverGroupReceipt;
             // 轮末总结 LLM 配置接线——catKey → [endpoint, apikey, model]（LLMSimpleRequest 服务工单参数；roundsummary）
             ChatSession.RoundSummaryLlmProvider = CatHostService.ResolveRoundSummaryLlm;
             // 轮末总结播报接线——catKey → [启用标志, 音色槽位值]（A247：总结自动出声）

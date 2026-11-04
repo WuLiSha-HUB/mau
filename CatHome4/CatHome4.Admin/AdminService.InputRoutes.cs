@@ -585,7 +585,7 @@ namespace CatHome4.Admin
             {
                 return "ERR|CAT_KEY_EMPTY|目标猫 key 不能为空";
             }
-            CatEntry cat = CatHostService.FindCat(useKey);
+            CatEntry cat = CatHostService.FindDeliveryCat(useKey);
             if (cat == null || cat.Session == null)
             {
                 return "ERR|CAT_OFFLINE|猫未运行: " + useKey;

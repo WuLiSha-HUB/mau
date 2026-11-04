@@ -232,6 +232,7 @@ namespace CatHome4.Admin
             string text = "";
             string to = "";
             string refs = "";
+            bool notify = false;
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(argsJson))
@@ -240,6 +241,7 @@ namespace CatHome4.Admin
                     text = JsonString(root, "text");
                     to = JsonString(root, "to");
                     refs = JsonString(root, "refs");
+                    notify = JsonBool(root, "notify");
                 }
             }
             catch (Exception ex)
@@ -273,13 +275,18 @@ namespace CatHome4.Admin
                 return result;
             }
             long seq = ParseSeq(result);
-            CatHostService.CatEntry cat = CatHostService.FindCat(to);
+            CatHostService.CatEntry cat = CatHostService.FindDeliveryCat(to);
             if (cat == null || cat.Session == null)
             {
                 return "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + to + "（消息已入组 #" + seq.ToString() + "）";
             }
             string content = "[来自组:" + g.Name + "]\n" + text;
             string origin = "group:" + g.Name + ":" + seq.ToString() + ":delegation";
+            if (notify)
+            {
+                // 显式通知（方案丙）——origin 第五段 = 派单方猫 key；目标轮末回执产生后由宿主投递回它
+                origin = origin + ":" + catId;
+            }
             if (!cat.Session.PostUserMessage(content, "user", "", origin))
             {
                 return "ERR|GROUP_DELIVER_FAIL|投递未受理: " + to + "（消息已入组 #" + seq.ToString() + "）";
@@ -345,7 +352,7 @@ namespace CatHome4.Admin
             {
                 return "ERR|BAD_ARGS|重建会话必须给出 reason（新会话唯一的上下文说明）";
             }
-            CatHostService.CatEntry target = CatHostService.FindCat(to);
+            CatHostService.CatEntry target = CatHostService.FindDeliveryCat(to);
             if (target == null || target.Session == null)
             {
                 return "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + to;
@@ -523,6 +530,19 @@ namespace CatHome4.Admin
             }
             string value = el.GetString();
             return value == null ? "" : value;
+        }
+        /// <summary>JSON 布尔属性读取——缺失 / 非 true 一律返回 false（notify 缺省不通知）。</summary>
+        /// <param name="root">对象元素</param>
+        /// <param name="name">属性名</param>
+        /// <returns>true=显式为 true</returns>
+        private static bool JsonBool(JsonElement root, string name)
+        {
+            JsonElement el;
+            if (!root.TryGetProperty(name, out el))
+            {
+                return false;
+            }
+            return el.ValueKind == JsonValueKind.True;
         }
 
         /// <summary>成员判定。</summary>

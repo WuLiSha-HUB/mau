@@ -390,7 +390,7 @@ namespace CatHome4.Admin
             string groupName = current == null ? group : current.Name;
             string content = "[来自组:" + groupName + "]\n" + text;
             string origin = "group:" + groupName + ":" + seq.ToString() + ":delegation";
-            CatHostService.CatEntry cat = CatHostService.FindCat(useTo);
+            CatHostService.CatEntry cat = CatHostService.FindDeliveryCat(useTo);
             if (cat == null || cat.Session == null)
             {
                 return Results.Json(new { ok = true, detail = result, delivered = false, seq = seq, warning = "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + useTo + "（消息已入组 #" + seq.ToString() + "）" });

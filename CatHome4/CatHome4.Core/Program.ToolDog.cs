@@ -152,15 +152,15 @@ namespace CH4
         }
 
         /// <summary>
-        /// 按工具名映射超时帧数——A48（2026-09-14）统一 120 秒（2400 帧），与 CAT 后台执行层时限 [t=2400, par] 对齐
+        /// 按工具名映射超时帧数——1200 帧 = 120 秒（100ms/帧，Program.FrameTargetMs）；与语料侧 [t=1200] 同口径
         /// </summary>
         /// <param name="name">工具名</param>
         /// <returns>超时帧数</returns>
         public static long MapTimeoutFrames(string name)
         {
-            // A48（2026-09-14）：工单超时统一 120 秒（2400 帧）——与 CAT 后台执行层时限（[t=2400, par]）对齐
+            // 2026-11-04（莎拍板）：帧率 50→100ms 后未等比收缩帧数，导致 2400 帧实际等成 240 秒——补正为 1200 帧（120 秒）
             // 历史分级（mau-gen 120s / mau-proj 240s / mau-setup 450s / cs-build 120s / 默认 30s）为估值——实测无超长任务，统一收口
-            return 2400;
+            return 1200;
         }
     }
 }

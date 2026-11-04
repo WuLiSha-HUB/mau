@@ -1496,6 +1496,50 @@ namespace CatHome4.Admin
             }
             return cat.Port;
         }
+        /// <summary>
+        /// 投递寻址——普通猫走注册表，特殊会话（majordomo / 默认会话）返回薄壳条目。
+        /// 与 FindCat 的分工：本方法只服务「投递 / 会话重建」这类需要会话实体的消费方（组派单、订阅推送、网页 @、跨猫重建）；cat.* 管理动作仍走 FindCat——特殊会话按设计无停止 / 删除面。
+        /// </summary>
+        /// <param name="key">寻址键（猫 id / 显示名 / 默认会话键）</param>
+        /// <returns>猫实体（特殊会话为薄壳）；未找到 / 歧义 / 会话缺失 null</returns>
+        internal static CatEntry FindDeliveryCat(string key)
+        {
+            if (key == null || key.Length == 0)
+            {
+                return null;
+            }
+            CatEntry cat = FindCat(key);
+            if (cat != null)
+            {
+                return cat;
+            }
+            if (_chatBridge == null || _chatBridge.DefaultSession == null)
+            {
+                return null;
+            }
+            ChatSession session = _chatBridge.DefaultSession;
+            if (!IsDefaultCatKey(key))
+            {
+                // 与默认会话寻址同源——id / 显示名任一命中即视为同一会话
+                bool hitId = string.Equals(key, session.Id, StringComparison.Ordinal);
+                bool hitName = session.DisplayName != null && string.Equals(key, session.DisplayName, StringComparison.Ordinal);
+                if (!hitId && !hitName)
+                {
+                    return null;
+                }
+            }
+            CatEntry shell = new CatEntry();
+            shell.Id = "majordomo";
+            shell.DisplayName = session.DisplayName == null ? "majordomo" : session.DisplayName;
+            shell.Type = "";
+            shell.Running = _majorHost != null;
+            shell.Port = _majorPort;
+            shell.Session = session;
+            shell.Persona = _chatBridge.DefaultPersona;
+            shell.InjectList = _chatBridge.DefaultInjectList;
+            shell.ToolSpecs = _chatBridge.DefaultToolSpecs;
+            return shell;
+        }
 
         /// <summary>
         /// 猫寻址——id 精确 / 显示名精确 / id 前缀唯一（歧义返回 null 要求更精确）。

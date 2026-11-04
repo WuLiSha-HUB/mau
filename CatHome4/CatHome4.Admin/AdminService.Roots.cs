@@ -557,5 +557,27 @@ namespace CatHome4.Admin
             }
             return "";
         }
+        /// <summary>
+        /// 组回执通知投递——派单方显式要求回执（origin 第五段）时，把目标猫的回执投递回派单方会话。
+        /// 投递 origin 留空：通知轮不产生二次回执（防猫间互相唤醒的环）。
+        /// </summary>
+        /// <param name="group">组名</param>
+        /// <param name="targetKey">派单方猫 key</param>
+        /// <param name="seq">被回执的派单 seq</param>
+        /// <param name="body">目标猫本轮最终回复全文</param>
+        internal static void DeliverGroupReceipt(string group, string targetKey, string seq, string body)
+        {
+            CatHostService.CatEntry cat = CatHostService.FindDeliveryCat(targetKey);
+            if (cat == null || cat.Session == null)
+            {
+                LogStore.Add("CatHome4", 2, "组回执通知跳过（派单方未运行）: " + group + " | " + targetKey, "GROUP");
+                return;
+            }
+            string content = "[来自组:" + group + "] #" + seq + " 回执\n" + body;
+            if (!cat.Session.PostUserMessage(content, "user", "", ""))
+            {
+                LogStore.Add("CatHome4", 2, "组回执通知未受理: " + group + " | " + targetKey, "GROUP");
+            }
+        }
     }
 }

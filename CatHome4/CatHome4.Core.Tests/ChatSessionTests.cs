@@ -542,15 +542,14 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// sleep 内置工具——登记定时唤醒条目（design-ch4-delay §5.3）：本轮正常继续，条目落延迟队列。
+        /// sleep 内置工具——同轮帧等待（2026-11-04 语义）：不登记延迟队列，工具单保持未闭合，到点闭合后本轮继续。
         /// </summary>
         [Fact]
-        public void Sleep_ExecuteTool_RegistersDelayEntry()
+        public void Sleep_ExecuteTool_WaitsInSameRound()
         {
             CH4.DelayQueue.ResetForTest();
-            CH4.DelayQueue.NowProvider = delegate () { return 5000000; };
             MockLlm llm = new MockLlm();
-            string tc = "[{\"id\":\"s1\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":30}\"}}]";
+            string tc = "[{\"id\":\"s1\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":3}\"}}]";
             llm.ToolCallsQueue.Enqueue(tc);
             CH4.ChatSession session = CreateSession(llm, new ToolSpec[]
             {
@@ -558,13 +557,21 @@ namespace CatHome4.Core.Tests
                 new ToolSpec("sleep", "定时唤醒", "{}")
             });
             session.SetCatKey("test-session");
-            session.PostUserMessage("30 秒后提醒我");
+            session.PostUserMessage("3 秒后再动手");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle);
-            CH4.DelayEntry[] entries = CH4.DelayQueue.List("test-session");
-            Assert.Single(entries);
-            Assert.Equal("sleep", entries[0].Source);
-            Assert.Equal(5030000, entries[0].DueAt);
+            // 帧等待不产生延迟队列条目（DelayQueue 的 sleep 通道已退役）
+            Assert.Empty(CH4.DelayQueue.List("test-session"));
+            bool sawWait = false;
+            LlmMessage[] all = session.Context.GetMessages();
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                if (all[i].Role == LlmRole.Tool && all[i].Content != null && all[i].Content.Contains("等待 | 3 秒（30 帧）"))
+                {
+                    sawWait = true;
+                }
+            }
+            Assert.True(sawWait);
             CH4.DelayQueue.ResetForTest();
         }
 
@@ -664,15 +671,14 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// sleep 作废——主干被非 sleep 输入启动时销毁未到点 sleep + systemauto 汇总告知（先于触发消息落前文）。
+        /// sleep 同轮等待——不再产生「sleep 作废」系统注入（延迟队列通道已退役）；等待期间主输入排队，不打断本轮。
         /// </summary>
         [Fact]
-        public void Sleep_DestroyedWhenMainlineStarts()
+        public void Sleep_WaitsInSameRound_NoCancelInjection()
         {
             CH4.DelayQueue.ResetForTest();
-            CH4.DelayQueue.NowProvider = delegate () { return 8000000; };
             MockLlm llm = new MockLlm();
-            string tc = "[{\"id\":\"s3\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":60}\"}}]";
+            string tc = "[{\"id\":\"s3\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":2}\"}}]";
             llm.ToolCallsQueue.Enqueue(tc);
             CH4.ChatSession session = CreateSession(llm, new ToolSpec[]
             {
@@ -680,42 +686,32 @@ namespace CatHome4.Core.Tests
                 new ToolSpec("sleep", "定时唤醒", "{}")
             });
             session.SetCatKey("test-session");
-            session.PostUserMessage("一分钟后叫我");
-            PumpUntilIdle(session);
-            Assert.Single(CH4.DelayQueue.List("test-session"));
-            // 新输入启动主干 → sleep 作废 + systemauto 告知（在触发消息之前）
-            session.PostUserMessage("回来了");
+            session.PostUserMessage("2 秒后叫我");
             PumpUntilIdle(session);
             Assert.Empty(CH4.DelayQueue.List("test-session"));
+            session.PostUserMessage("回来了");
+            PumpUntilIdle(session);
             LlmMessage[] all = session.Context.GetMessages();
-            int noticeIndex = -1;
-            int triggerIndex = -1;
             for (int i = 0; i < all.Length; i = i + 1)
             {
-                if (all[i].Role == LlmRole.User && all[i].Content != null && all[i].Content.Contains("sleep 作废"))
+                if (all[i].Role == LlmRole.User && all[i].Content != null)
                 {
-                    noticeIndex = i;
-                }
-                if (all[i].Role == LlmRole.User && all[i].Content == "回来了")
-                {
-                    triggerIndex = i;
+                    Assert.False(all[i].Content.Contains("sleep 作废"));
                 }
             }
-            Assert.True(noticeIndex >= 0);
-            Assert.True(triggerIndex > noticeIndex);
+            Assert.Empty(CH4.DelayQueue.List("test-session"));
             CH4.DelayQueue.ResetForTest();
         }
 
         /// <summary>
-        /// roundsum done 语义——含 sleep 登记的轮为 tool（工具主动 done），纯文本轮为 stream。
+        /// roundsum done 语义——sleep 已改同轮帧等待（不再工具主动 done），两轮均按 stream 自然收尾。
         /// </summary>
         [Fact]
         public void RoundSum_CarriesDoneKind()
         {
             CH4.DelayQueue.ResetForTest();
-            CH4.DelayQueue.NowProvider = delegate () { return 9500000; };
             MockLlm llm = new MockLlm();
-            string tc = "[{\"id\":\"s4\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":30}\"}}]";
+            string tc = "[{\"id\":\"s4\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":2}\"}}]";
             llm.ToolCallsQueue.Enqueue(tc);
             CH4.ChatSession session = CreateSession(llm, new ToolSpec[]
             {
@@ -725,8 +721,8 @@ namespace CatHome4.Core.Tests
             session.SetCatKey("test-session");
             session.PostUserMessage("半分钟后叫我");
             PumpUntilIdle(session);
-            Assert.Contains("\"done\":\"tool\"", LastRoundSumPayload(session));
-            // 第二轮（纯文本）——自然收尾
+            Assert.Contains("\"done\":\"stream\"", LastRoundSumPayload(session));
+            // 第二轮（纯文本）——同样自然收尾
             session.PostUserMessage("普通一轮");
             PumpUntilIdle(session);
             Assert.Contains("\"done\":\"stream\"", LastRoundSumPayload(session));

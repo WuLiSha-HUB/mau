@@ -35,8 +35,8 @@ namespace CH4
         /// <summary>LLM 超时帧上限——同原 WaitForLlm MaxFramesPerRun 语义（30000 帧 ≈ 25 分钟空转上限）</summary>
         private const long LlmTimeoutFrames = 30000;
 
-        /// <summary>工具批等待帧上限——最长工具 2400 帧（120 秒，A48 统一口径）+ 600 余量</summary>
-        private const long ToolBatchWaitFrames = 2400 + 600;
+        /// <summary>工具批等待帧上限——最长工具 1200 帧（120 秒，100ms/帧）+ 300 余量</summary>
+        private const long ToolBatchWaitFrames = 1200 + 300;
 
         /// <summary>工具单 Dog owner ID——宿主 Dog 域（同 ToolOwnerId——OA 未开存活校验，多 Dog 未来可扩展独立 ID）</summary>
         private const long ToolOwnerId = 1;
@@ -340,6 +340,10 @@ namespace CH4
 
         /// <summary>当前相位已运行帧数——超时计时面</summary>
         private long _phaseFrames;
+        /// <summary>sleep 同轮等待的到点帧——本批内相对帧号（-1 = 无挂起）</summary>
+        private long _sleepDueFrame = -1;
+        /// <summary>sleep 同轮等待的回执文本——到点闭合工具单时写入结果</summary>
+        private string _sleepReply = "";
 
         /// <summary>待处理用户消息队列——忙时排队（原同步阻塞天然排队语义保持）</summary>
         /// <summary>
@@ -400,6 +404,12 @@ namespace CH4
         /// 未接线（测试 / 裸构造）→ 回落 _tools 快照（旧语义）+ 一次告警——不静默放宽、不静默拒绝。
         /// </summary>
         internal static Func<string, string[]> AuthorizedToolNamesProvider;
+        /// <summary>
+        /// 组回执通知投递——派单方显式要求回执（origin 第五段）时由宿主投递回派单方。
+        /// 核心域不依赖 Admin 域（投递寻址在 Admin）；未接线 → 出声告警，不静默吞掉。
+        /// 入参：组名 / 派单方猫 key / 关联 seq / 回执正文。
+        /// </summary>
+        internal static Action<string, string, string, string> GroupReceiptNotifier;
 
         /// <summary>授权面提供者缺失告警标志——只报一次（防每次判定刷屏）</summary>
         private bool _authorizedProviderWarned;
@@ -1474,6 +1484,8 @@ namespace CH4
             _emptyReplyRetry = 0;
             _streamClosedRetry = false;
             _toolDone = false;
+            _sleepDueFrame = -1;
+            _sleepReply = "";
             // RoundSummary——本轮输入缓冲清零（全部 user / 全部 text 按序累积）
             _roundSummaryUserBuf.Clear();
             _roundSummaryTextBuf.Clear();
@@ -2778,6 +2790,11 @@ namespace CH4
                 {
                     // 内置工具会话内直执——不需 OA（R0.2 分层：Note 状态在会话实例；time/random/info 宿主直执）
                     dog.Result = ExecuteBuiltin(dog.Name, dog.ArgsJson);
+                    if (string.Equals(dog.Result, SleepSuspendMark, StringComparison.Ordinal))
+                    {
+                        // sleep 同轮等待——工具单保持未闭合，由 PumpSleepWait 帧推进到点补结果
+                        continue;
+                    }
                     dog.IsClosed = true;
                     dog.ClosedAtMs = ViewTimestamp();
                     continue;
@@ -2882,11 +2899,59 @@ namespace CH4
             }
         }
         /// <summary>
+        /// sleep 同轮等待推进——每帧检查到点即闭合工具单（帧计数口径，100ms/帧，不引入真实时钟）。
+        /// 批等待上限先到时按诚实 ERR 收口——挂起标记不得泄给 LLM。
+        /// </summary>
+        private void PumpSleepWait()
+        {
+            if (_sleepDueFrame < 0)
+            {
+                return;
+            }
+            if (_batchIndex < 0 || _batchIndex >= _batches.Count)
+            {
+                return;
+            }
+            bool due = _phaseFrames >= _sleepDueFrame;
+            bool batchOver = _phaseFrames >= ToolBatchWaitFrames;
+            if (!due && !batchOver)
+            {
+                return;
+            }
+            List<ToolOrderDog> batch = _batches[_batchIndex];
+            long waited = _phaseFrames;
+            string result = _sleepReply;
+            if (!due)
+            {
+                result = "ERR|SLEEP_TIMEOUT|sleep 等待未到点即遇工具批超时（已等 " + waited.ToString() + " 帧 / 需要 " + _sleepDueFrame.ToString() + " 帧）";
+            }
+            _sleepDueFrame = -1;
+            _sleepReply = "";
+            for (int i = 0; i < batch.Count; i = i + 1)
+            {
+                ToolOrderDog dog = batch[i];
+                if (dog.IsClosed || dog.IsTimedOut)
+                {
+                    continue;
+                }
+                if (!string.Equals(dog.Name, "sleep", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                dog.Result = result;
+                dog.IsClosed = true;
+                dog.ClosedAtMs = ViewTimestamp();
+                FlushToolCard(dog);
+                return;
+            }
+        }
+        /// <summary>
         /// ToolBatchRunning 相位推进——逐 Dog 帧轮询；allDone 或帧超限 → ToolBatchDone 动作段（host-* 延迟直执 → 收集回执 → 续轮/收敛）。
         /// </summary>
         private void PumpToolBatch()
         {
             _phaseFrames = _phaseFrames + 1;
+            PumpSleepWait();
             bool allDone = true;
             // A127——只轮询当前批：未启动批次的工具单尚未 Post，Tick 会即时判超时（结构性错误）
             if (_batchIndex >= 0 && _batchIndex < _batches.Count)
@@ -3139,11 +3204,12 @@ namespace CH4
             {
                 return;
             }
-            // 解析 group:<组名>:<seq>:<类型>——非法形态出声，不静默跳过（组名清洗不含冒号）
+            // 解析 group:<组名>:<seq>:<类型>[:<回执通知目标>]——非法形态出声，不静默跳过（组名清洗不含冒号）
             string[] parts = origin.Split(':');
-            if (parts.Length != 4 || !string.Equals(parts[0], "group", StringComparison.Ordinal))
+            bool legal = parts.Length == 4 || parts.Length == 5;
+            if (!legal || !string.Equals(parts[0], "group", StringComparison.Ordinal))
             {
-                LogStore.Add("CatHome4", 2, "origin 形态非法（非 group 四段）: cat=" + _catKey + " | origin=" + origin, "GROUP");
+                LogStore.Add("CatHome4", 2, "origin 形态非法（非 group 四段/五段）: cat=" + _catKey + " | origin=" + origin, "GROUP");
                 return;
             }
             if (!string.Equals(parts[3], "delegation", StringComparison.Ordinal))
@@ -3156,6 +3222,17 @@ namespace CH4
             {
                 LogStore.Add("CatHome4", 2, "组回执未写入: cat=" + _catKey + " | " + result, "GROUP");
             }
+            // 方案丙——派单方显式要求回执（origin 第五段 = 派单方 key）→ 宿主投递回它；未接线出声不静默
+            if (parts.Length != 5 || parts[4].Length == 0)
+            {
+                return;
+            }
+            if (GroupReceiptNotifier == null)
+            {
+                LogStore.Add("CatHome4", 2, "组回执通知未接线（GroupReceiptNotifier 为空）: cat=" + _catKey + " | 目标 " + parts[4], "GROUP");
+                return;
+            }
+            GroupReceiptNotifier(parts[1], parts[4], parts[2], text);
         }
         /// <summary>
         /// RoundSummary 前段提示词——按猫身份生成的第一人称视角（向用户交代，不做第三方总结）。
