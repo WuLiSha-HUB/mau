@@ -342,12 +342,19 @@ describe('端点角色标签（apirole.js）', () => {
 // ── ⑥ 思考强度标签 ───────────────────────────
 describe('思考强度标签（effort.js）', () => {
     it('读端点渲染——本猫覆盖态加 override 类', async () => {
-        mockEndpoints({ '/api/v1/effort': { effort: 'max', global: 'high' } });
+        mockEndpoints({ '/api/v1/effort': { effort: 'max', global: 'low' } });
         window.effortRefresh();
         await flushMicro();
         const node = document.getElementById('chatEffort');
         expect(node.textContent).toBe('思考 max');
         expect(node.className).toContain('override');
+    });
+
+    it('覆盖档恰等于全局值——标签标注「· 跟随全局」（等效标注，非一档）', async () => {
+        mockEndpoints({ '/api/v1/effort': { effort: 'low', global: 'low' } });
+        window.effortRefresh();
+        await flushMicro();
+        expect(document.getElementById('chatEffort').textContent).toBe('思考 low · 跟随全局');
     });
 
     it('空覆盖——显示跟随全局并带全局值（无 override 类）', async () => {
@@ -373,30 +380,43 @@ describe('思考强度标签（effort.js）', () => {
         const posts = calls.filter((c) => c.opt && c.opt.method === 'POST');
         expect(posts.length).toBe(1);
         expect(posts[0].url).toContain('/api/v1/effort');
-        // 三档循环 low → high → max（跟随全局不在常驻序里）
+        // 三档纯轮换 low → high → max（跟随全局不占一站）
         expect(JSON.parse(posts[0].opt.body).value).toBe('high');
         // 写后重读真源（GET 至少一次）
         expect(calls.filter((c) => !c.opt || c.opt.method !== 'POST').length).toBeGreaterThan(0);
     });
 
-    it('当前档与全局值恰好相同时——循环首位插入「跟随全局」（空串）', async () => {
+    it('纯三档轮换——覆盖档恰等于全局值时下一档仍是 high（不插入跟随态）', async () => {
         const calls = [];
         globalThis.fetch = async (url, opt) => {
             calls.push({ url: String(url), opt: opt });
             if (opt && opt.method === 'POST') {
                 return { json: async () => ({ ok: true, effort: JSON.parse(opt.body).value }) };
             }
-            return { json: async () => ({ effort: 'high', global: 'high' }) };
+            return { json: async () => ({ effort: 'low', global: 'low' }) };
         };
         document.getElementById('chatEffort').click();
         await flushMicro();
         const posts = calls.filter((c) => c.opt && c.opt.method === 'POST');
-        expect(posts.length).toBe(1);
-        // 覆盖档 == 全局值 → 首位插入跟随全局 → 切到空串
-        expect(JSON.parse(posts[0].opt.body).value).toBe('');
+        expect(JSON.parse(posts[0].opt.body).value).toBe('high');
     });
 
-    it('跟随全局态——点击切到 low（不回插入跟随态）', async () => {
+    it('纯三档轮换——max 后回到 low（成环不卡）', async () => {
+        const calls = [];
+        globalThis.fetch = async (url, opt) => {
+            calls.push({ url: String(url), opt: opt });
+            if (opt && opt.method === 'POST') {
+                return { json: async () => ({ ok: true, effort: JSON.parse(opt.body).value }) };
+            }
+            return { json: async () => ({ effort: 'max', global: 'low' }) };
+        };
+        document.getElementById('chatEffort').click();
+        await flushMicro();
+        const posts = calls.filter((c) => c.opt && c.opt.method === 'POST');
+        expect(JSON.parse(posts[0].opt.body).value).toBe('low');
+    });
+
+    it('跟随全局态——点击从 low 起步（纯三档序首档）', async () => {
         const calls = [];
         globalThis.fetch = async (url, opt) => {
             calls.push({ url: String(url), opt: opt });

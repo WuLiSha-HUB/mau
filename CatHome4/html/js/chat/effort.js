@@ -7,21 +7,26 @@
 // 形态：DOM 槽位在 chat.html 顶栏（#chatEffort），样式 chat.css「思考强度标签」段；本件零新增结构
 // 边界：档位真源在后端（cat.cfg reasoningEffort）——前端只渲染与投递，不本地推断；写后重读核对
 // 失败面：读取失败回落占位并出声（不静默显示假值）；写入失败出声（不静默翻转）
-// 循环口径（2026-11-04 · Rushiera 定）：三档循环 low → high → max（取消「跟随全局」常驻首选）；
-//   「跟随全局」只在当前覆盖档与全局值恰好相同时插入循环——此时两者等效，多一档可显式回到跟随态。
+// 循环口径（2026-11-04 · Rushiera 定·二次修订）：纯三档轮换 low → high → max → low；
+//   「跟随全局」**不是一档**——它是标签上的一个标注：当前覆盖档恰好等于全局设置时，
+//   标签在档位后标「· 跟随全局」（两者等效）；空覆盖档（真跟随态）显示「跟随全局(<全局值>)」。
+//   全局设置很少改，所以无需把跟随态做成循环里的一站。
 // ═══════════════════════════════════════════
 
-/// 三档循环序——覆盖档位集合（跟随全局不在其中；仅条件插入）
+/// 三档循环序——覆盖档位集合（跟随全局不占一站）
 var EFFORT_STEPS = ['low', 'high', 'max'];
 
-/// 标签文本——`思考 <档位>`；空档显示「跟随全局(<全局值>)」；非法 / 读取失败回落占位
+/// 标签文本——`思考 <档位>`；覆盖档恰等于全局设置时标「· 跟随全局」（等效标注）；空覆盖档显示「跟随全局(<全局值>)」
 function effortText(d) {
     if (!d || typeof d.effort !== 'string') {
         return '';
     }
+    var g = (typeof d.global === 'string' && d.global.length > 0) ? d.global : '';
     if (d.effort.length === 0) {
-        var g = (typeof d.global === 'string' && d.global.length > 0) ? d.global : 'high';
-        return '思考 跟随全局(' + g + ')';
+        return '思考 跟随全局(' + (g.length > 0 ? g : 'high') + ')';
+    }
+    if (g.length > 0 && d.effort === g) {
+        return '思考 ' + d.effort + ' · 跟随全局';
     }
     return '思考 ' + d.effort;
 }
@@ -52,19 +57,12 @@ function effortRefresh() {
         });
 }
 
-/// 循环档序——三档常驻；当前覆盖档与全局值恰好相同时，**紧接当前档之后**插入「跟随全局」（空串 = 跟随态）
+/// 循环档序——纯三档 low → high → max（跟随全局不占一站，仅作标签标注）
 function effortCycleList(d) {
-    var list = EFFORT_STEPS.slice();
-    var eff = (d && typeof d.effort === 'string') ? d.effort : '';
-    var g = (d && typeof d.global === 'string') ? d.global : '';
-    if (eff.length > 0 && g.length > 0 && eff === g) {
-        var idx = list.indexOf(eff);
-        list.splice(idx >= 0 ? idx + 1 : 0, 0, '');
-    }
-    return list;
+    return EFFORT_STEPS.slice();
 }
 
-/// 循环取下一档——当前档不在序中（跟随全局态 / 读取失败）按首项起步
+/// 循环取下一档——纯三档轮换（空覆盖档从 low 起步）
 function effortNext(d) {
     var list = effortCycleList(d);
     var eff = (d && typeof d.effort === 'string') ? d.effort : '';

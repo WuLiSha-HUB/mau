@@ -58,15 +58,14 @@ namespace CatHome4.Admin
             {
                 return JsonUtil.Serialize(new { ok = false, error = "模型清单探取失败（上游无响应或格式不符）" });
             }
-            List<string> sorted = new List<string>(models);
-            sorted.Sort(StringComparer.OrdinalIgnoreCase);
+            // 排序口径（2026-11-04 · Rushiera 定）：**不排序**——沿用上游 GET /models 返回顺序（端点自己的排列即用户预期）
             return JsonUtil.Serialize(new
             {
                 ok = true,
                 apiConfigId = id.ToString("D"),
                 endpointName = config.DisplayName,
                 current = config.DefaultModel,
-                models = sorted
+                models = models
             });
         }
 

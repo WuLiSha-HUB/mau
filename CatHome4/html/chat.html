@@ -13,8 +13,8 @@
         <span class="sid" id="chatTitle">—</span>
         <span id="chatInfo">—</span>
         <span style="flex:1"></span>
-        <!-- 思考强度标签（js/chat/effort.js）——本猫 reasoningEffort 覆盖；点击循环 low → high → max（当前档恰与全局值相同时，循环首位插入「跟随全局」） -->
-        <span id="chatEffort" title="思考强度——点击循环：low → high → max（当前档与全局值恰好相同时，循环含「跟随全局」）">思考 —</span>
+        <!-- 思考强度标签（js/chat/effort.js）——本猫 reasoningEffort 覆盖；点击纯三档轮换 low → high → max → low（覆盖档恰等于全局设置时，标签标「· 跟随全局」） -->
+        <span id="chatEffort" title="思考强度——点击轮换：low → high → max → low；覆盖档与全局设置相同时标签标「· 跟随全局」">思考 —</span>
         <!-- 端点角色标签（js/chat/apirole.js）——左 80% 点击对调主要 / 备用；右 20%（括号右侧小三角）展开模型下拉（单选；仅本会话页有效） -->
         <span id="chatApiRole" title="当前生效端点——左段点击对调主要 / 备用；右段小三角展开模型下拉（仅本会话页有效，不改设置）"><span class="apirole-main">API —</span><span class="apirole-caret" title="模型下拉（仅本会话页有效）">▾</span></span>
         <span id="uiVer" data-version title="前端版本——每次 Vitest 自动递增 + 最后更新时间">UI v?</span>
