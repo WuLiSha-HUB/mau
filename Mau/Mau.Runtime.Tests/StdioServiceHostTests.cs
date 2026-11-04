@@ -56,11 +56,16 @@ namespace Mau.Runtime.Tests
         [Fact]
         public void InvokeLateReplyIsNotTakenAsNextReply()
         {
-            StdioServiceHost host = NewHost(400);
+            // 超时窗口放宽到 3 s——ready 握手 + 慢回执都要在窗口内可控（400 ms 在并行跑测下
+            // 连 node 冷启动都撑不住，会把「启动超时」误判成「迟到回执」用例）。
+            StdioServiceHost host = NewHost(3000);
             try
             {
-                string first = host.Invoke("{\"id\":\"1\",\"op\":\"slow\",\"delayMs\":500}");
+                // 慢回执延迟 3400 ms > 超时窗口 3000 ms → 首次调用必走 TIMEOUT 分支
+                string first = host.Invoke("{\"id\":\"1\",\"op\":\"slow\",\"delayMs\":3400}");
                 Assert.Contains("TIMEOUT", first);
+                // 第二次调用：桩以 setTimeout 延迟回执（不阻塞事件循环）→ id=2 立即可回；
+                // id=1 的迟到回执若在读取窗口内到达，其 id 不符 → 必须被丢弃（不得当成本次结果）
                 string second = host.Invoke("{\"id\":\"2\",\"op\":\"echo\"}");
                 Assert.Contains("\"id\":\"2\"", second);
             }

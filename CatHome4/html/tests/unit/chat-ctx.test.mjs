@@ -25,6 +25,10 @@ beforeEach(() => {
     window.ctxKeyData = null;
     window.ctxFullData = null;
     window.ctxMode = 'list';
+    // 页面级临时模型——每个用例重置（页载归位语义的单测基线）
+    window.apiModelPick = '';
+    window.apiModelDirty = false;
+    window.apiModelSynced = '';
     const info = document.getElementById('chatInfo');
     if (info) {
         info.textContent = '';
@@ -205,33 +209,85 @@ describe('前文弹层——失败可见', () => {
 
 // ── ⑤ 端点角色标签 ───────────────────────────
 describe('端点角色标签（apirole.js）', () => {
-    it('读端点渲染角色与模型名，备用态加 backup 类', async () => {
+    it('读端点渲染端点名与模型名（API:端点名[模型]），备用态加 backup 类', async () => {
         const calls = mockEndpoints({
-            '/api/v1/api-role': { role: '备用', primary: 'deepseek-v4.1', backup: 'glm-4.6' }
+            '/api/v1/api-role': { role: '备用', primary: 'deepseek-v4.1', backup: 'glm-4.6', primaryName: '主端点', backupName: '备端点', activeName: '备端点', activeModel: 'glm-4.6', override: '' }
         });
         window.apiRoleRefresh();
         await flushMicro();
         const node = document.getElementById('chatApiRole');
         expect(calls[0].url).toContain('/api/v1/api-role');
-        expect(node.textContent).toBe('API 备用[glm-4.6]');
+        expect(node.querySelector('.apirole-main').textContent).toBe('API:备端点[glm-4.6]');
         expect(node.className).toContain('backup');
     });
 
-    it('主要态不带 backup 类；模型名缺失回落占位', async () => {
-        mockEndpoints({ '/api/v1/api-role': { role: '主要', primary: '', backup: '' } });
+    it('临时模型覆盖生效时——标签显示覆盖后的模型名', async () => {
+        mockEndpoints({
+            '/api/v1/api-role': { role: '主要', primary: 'deepseek-v4.1', backup: 'glm-4.6', primaryName: '主端点', backupName: '备端点', activeName: '主端点', activeModel: 'deepseek-v4.1', override: 'my-temp-model' }
+        });
+        window.apiModelPick = 'my-temp-model';
         window.apiRoleRefresh();
         await flushMicro();
         const node = document.getElementById('chatApiRole');
-        expect(node.textContent).toBe('API 主要[未配置]');
+        expect(node.querySelector('.apirole-main').textContent).toBe('API:主端点[my-temp-model]');
+    });
+
+    it('页载归位——清页面内存态与后端覆盖（关页再打开回默认）', async () => {
+        const calls = mockEndpoints({
+            '/api/v1/api-role': { role: '主要', activeName: '主端点', activeModel: 'deepseek-v4.1', override: '' },
+            '/api/v1/api-model': { ok: true, model: '' }
+        });
+        window.apiModelPick = 'stale-model';
+        window.apiModelResetOnLoad();
+        await flushMicro();
+        expect(window.apiModelPick).toBe('');
+        const posts = calls.filter((c) => c.url.indexOf('/api/v1/api-model') >= 0);
+        expect(posts.length).toBe(1);
+        expect(JSON.parse(posts[0].opt.body).model).toBe('');
+    });
+
+    it('发送前同步——脏标记为真时补投（不一致才写后端）', async () => {
+        const calls = mockEndpoints({
+            '/api/v1/api-role': { role: '主要', activeName: '主端点', activeModel: 'deepseek-v4.1', override: '' },
+            '/api/v1/api-model': { ok: true, model: 'glm-4.6' }
+        });
+        window.apiModelPick = 'glm-4.6';
+        window.apiModelDirty = true;
+        await window.apiModelSync();
+        const posts = calls.filter((c) => c.url.indexOf('/api/v1/api-model') >= 0);
+        expect(posts.length).toBe(1);
+        expect(JSON.parse(posts[0].opt.body).model).toBe('glm-4.6');
+        // 同步成功后脏标记清零 → 再同步零请求
+        await window.apiModelSync();
+        expect(calls.filter((c) => c.url.indexOf('/api/v1/api-model') >= 0).length).toBe(1);
+    });
+
+    it('发送前同步——无脏标记时零请求（发送路径不额外打接口）', async () => {
+        const calls = mockEndpoints({
+            '/api/v1/api-role': { role: '主要', activeName: '主端点', activeModel: 'deepseek-v4.1', override: '' },
+            '/api/v1/api-model': { ok: true, model: '' }
+        });
+        window.apiModelPick = 'glm-4.6';
+        window.apiModelDirty = false;
+        await window.apiModelSync();
+        expect(calls.length).toBe(0);
+    });
+
+    it('端点名缺失回落占位', async () => {
+        mockEndpoints({ '/api/v1/api-role': { role: '主要', primary: '', backup: '', activeName: '', activeModel: '' } });
+        window.apiRoleRefresh();
+        await flushMicro();
+        const node = document.getElementById('chatApiRole');
+        expect(node.querySelector('.apirole-main').textContent).toBe('API:未配置[未配置]');
         expect(node.className).not.toContain('backup');
     });
 
-    it('点击投递 toggle 后重读端点（真源在后端，不本地翻转）', async () => {
+    it('左段点击投递 toggle 后重读端点（真源在后端，不本地翻转）', async () => {
         const calls = mockEndpoints({
-            '/api/v1/api-role': { role: '主要', primary: 'deepseek-v4.1', backup: 'glm-4.6' },
+            '/api/v1/api-role': { role: '主要', primary: 'deepseek-v4.1', backup: 'glm-4.6', activeName: '主端点', activeModel: 'deepseek-v4.1' },
             '/api/v1/api-role/toggle': { ok: true, role: '备用' }
         });
-        document.getElementById('chatApiRole').click();
+        document.getElementById('chatApiRole').querySelector('.apirole-main').click();
         await flushMicro();
         const toggle = calls.filter((c) => c.url.indexOf('/toggle') >= 0);
         expect(toggle.length).toBe(1);
@@ -239,11 +295,47 @@ describe('端点角色标签（apirole.js）', () => {
         expect(calls.filter((c) => c.url.indexOf('/toggle') < 0).length).toBeGreaterThan(0);
     });
 
+    it('右段小三角展开模型下拉——清单来自 api-models，单选写入 api-model', async () => {
+        const calls = mockEndpoints({
+            '/api/v1/api-role': { role: '主要', activeName: '主端点', activeModel: 'deepseek-v4.1' },
+            '/api/v1/api-models': { ok: true, endpointName: '主端点', current: 'deepseek-v4.1', models: ['deepseek-v4.1', 'glm-4.6'] },
+            '/api/v1/api-model': { ok: true, model: 'glm-4.6' }
+        });
+        document.getElementById('chatApiRole').querySelector('.apirole-caret').click();
+        await flushMicro();
+        const panel = document.getElementById('apiModelsPanel');
+        expect(panel).not.toBeNull();
+        expect(panel.style.display).toBe('block');
+        const radios = panel.querySelectorAll('input[type=radio]');
+        // 「跟随端点默认」+ 两个模型
+        expect(radios.length).toBe(3);
+        // 选第二个模型 → 投递会话级临时模型（不回写端点配置）
+        radios[2].checked = true;
+        radios[2].dispatchEvent(new Event('change'));
+        await flushMicro();
+        const posts = calls.filter((c) => c.url.indexOf('/api/v1/api-model') >= 0 && c.url.indexOf('/api/v1/api-models') < 0);
+        expect(posts.length).toBe(1);
+        expect(JSON.parse(posts[0].opt.body).model).toBe('glm-4.6');
+        window.apiModelsClose();
+    });
+
+    it('模型清单失败——下拉内出声给原因（不静默空列表）', async () => {
+        mockEndpoints({
+            '/api/v1/api-role': { role: '主要', activeName: '主端点', activeModel: 'x' },
+            '/api/v1/api-models': { ok: false, error: '上游无响应' }
+        });
+        document.getElementById('chatApiRole').querySelector('.apirole-caret').click();
+        await flushMicro();
+        const panel = document.getElementById('apiModelsPanel');
+        expect(panel.textContent).toContain('上游无响应');
+        window.apiModelsClose();
+    });
+
     it('读取失败回落占位并出声（不显示假值）', async () => {
         globalThis.fetch = async () => { throw new Error('端点不可达'); };
         window.apiRoleRefresh();
         await flushMicro();
-        expect(document.getElementById('chatApiRole').textContent).toBe('API —');
+        expect(document.getElementById('chatApiRole').querySelector('.apirole-main').textContent).toBe('API —');
     });
 });
 
@@ -281,10 +373,42 @@ describe('思考强度标签（effort.js）', () => {
         const posts = calls.filter((c) => c.opt && c.opt.method === 'POST');
         expect(posts.length).toBe(1);
         expect(posts[0].url).toContain('/api/v1/effort');
-        // low 的下一档 = high（循环序 空 → low → high → max）
+        // 三档循环 low → high → max（跟随全局不在常驻序里）
         expect(JSON.parse(posts[0].opt.body).value).toBe('high');
         // 写后重读真源（GET 至少一次）
         expect(calls.filter((c) => !c.opt || c.opt.method !== 'POST').length).toBeGreaterThan(0);
+    });
+
+    it('当前档与全局值恰好相同时——循环首位插入「跟随全局」（空串）', async () => {
+        const calls = [];
+        globalThis.fetch = async (url, opt) => {
+            calls.push({ url: String(url), opt: opt });
+            if (opt && opt.method === 'POST') {
+                return { json: async () => ({ ok: true, effort: JSON.parse(opt.body).value }) };
+            }
+            return { json: async () => ({ effort: 'high', global: 'high' }) };
+        };
+        document.getElementById('chatEffort').click();
+        await flushMicro();
+        const posts = calls.filter((c) => c.opt && c.opt.method === 'POST');
+        expect(posts.length).toBe(1);
+        // 覆盖档 == 全局值 → 首位插入跟随全局 → 切到空串
+        expect(JSON.parse(posts[0].opt.body).value).toBe('');
+    });
+
+    it('跟随全局态——点击切到 low（不回插入跟随态）', async () => {
+        const calls = [];
+        globalThis.fetch = async (url, opt) => {
+            calls.push({ url: String(url), opt: opt });
+            if (opt && opt.method === 'POST') {
+                return { json: async () => ({ ok: true, effort: JSON.parse(opt.body).value }) };
+            }
+            return { json: async () => ({ effort: '', global: 'low' }) };
+        };
+        document.getElementById('chatEffort').click();
+        await flushMicro();
+        const posts = calls.filter((c) => c.opt && c.opt.method === 'POST');
+        expect(JSON.parse(posts[0].opt.body).value).toBe('low');
     });
 
     it('读取失败回落占位（不显示假值）', async () => {

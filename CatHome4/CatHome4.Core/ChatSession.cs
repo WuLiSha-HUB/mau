@@ -420,6 +420,12 @@ namespace CH4
         /// </summary>
         private Guid _apiConfigId;
 
+        /// <summary>
+        /// 会话级模型覆盖——对话页临时选择（非空=本次请求用该模型；不回写端点配置）。
+        /// 空串=跟随端点默认模型。换 Runtime 时重新施加（catcfg.apply 不丢选择）。
+        /// </summary>
+        private string _modelOverride = "";
+
         /// <summary>OA 工单平台——Dog Post/轮询</summary>
         private readonly OA _oa;
 
@@ -528,8 +534,10 @@ namespace CH4
             return "主要";
         }
         /// <summary>
-        /// 端点角色信息 JSON——外观层 [API 主要[模型]｜备用[模型]] 标签数据源。
-        /// 结构：{"role":"主要|备用","primary":"主要站模型名","backup":"备用站模型名"}；
+        /// 端点角色信息 JSON——外观层 [API:端点名[模型]] 标签数据源。
+        /// 结构：{"role":"主要|备用","primary":"主要站模型名","backup":"备用站模型名",
+        ///        "primaryName":"主要站端点名","backupName":"备用站端点名",
+        ///        "activeName":"当前生效端点名","activeModel":"当前生效模型名","override":"会话级临时模型（空=跟随端点默认）"}；
         /// 池未绑定 / 无备用端点时对应字段为空串（前端回落占位符——不静默显示假值）。
         /// </summary>
         /// <returns>端点角色信息 JSON</returns>
@@ -538,6 +546,8 @@ namespace CH4
             string role = GetApiRoleText();
             string primaryModel = "";
             string backupModel = "";
+            string primaryName = "";
+            string backupName = "";
             CH_LlmApiConfigStore store = null;
             if (DataBox.TryResolve<CH_LlmApiConfigStore>(out store) && store != null)
             {
@@ -545,14 +555,59 @@ namespace CH4
                 if (primary != null)
                 {
                     primaryModel = primary.DefaultModel;
+                    primaryName = primary.DisplayName;
                 }
                 CH_LlmApiConfig backup = store.ResolveBackup();
                 if (backup != null)
                 {
                     backupModel = backup.DefaultModel;
+                    backupName = backup.DisplayName;
                 }
             }
-            return JsonUtil.Object(("role", role), ("primary", primaryModel), ("backup", backupModel));
+            bool useBackup = (role == "备用");
+            string activeName = useBackup ? backupName : primaryName;
+            string activeModel = useBackup ? backupModel : primaryModel;
+            if (_modelOverride.Length > 0)
+            {
+                activeModel = _modelOverride;
+            }
+            return JsonUtil.Object(("role", role), ("primary", primaryModel), ("backup", backupModel),
+                ("primaryName", primaryName), ("backupName", backupName),
+                ("activeName", activeName), ("activeModel", activeModel), ("override", _modelOverride));
+        }
+        /// <summary>
+        /// 当前生效端点的配置身份——模型清单探针的目标站（角色决定：备用态走备用站）。
+        /// </summary>
+        /// <returns>配置身份；未命中 Guid.Empty</returns>
+        public Guid GetEffectiveApiConfigId()
+        {
+            CH_LlmApiConfigStore store = null;
+            if (!DataBox.TryResolve<CH_LlmApiConfigStore>(out store) || store == null)
+            {
+                return Guid.Empty;
+            }
+            CH_LlmApiConfig config = (_apiRole != null && _apiRole.EffectiveUseBackup()) ? store.ResolveBackup() : ResolvePrimaryConfig(store);
+            if (config == null)
+            {
+                return Guid.Empty;
+            }
+            return config.ApiConfigId;
+        }
+        /// <summary>
+        /// 会话级模型覆盖写入——对话页临时选择（非空=用该模型；空串=跟随端点默认模型）。
+        /// 不回写端点配置（端点池的 defaultModel 不动）；仅本会话有效。
+        /// </summary>
+        /// <param name="model">模型名（空串=清空覆盖）</param>
+        /// <returns>覆盖后的模型名</returns>
+        public string SetModelOverride(string model)
+        {
+            string value = model == null ? "" : model.Trim();
+            _modelOverride = value;
+            if (_llmRuntime != null)
+            {
+                _llmRuntime.ModelOverride = value;
+            }
+            return value;
         }
         /// <summary>
         /// 解析主要站配置——猫绑定身份（Guid.Empty=默认端点语义），不受会话角色影响（故障转移的对照站）。
@@ -1220,11 +1275,16 @@ namespace CH4
 
         /// <summary>
         /// 换 LLM 运行时——apiConfigId 切换立即生效（M3：API 配置切换即时；主线程 Idle 时调用）。
+        /// 会话级模型覆盖重新施加（换 Runtime 不丢对话页的临时模型选择）。
         /// </summary>
         /// <param name="runtime">新运行时实例（按新 API 配置构造）</param>
         public void SwapLlmRuntime(ILlmRuntime runtime)
         {
             _llmRuntime = runtime;
+            if (runtime != null && _modelOverride.Length > 0)
+            {
+                runtime.ModelOverride = _modelOverride;
+            }
         }
 
         /// <summary>会话空闲——AllIdle 判定面</summary>

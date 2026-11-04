@@ -230,6 +230,37 @@ h2 { font-size: var(--ch-fs-strong); color: var(--ch-title); margin: 10px 12px 6
 .input-mini.text { color: var(--ch-fg-strong); }
 .input-mini.ro { color: var(--ch-fg-muted); background: var(--ch-bg-hover); cursor: not-allowed; }
 
+/* ── 多猫表窄屏适配（2026-11-04 · Rushiera 定）——一猫两行 ──
+   动机：单行 9 列在窄屏被挤（状态名折行 / 白名单换行 / 最右「操作」列被切）。
+   口径：宽屏仍是单行表格；窄屏（≤1360px）一只猫拆两行——上行=主信息（状态 / 名称 / API / 思考强度），
+   下行=次要信息（白名单 / 工具 / 前文 / 端口 / 操作）。表头隐藏，格内标签走 data-label 伪元素。 */
+@media (max-width: 1360px) {
+    #catsTable { display: block; width: 100%; }
+    #catsTable thead { display: none; }
+    #catsTable tbody { display: block; }
+    #catsTable tbody tr[data-cat] { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 2px 8px; padding: 8px; margin-bottom: 8px; border: 1px solid var(--ch-line); border-radius: 6px; background: var(--ch-bg-panel); }
+    #catsTable tbody tr.cat-group-row { display: block; padding: 0; border: none; background: transparent; }
+    #catsTable tbody tr[data-cat] td { display: block; border: none; padding: 1px 0; word-break: break-word; }
+    /* 上行——主信息 */
+    #catsTable tbody tr[data-cat] td:nth-child(1) { grid-column: span 2; grid-row: 1; }
+    #catsTable tbody tr[data-cat] td:nth-child(2) { grid-column: span 1; grid-row: 1; }
+    #catsTable tbody tr[data-cat] td:nth-child(3) { grid-column: span 1; grid-row: 1; }
+    #catsTable tbody tr[data-cat] td:nth-child(4) { grid-column: span 2; grid-row: 1; }
+    /* 下行——次要信息 */
+    #catsTable tbody tr[data-cat] td:nth-child(5) { grid-column: span 2; grid-row: 2; }
+    #catsTable tbody tr[data-cat] td:nth-child(6) { grid-column: span 1; grid-row: 2; }
+    #catsTable tbody tr[data-cat] td:nth-child(7) { grid-column: span 1; grid-row: 2; }
+    #catsTable tbody tr[data-cat] td:nth-child(8) { grid-column: span 1; grid-row: 2; }
+    #catsTable tbody tr[data-cat] td:nth-child(9) { grid-column: span 1; grid-row: 2; }
+    /* 格内标签（伪元素——文本不进 DOM，textContent 不受影响） */
+    #catsTable tbody tr[data-cat] td[data-label]::before { content: attr(data-label) '：'; color: var(--ch-fg-faint); font-size: var(--ch-fs-tag); }
+    /* 状态格不加标签（自带徽标与参数行）；工具 / 前文 / 端口 / 操作紧凑排布 */
+    #catsTable tbody tr[data-cat] td:nth-child(6),
+    #catsTable tbody tr[data-cat] td:nth-child(7),
+    #catsTable tbody tr[data-cat] td:nth-child(8) { display: flex; align-items: center; gap: 4px; }
+    #catsTable tbody tr[data-cat] td:nth-child(9) { white-space: normal; }
+}
+
 /* ── API 池默认 / 备用列（2026-10-01 默认列轮——紫星=当前默认 / 灰星=非默认；备用轮——绿菱=当前备用）── */
 .api-star-on { color: var(--ch-identity); }
 .api-star-off { color: var(--ch-fg-weak); }

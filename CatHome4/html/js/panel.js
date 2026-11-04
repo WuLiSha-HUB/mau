@@ -257,6 +257,7 @@ function renderCatRow(cat) {
 
     // [列2] LLM API——下拉直改（首项「默认 · 跟随全局」= 零值语义）
     var tdApi = document.createElement('td');
+    tdApi.setAttribute('data-label', 'LLM API');
     var apiSel = document.createElement('select');
     apiSel.className = 'input-mini';
     apiSel.style.width = '100%';
@@ -279,6 +280,7 @@ function renderCatRow(cat) {
 
     // [列3] 思考强度——下拉直改（首项「跟随全局」= 零值语义：空 → 后端回落全局 llm.reasoning_effort；本猫覆盖，实时生效）
     var tdEffort = document.createElement('td');
+    tdEffort.setAttribute('data-label', '思考强度');
     var effortSel = document.createElement('select');
     effortSel.className = 'input-mini';
     effortSel.style.width = '100%';
@@ -296,6 +298,7 @@ function renderCatRow(cat) {
 
     // [列5] 目录白名单——显示无权目录 + 设置入口（专用弹层）
     var tdRoots = document.createElement('td');
+    tdRoots.setAttribute('data-label', '目录白名单');
     var denied = collectDeniedRoots(cat);
     var deniedSpan = document.createElement('span');
     deniedSpan.style.fontSize = 'var(--ch-fs-tag)';
@@ -335,9 +338,11 @@ function renderCatRow(cat) {
     tr.appendChild(tdInject);
 
     var tdPort = document.createElement('td');
+    tdPort.setAttribute('data-label', '端口');
     tdPort.textContent = cat.running ? (':' + cat.port) : '-';
     tr.appendChild(tdPort);
     var tdOp = document.createElement('td');
+    tdOp.setAttribute('data-label', '操作');
     tdOp.style.whiteSpace = 'nowrap';
     if (cat.running) {
         var openBtn = document.createElement('button');

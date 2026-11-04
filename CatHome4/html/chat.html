@@ -13,10 +13,10 @@
         <span class="sid" id="chatTitle">—</span>
         <span id="chatInfo">—</span>
         <span style="flex:1"></span>
-        <!-- 思考强度标签（js/chat/effort.js）——本猫 reasoningEffort 覆盖；点击循环 跟随全局 → low → high → max（写盘即生效） -->
-        <span id="chatEffort" title="思考强度——点击循环：跟随全局 → low → high → max（本猫覆盖，实时生效）">思考 —</span>
-        <!-- 端点角色标签（js/chat/apirole.js）——只显当前生效站模型名；点击手动对调（仅本会话有效） -->
-        <span id="chatApiRole" title="当前生效端点——点击对调主要 / 备用（仅本会话有效）">API —</span>
+        <!-- 思考强度标签（js/chat/effort.js）——本猫 reasoningEffort 覆盖；点击循环 low → high → max（当前档恰与全局值相同时，循环首位插入「跟随全局」） -->
+        <span id="chatEffort" title="思考强度——点击循环：low → high → max（当前档与全局值恰好相同时，循环含「跟随全局」）">思考 —</span>
+        <!-- 端点角色标签（js/chat/apirole.js）——左 80% 点击对调主要 / 备用；右 20%（括号右侧小三角）展开模型下拉（单选；仅本会话页有效） -->
+        <span id="chatApiRole" title="当前生效端点——左段点击对调主要 / 备用；右段小三角展开模型下拉（仅本会话页有效，不改设置）"><span class="apirole-main">API —</span><span class="apirole-caret" title="模型下拉（仅本会话页有效）">▾</span></span>
         <span id="uiVer" data-version title="前端版本——每次 Vitest 自动递增 + 最后更新时间">UI v?</span>
         <button id="chatNew" title="新会话（session.new——清前文并重新注入）">新会话</button>
         <button id="chatRefresh" title="刷新——重建界面气泡（纯前端）">刷新</button>

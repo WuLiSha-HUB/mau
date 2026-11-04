@@ -67,6 +67,12 @@ namespace CatHome4.Http
         /// <summary>端点角色手动对调回调（可空=不注册该端点）——POST /api/v1/api-role/toggle（仅本会话有效）</summary>
         public Func<string> ApiRoleToggler { get; set; }
 
+        /// <summary>模型清单回调（可空=不注册该端点）——GET /api/v1/api-models（对话页模型下拉数据源；上游实时探得）</summary>
+        public Func<Task<string>> ApiModelsBuilder { get; set; }
+
+        /// <summary>会话级临时模型写入回调（可空=不注册该端点）——POST /api/v1/api-model（仅会话页有效，不回写端点配置）</summary>
+        public Func<string, string> ApiModelSetter { get; set; }
+
         /// <summary>思考强度读取回调（可空=不注册该端点）——GET /api/v1/effort（对话页 [思考 档位] 标签；本猫覆盖 + 全局值）</summary>
         public Func<string> EffortBuilder { get; set; }
 
@@ -124,6 +130,12 @@ namespace CatHome4.Http
 
         /// <summary>端点角色手动对调回调——POST /api/v1/api-role/toggle（可空=不注册）</summary>
         private Func<string> _apiRoleToggler;
+
+        /// <summary>模型清单回调——GET /api/v1/api-models（可空=不注册；对话端口注入）</summary>
+        private Func<Task<string>> _apiModelsBuilder;
+
+        /// <summary>会话级临时模型写入回调——POST /api/v1/api-model（可空=不注册）</summary>
+        private Func<string, string> _apiModelSetter;
 
         /// <summary>思考强度读取回调——GET /api/v1/effort（可空=不注册；对话端口注入）</summary>
         private Func<string> _effortBuilder;
@@ -248,6 +260,8 @@ namespace CatHome4.Http
             host._patchBuilder = options.PatchBuilder;
             host._apiRoleBuilder = options.ApiRoleBuilder;
             host._apiRoleToggler = options.ApiRoleToggler;
+            host._apiModelsBuilder = options.ApiModelsBuilder;
+            host._apiModelSetter = options.ApiModelSetter;
             host._effortBuilder = options.EffortBuilder;
             host._effortSetter = options.EffortSetter;
             host._viewFullBuilder = options.ViewFullBuilder;
@@ -340,6 +354,48 @@ namespace CatHome4.Http
                 {
                     // 手动对调——仅本会话有效（清自动窗口；结果视图提示由宿主侧推送）
                     return Results.Text(_apiRoleToggler(), "application/json");
+                });
+            }
+            // 模型清单面——对话页模型下拉数据源（上游实时探得；可空=不注册）
+            if (_apiModelsBuilder != null)
+            {
+                _app.MapGet("/api/v1/api-models", async (HttpContext ctx) =>
+                {
+                    string json = await _apiModelsBuilder().ConfigureAwait(false);
+                    return Results.Text(json, "application/json");
+                });
+            }
+            // 会话级临时模型写入——仅对话页有效（不回写端点配置）
+            if (_apiModelSetter != null)
+            {
+                _app.MapPost("/api/v1/api-model", async (HttpContext ctx) =>
+                {
+                    string body = "";
+                    using (System.IO.StreamReader reader = new System.IO.StreamReader(ctx.Request.Body))
+                    {
+                        body = await reader.ReadToEndAsync();
+                    }
+                    string model = null;
+                    try
+                    {
+                        using (JsonDocument doc = JsonUtil.ParseStrict(body))
+                        {
+                            JsonElement modelEl;
+                            if (doc.RootElement.TryGetProperty("model", out modelEl) && modelEl.ValueKind == JsonValueKind.String)
+                            {
+                                model = modelEl.GetString();
+                            }
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        model = null;
+                    }
+                    if (model == null)
+                    {
+                        return Results.Text("{\"ok\":false,\"error\":\"body 非 JSON 或缺少 model 字段\"}", "application/json");
+                    }
+                    return Results.Text(_apiModelSetter(model), "application/json");
                 });
             }
             // 思考强度面——对话页顶栏 [思考 档位] 标签（读 + 写；可空=不注册——管理端口不注入）

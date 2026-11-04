@@ -32,10 +32,16 @@ rl.on('line', function (line)
         process.exit(0);
     }
     var delay = req.delayMs ? Number(req.delayMs) : 0;
-    var until = Date.now() + delay;
-    while (Date.now() < until)
+    if (delay > 0)
     {
-        // 忙等——阻塞事件循环，复现「回执迟到」
+        // 延迟回执——不阻塞事件循环（setTimeout 单调时钟，墙钟跳变不影响）。
+        // 语义等价「回执迟到」：本次请求的应答在 timeout 之后才到；
+        // 而后续请求可被立刻处理（不因前一次未完成而排队）。
+        setTimeout(function ()
+        {
+            writeLine({ id: req.id, ok: true, op: req.op, echo: req.id });
+        }, delay);
+        return;
     }
     writeLine({ id: req.id, ok: true, op: req.op, echo: req.id });
 });

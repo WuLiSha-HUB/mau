@@ -58,7 +58,15 @@ function chatSend() {
         return;
     }
     // 🔴 用户消息必须带 `Chat ` 前缀——宿主 `DispatchCommandForCat` 只认前缀行，裸文本 `return false` 不投递
-    postCommand('Chat ' + text, paths);
+    // 临时模型同步（页面级）：新会话清过后端覆盖 → 发送前补投，保证「页不关即沿用」。
+    // 同步先于投递完成（串行 .then）——否则后端覆盖可能后到，本轮请求仍用旧模型。
+    var sendText = 'Chat ' + text;
+    var dispatch = function () { postCommand(sendText, paths); };
+    if (typeof apiModelSync === 'function') {
+        apiModelSync().then(dispatch);
+    } else {
+        dispatch();
+    }
     box.value = '';
     if (typeof pendClear === 'function') {
         pendClear();

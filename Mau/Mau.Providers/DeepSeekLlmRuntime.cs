@@ -51,6 +51,27 @@ namespace Mau.Providers
         private readonly string _reasoningEffort;
 
         /// <summary>
+        /// 会话级模型覆盖——非空即本次请求改用该模型（对话页临时选择；不回写端点配置）。
+        /// 空串=跟随端点默认模型。运行期实时读取（每次请求构造请求体时取值）。
+        /// </summary>
+        private string _modelOverride = "";
+
+        /// <summary>
+        /// 模型覆盖读写——会话级临时选择（对话页下拉单选；仅本页有效）。
+        /// </summary>
+        public string ModelOverride
+        {
+            get
+            {
+                return _modelOverride;
+            }
+            set
+            {
+                _modelOverride = value == null ? "" : value.Trim();
+            }
+        }
+
+        /// <summary>
         /// 默认兜底模型名——官方现役 v4-pro / v4-flash（deepseek-chat 已废弃）
         /// </summary>
         private const string FallbackModel = "deepseek-v4-flash";
@@ -381,11 +402,15 @@ namespace Mau.Providers
         }
 
         /// <summary>
-        /// 实时读取模型名——API 配置池 defaultModel → 兜底模型
+        /// 实时读取模型名——会话级覆盖优先（对话页临时选择）→ API 配置池 defaultModel → 兜底模型
         /// </summary>
         /// <returns>模型名</returns>
         private string GetModel()
         {
+            if (_modelOverride.Length > 0)
+            {
+                return _modelOverride;
+            }
             if (_apiStore != null)
             {
                 CH_LlmApiConfig? config = ResolveTarget();

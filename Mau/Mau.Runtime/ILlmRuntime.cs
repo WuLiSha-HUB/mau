@@ -18,5 +18,15 @@ namespace Mau.Runtime
         /// <param name="ct">取消令牌</param>
         /// <returns>流式事件序列</returns>
         System.Collections.Generic.IAsyncEnumerable<LlmStreamEvent> ChatStream(LlmMessage[] messages, ToolSpec[] tools, string userId = "", CancellationToken ct = default);
+
+        /// <summary>
+        /// 会话级模型覆盖——非空即本次请求改用该模型（临时选择，不回写端点配置）。
+        /// 默认实现为空实现（无覆盖）：既有实现类与测试替身零改动即可编译。
+        /// </summary>
+        string ModelOverride
+        {
+            get => "";
+            set { }
+        }
     }
 }
