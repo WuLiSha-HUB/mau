@@ -356,7 +356,9 @@
             <input id="groupCfgName" placeholder="如 施工队" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
             <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">项目绑定（可空——自由文本）</label>
             <input id="groupCfgProject" placeholder="如 CH4" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
-            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">成员 / 管理员 / 订阅（勾选；落盘按 cat key——管理员可 @ 派单，订阅者收组内新消息自动转发）</label>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">订阅静默阈值（秒——组内静默达到该值后，把订阅者未读汇总推给它；留空 = 300）</label>
+            <input id="groupCfgIdle" type="number" min="1" placeholder="300" style="width:140px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">成员 / 管理员 / 订阅（勾选；落盘按 cat key——管理员可 @ 派单，订阅者按静默窗口收未读汇总）</label>
             <div id="groupCfgMembers" style="display:flex;flex-direction:column;gap:6px;margin-top:4px"></div>
             <div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end">
                 <button id="groupCfgSave" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">保存</button>

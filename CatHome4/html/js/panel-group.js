@@ -252,6 +252,7 @@ function openGroupCfg(name) {
     nameInput.value = name || '';
     nameInput.disabled = name ? true : false;
     document.getElementById('groupCfgProject').value = g ? (g.project || '') : '';
+    document.getElementById('groupCfgIdle').value = g ? String(g.subscribeIdleSec || '') : '';
     document.getElementById('groupCfgMsg').textContent = '';
     groupShowModal('groupCfgModal', true);
     fetch('/api/v1/cats')
@@ -345,6 +346,15 @@ function collectGroupSubscribers() {
 function saveGroupCfg() {
     var name = document.getElementById('groupCfgName').value.trim();
     var project = document.getElementById('groupCfgProject').value.trim();
+    var idleText = document.getElementById('groupCfgIdle').value.trim();
+    var idleSec = -1;
+    if (idleText.length > 0) {
+        idleSec = Number(idleText);
+        if (!isFinite(idleSec) || idleSec <= 0) {
+            document.getElementById('groupCfgMsg').textContent = '静默阈值须为正整数（留空 = 300）';
+            return;
+        }
+    }
     var members = collectGroupMembers();
     var admins = collectGroupAdmins();
     var subs = collectGroupSubscribers();
@@ -357,7 +367,7 @@ function saveGroupCfg() {
         msgEl.textContent = '至少勾选一名成员';
         return;
     }
-    groupPost('/api/v1/groups', { name: name, project: project, memberKeys: members, adminKeys: admins, subscriberKeys: subs }, function (d) {
+    groupPost('/api/v1/groups', { name: name, project: project, memberKeys: members, adminKeys: admins, subscriberKeys: subs, subscribeIdleSec: idleSec }, function (d) {
         if (!d.ok) {
             msgEl.textContent = '保存失败: ' + (d.error || '');
             return;

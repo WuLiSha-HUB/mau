@@ -8,10 +8,12 @@
     <link rel="stylesheet" href="css/chat.css?v=__V__">
     <style>
         /* 群聊页专属补充（A311）——布局 / 气泡 / MD 全部复用 chat.css，本段只补对话页没有的三处：
-           ① 发送身份行（与内容列同左缘）② 消息首行 meta（来源 / 类型 / 目标）③ 空态 */
+           ① @ 目标行（与内容列同左缘）② 消息首行 meta（来源 / 类型 / 目标）③ 空态与尾部提示 */
         .group-from-row { display: grid; grid-template-columns: var(--ch-col-left) var(--ch-col-w) 1fr; align-items: center; padding: 4px 0; }
-        #fromSel { grid-column: 2; justify-self: start; background: var(--ch-bg-panel); border: 1px solid var(--ch-line); border-radius: 4px; color: var(--ch-fg); padding: 4px 8px; font-family: inherit; font-size: var(--ch-fs-tag); }
-        #fromSel:focus { outline: none; border-color: var(--ch-focus); }
+        .group-at-box { grid-column: 2; display: flex; align-items: center; gap: 6px; min-width: 0; }
+        .group-at { color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
+        #toSel { flex: 1; min-width: 0; background: var(--ch-bg-panel); border: 1px solid var(--ch-line); border-radius: 4px; color: var(--ch-fg); padding: 4px 8px; font-family: inherit; font-size: var(--ch-fs-tag); }
+        #toSel:focus { outline: none; border-color: var(--ch-focus); }
         #groupMsg { grid-column: 3; margin-left: 8px; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
         /* 消息首行——略大字号描述来源类型与目标（A311 莎定）；时间靠右弱化 */
         .msg-meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: var(--ch-fs-strong); color: var(--ch-fg-muted); white-space: normal; word-break: break-all; }
@@ -21,6 +23,16 @@
         .msg-meta .mm-refs { color: var(--ch-state-all); }
         .msg-meta .mm-seq { color: var(--ch-fg-faint); font-size: var(--ch-fs-tag); }
         .msg-meta .mm-time { margin-left: auto; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
+        /* A313 消息操作——发送方名字可点（@ 快捷填入）；单条复制按钮（图标复用 md-copy 的线条双框） */
+        .msg-meta .mm-who-pick { cursor: pointer; }
+        .msg-meta .mm-who-pick:hover { text-decoration: underline; }
+        .msg-meta .msg-copy-btn { background: none; border: none; cursor: pointer; color: var(--ch-fg-muted); line-height: 0; padding: 2px; border-radius: 4px; opacity: 0.35; transition: opacity 0.15s; }
+        .chat-bubble:hover .msg-meta .msg-copy-btn { opacity: 1; }
+        .msg-meta .msg-copy-btn:hover { background: var(--ch-hover-overlay); color: var(--ch-fg-strong); }
+        .msg-meta .msg-copy-btn svg { display: block; }
+        .msg-meta .msg-copy-btn.done svg { display: none; }
+        .msg-meta .msg-copy-btn.done::after { content: '✓'; font-size: var(--ch-fs-tag); line-height: 1; }
+        .chat-row.user .msg-meta .msg-copy-btn { color: var(--ch-chat-user-fg); opacity: 0.6; }
         /* 人（user 泡）内首行字色——深底上按反色系走 */
         .chat-row.user .msg-meta { color: var(--ch-chat-user-fg); }
         .chat-row.user .msg-meta .mm-kind,
@@ -30,6 +42,11 @@
         .chat-row.user .msg-meta .mm-seq,
         .chat-row.user .msg-meta .mm-time { color: var(--ch-chat-user-fg); opacity: 0.75; }
         .group-empty { color: var(--ch-fg-weak); padding: 0 12px; }
+        /* 清空动作——勾选确认后才可用（危险动作防误触） */
+        #chatClearWrap { display: flex; align-items: center; gap: 4px; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
+        #chatClearConfirm { cursor: pointer; }
+        #chatClear { background: var(--ch-bg-raised); border: 1px solid var(--ch-line); color: var(--ch-fg-muted); padding: 3px 10px; cursor: pointer; font-family: inherit; font-size: var(--ch-fs-tag); border-radius: 4px; }
+        #chatClear:disabled { opacity: 0.45; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -39,6 +56,10 @@
         <span id="chatInfo">—</span>
         <span style="flex:1"></span>
         <span id="uiVer" data-version title="前端版本——每次 Vitest 自动递增 + 最后更新时间">UI v?</span>
+        <label id="chatClearWrap" title="清空本组消息流——旧流原地归档为 .bak，新流从 #1 起">
+            <input type="checkbox" id="chatClearConfirm">确认清空
+        </label>
+        <button id="chatClear" disabled>清空</button>
         <button id="chatRefresh" title="刷新——重新拉取组信息与消息">刷新</button>
     </div>
 
@@ -47,9 +68,12 @@
     <!-- 自绘滚动带（js/chat/fx/scroll.js 原样复用）——视口指示块 + 消息刻度 + 点击跳转 + 拖拽 -->
     <div id="chatScrollBand"><div id="sbScopes"></div><div id="sbThumb"></div><div id="sbTicks"></div></div>
 
-    <!-- ═══ 发送身份行——与内容列同左缘（端口即组身份，页面不做组切换） ═══ -->
+    <!-- ═══ @ 目标行——与内容列同左缘（端口即组身份，页面不做组切换） ═══ -->
     <div id="groupFromRow" class="group-from-row">
-        <select id="fromSel" title="发送身份（人 / 某只猫）"></select>
+        <div class="group-at-box">
+            <span class="group-at">@</span>
+            <select id="toSel" title="@ 组内成员——选中按派单投递（回执自动回组）；不选只记流水，由订阅渠道推送"></select>
+        </div>
         <span id="groupMsg"></span>
     </div>
 
@@ -61,9 +85,11 @@
         </div>
     </div>
 
-    <!-- 脚本顺序即依赖顺序：版本填充 → MD 渲染器 → 滚动带 → 本页逻辑 -->
+    <!-- 脚本顺序即依赖顺序：版本填充 → DOM 小件 → MD 渲染器 → MD 复制 → 滚动带 → 本页逻辑 -->
     <script src="js/ui-common.js?v=__V__"></script>
+    <script src="js/chat/lib/dom.js?v=__V__"></script>
     <script src="js/chat/lib/md.js?v=__V__"></script>
+    <script src="js/chat/lib/md-copy.js?v=__V__"></script>
     <script src="js/chat/fx/scroll.js?v=__V__"></script>
     <script src="js/group.js?v=__V__"></script>
 </body>

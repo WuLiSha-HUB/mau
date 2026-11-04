@@ -6,7 +6,7 @@
 import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 import { expect, test, beforeAll } from 'vitest';
-import { installDom, installMockFetch } from './mock-env.js';
+import { installDom, installMockFetch, installMockClipboard } from './mock-env.js';
 
 // 加载无导出脚本到全局（vm.runInThisContext——var/function 声明挂 globalThis）
 async function runGlobalScript(url) {
@@ -18,8 +18,11 @@ beforeAll(async () => {
   const html = await readFile(new URL('../../group.html', import.meta.url), 'utf-8');
   installDom(html, 'http://127.0.0.1:9000');
   installMockFetch();
+  installMockClipboard();
   await runGlobalScript(new URL('../../js/ui-common.js', import.meta.url));
+  await runGlobalScript(new URL('../../js/chat/lib/dom.js', import.meta.url));
   await runGlobalScript(new URL('../../js/chat/lib/md.js', import.meta.url));
+  await runGlobalScript(new URL('../../js/chat/lib/md-copy.js', import.meta.url));
   await runGlobalScript(new URL('../../js/chat/fx/scroll.js', import.meta.url));
   await runGlobalScript(new URL('../../js/group.js', import.meta.url));
 });
@@ -55,7 +58,7 @@ test('消息行——人靠右（user 泡）· 显示名等于 key 时只显示�
   const human = window.gBuildRow({ seq: 1, from: '', type: 'note', ts: 0, text: '甲' });
   expect(human.className).toBe('chat-row user');
   expect(human.getAttribute('data-type')).toBe('user');
-  expect(human.querySelector('.msg-meta').textContent).toContain('人');
+  expect(human.querySelector('.msg-meta').textContent).toContain('默认用户');
   const same = window.gBuildRow({ seq: 2, from: 'coder1', displayName: 'coder1', type: 'note', ts: 0, text: '乙' });
   expect(same.querySelector('.msg-meta').textContent).toContain('coder1');
   expect(same.querySelector('.msg-meta').textContent).not.toContain('（coder1）');
@@ -157,4 +160,89 @@ test('可见性联动——隐藏停轮询，回到前台重启', () => {
   window.gOnVisibilityChange();
   expect(window.gPollTimer).not.toBe(0);
   window.gStopPoll();
+});
+
+test('A313 消息操作——猫消息发送方名字可点，点击把该猫填进 @ 选择器（不发送）', () => {
+  window.gFillTargets([
+    { key: 'coder1', displayName: 'Coder' },
+    { key: 'majordomo', displayName: '雾理莎' }
+  ]);
+  const toSel = document.getElementById('toSel');
+  toSel.value = '';
+  const row = window.gBuildRow({ seq: 3, from: 'coder1', displayName: 'Coder', type: 'note', ts: 0, text: '甲' });
+  const who = row.querySelector('.msg-meta .mm-who');
+  expect(who.className).toContain('mm-who-pick');
+  expect(who.getAttribute('role')).toBe('button');
+  who.click();
+  expect(toSel.value).toBe('coder1');
+  expect(document.getElementById('groupMsg').textContent).toContain('已填入 @coder1');
+  // 人（user 泡）不挂入口——点名字无 @ 语义
+  const human = window.gBuildRow({ seq: 4, from: '', type: 'note', ts: 0, text: '乙' });
+  expect(human.querySelector('.msg-meta .mm-who-pick')).toBeNull();
+});
+
+test('A313 @ 快捷填入——发送方不在组内成员时只提示，不改选择器', () => {
+  window.gFillTargets([{ key: 'coder1', displayName: 'Coder' }]);
+  const toSel = document.getElementById('toSel');
+  toSel.value = '';
+  window.gPickTarget('outsider');
+  expect(toSel.value).toBe('');
+  expect(document.getElementById('groupMsg').textContent).toContain('不在组内成员');
+});
+
+test('A313 消息操作——单条复制走前端剪贴板，复制原文（不含 meta）', async () => {
+  globalThis.__clipboardWrites.length = 0;
+  const text = '第一行\n\n| a | b |\n| - | - |\n| 1 | 2 |';
+  const row = window.gBuildRow({ seq: 5, from: 'coder1', type: 'note', ts: 0, text: text });
+  // 表格 / 代码块复制按钮由 md-copy 挂载（与对话页同一件）
+  expect(row.querySelectorAll('.md-block .md-copy-btn').length).toBe(1);
+  const btn = row.querySelector('.msg-copy-btn');
+  expect(btn).not.toBeNull();
+  expect(btn.textContent).toBe('');
+  expect(btn.getAttribute('aria-label')).toBe('复制本条原文');
+  btn.click();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(globalThis.__clipboardWrites).toEqual([text]);
+  expect(btn.className).toContain('done');
+});
+
+test('使用者署名——组 info 的 userName 投影到人消息；缺省回落「默认用户」', async () => {
+  globalThis.fetch = async () => ({
+    json: async () => ({
+      ok: true,
+      userName: '莎',
+      group: { name: '施工队', enabled: true, msgCount: 0, lastSeq: 0, members: [] }
+    })
+  });
+  window.gLoadInfo();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(window.gSenderText({ from: '', text: '甲' })).toBe('莎');
+  // 猫消息不受影响（显示名优先，与 key 不同时附 key）
+  expect(window.gSenderText({ from: 'coder1', displayName: 'Coder' })).toBe('Coder（coder1）');
+  // 组 info 未给 userName → 保持上一次值（页面不自行清空）
+  globalThis.fetch = async () => ({
+    json: async () => ({ ok: true, group: { name: '施工队', enabled: true, msgCount: 0, lastSeq: 0, members: [] } })
+  });
+  window.gLoadInfo();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  expect(window.gSenderText({ from: '', text: '乙' })).toBe('莎');
+});
+
+test('使用者署名——info 晚于消息首屏到达时回填既有行（同一节点，不重建）', async () => {
+  window.gUserName = '默认用户';
+  window.gRenderMessages([{ seq: 1, from: '', type: 'note', ts: 0, text: '甲' }]);
+  const who = document.querySelector('.chat-row.user .msg-meta .mm-who');
+  expect(who.textContent).toBe('默认用户');
+  globalThis.fetch = async () => ({
+    json: async () => ({
+      ok: true,
+      userName: '莎',
+      group: { name: '施工队', enabled: true, msgCount: 1, lastSeq: 1, members: [] }
+    })
+  });
+  window.gLoadInfo();
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  // 同一节点被就地改写——不重建行（滚动位置与既有引用都不动）
+  expect(document.querySelector('.chat-row.user .msg-meta .mm-who')).toBe(who);
+  expect(who.textContent).toBe('莎');
 });

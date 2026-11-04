@@ -45,12 +45,18 @@ namespace CatHome4.Admin
         /// <returns>行对象</returns>
         private static object BuildGroupRow(GroupSummary g)
         {
-            // [段1] 成员解析（catKey → 显示名）
+            // [段1] 成员解析（catKey → 显示名 + 角色标记——@ 选择器与成员名册共用）
             List<object> members = new List<object>();
             for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
             {
                 string key = g.MemberKeys[i];
-                members.Add(new { key = key, displayName = CatHostService.ResolveCatDisplayName(key) });
+                members.Add(new
+                {
+                    key = key,
+                    displayName = CatHostService.ResolveCatDisplayName(key),
+                    admin = ContainsKey(g.AdminKeys, key),
+                    subscriber = ContainsKey(g.SubscriberKeys, key)
+                });
             }
             // [段2] 行装配
             return new
@@ -66,9 +72,31 @@ namespace CatHome4.Admin
                 lastSeq = g.LastSeq,
                 msgCount = g.MsgCount,
                 lastAt = g.LastAt,
+                subscribeIdleSec = GroupStore.GetSubscribeIdleSec(g),
                 port = CatHostService.GroupHostPort(g.Name),
                 running = CatHostService.GroupHostRunning(g.Name)
             };
+        }
+        /// <summary>
+        /// 名单包含判定——按 key 精确匹配（Ordinal）。
+        /// </summary>
+        /// <param name="keys">名单数组</param>
+        /// <param name="key">待查 key</param>
+        /// <returns>包含 true</returns>
+        private static bool ContainsKey(string[] keys, string key)
+        {
+            if (keys == null || key == null)
+            {
+                return false;
+            }
+            for (int i = 0; i < keys.Length; i = i + 1)
+            {
+                if (string.Equals(keys[i], key, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -85,6 +113,7 @@ namespace CatHome4.Admin
             string[] memberKeys = new string[0];
             string[] adminKeys = null;
             string[] subscriberKeys = null;
+            int subscribeIdleSec = -1;
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -103,6 +132,11 @@ namespace CatHome4.Admin
                     {
                         subscriberKeys = ParseStringArray(root, "subscriberKeys");
                     }
+                    JsonElement idleEl;
+                    if (root.TryGetProperty("subscribeIdleSec", out idleEl) && idleEl.ValueKind == JsonValueKind.Number)
+                    {
+                        subscribeIdleSec = idleEl.GetInt32();
+                    }
                 }
             }
             catch (Exception)
@@ -110,7 +144,7 @@ namespace CatHome4.Admin
                 return Results.Json(new { ok = false, error = "body 非 JSON" });
             }
             // [段2] 落盘 + 回执（新建的组 enabled 默认 true → 同步拉起宿主，与「启动」语义一致）
-            string result = GroupStore.CreateOrUpdate(name, memberKeys, project, adminKeys, subscriberKeys);
+            string result = GroupStore.CreateOrUpdate(name, memberKeys, project, adminKeys, subscriberKeys, subscribeIdleSec);
             if (result.StartsWith("ok|", StringComparison.Ordinal))
             {
                 GroupSummary created = GroupStore.GetGroup(name.Trim());
@@ -245,8 +279,17 @@ namespace CatHome4.Admin
             {
                 return Results.Json(new { ok = false, error = "ERR|GROUP_NOT_FOUND|组不存在: " + name });
             }
-            // [段3] 消息装配（发送方带显示名；from 空不作解析）
-            List<GroupMessage> messages = GroupStore.ReadMessages(name, after, limit);
+            // [段3] 消息装配（发送方带显示名；from 空不作解析）——after 缺省走尾部模式（最近 limit 条 + hasMore）
+            List<GroupMessage> messages;
+            bool hasMore = false;
+            if (afterText.Length > 0)
+            {
+                messages = GroupStore.ReadMessages(name, after, limit);
+            }
+            else
+            {
+                messages = GroupStore.ReadTailMessages(name, limit, out hasMore);
+            }
             List<object> list = new List<object>();
             for (int i = 0; i < messages.Count; i = i + 1)
             {
@@ -274,7 +317,7 @@ namespace CatHome4.Admin
                     refs = m.Refs
                 });
             }
-            return Results.Json(new { ok = true, name = group.Name, lastSeq = group.LastSeq, messages = list });
+            return Results.Json(new { ok = true, name = group.Name, lastSeq = group.LastSeq, hasMore = hasMore, messages = list });
         }
 
         /// <summary>
@@ -324,8 +367,39 @@ namespace CatHome4.Admin
         /// <returns>回执 JSON</returns>
         internal static IResult AppendGroupMessageResult(string group, string from, string type, string text, string refs, string to)
         {
-            string result = GroupStore.AppendMessage(group, from, type, text, refs, to);
-            return BuildMutationResult(result);
+            // [段1] @ 投递口径——to 非空按派单处理（类型强制 delegation，回执链自动生效）
+            string useTo = to == null ? "" : to.Trim();
+            string useType = type;
+            if (useTo.Length > 0)
+            {
+                useType = "delegation";
+            }
+            string result = GroupStore.AppendMessage(group, from, useType, text, refs, useTo);
+            if (result == null || !result.StartsWith("ok|", StringComparison.Ordinal))
+            {
+                return BuildMutationResult(result);
+            }
+            // [段2] 非派单——只写流水
+            if (useTo.Length == 0)
+            {
+                return Results.Json(new { ok = true, detail = result });
+            }
+            // [段3] 派单——投递目标（未运行 / 未受理：消息已入组，带提示不吞）
+            long seq = ParseGroupSeq(result);
+            GroupSummary current = GroupStore.GetGroup(group);
+            string groupName = current == null ? group : current.Name;
+            string content = "[来自组:" + groupName + "]\n" + text;
+            string origin = "group:" + groupName + ":" + seq.ToString() + ":delegation";
+            CatHostService.CatEntry cat = CatHostService.FindCat(useTo);
+            if (cat == null || cat.Session == null)
+            {
+                return Results.Json(new { ok = true, detail = result, delivered = false, seq = seq, warning = "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + useTo + "（消息已入组 #" + seq.ToString() + "）" });
+            }
+            if (!cat.Session.PostUserMessage(content, "user", "", origin))
+            {
+                return Results.Json(new { ok = true, detail = result, delivered = false, seq = seq, warning = "ERR|GROUP_DELIVER_FAIL|投递未受理: " + useTo + "（消息已入组 #" + seq.ToString() + "）" });
+            }
+            return Results.Json(new { ok = true, detail = result, delivered = true, seq = seq, to = useTo });
         }
 
         /// <summary>
@@ -360,6 +434,16 @@ namespace CatHome4.Admin
             }
             return AppendGroupMessageResult(name, from, type, text, refs, to);
         }
+        /// <summary>
+        /// 清空消息流——组端口版（POST /api/v1/group/clear；组名由端口绑定）。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <returns>回执 JSON（detail = ok|组名|归档文件名）</returns>
+        internal static IResult ClearGroupMessages(string name)
+        {
+            string result = GroupStore.ClearMessages(name);
+            return BuildMutationResult(result);
+        }
 
         /// <summary>
         /// 单组信息——组端口 GET /api/v1/group/info（端口即组身份，组名由闭包绑定）。
@@ -373,7 +457,17 @@ namespace CatHome4.Admin
             {
                 return Results.Json(new { ok = false, error = "ERR|GROUP_NOT_FOUND|组不存在: " + name });
             }
-            return Results.Json(new { ok = true, group = BuildGroupRow(g) });
+            // [段1] 使用者显示名——全局设置投影（组端口与主端口不同源，页面无法跨端口读配置）
+            string userName = "";
+            if (_globalConfig != null)
+            {
+                userName = _globalConfig.Get("ui.user_name", "").Trim();
+            }
+            if (userName.Length == 0)
+            {
+                userName = "默认用户";
+            }
+            return Results.Json(new { ok = true, group = BuildGroupRow(g), userName = userName });
         }
 
         /// <summary>
@@ -412,6 +506,27 @@ namespace CatHome4.Admin
                 return Results.Json(new { ok = true, detail = result });
             }
             return Results.Json(new { ok = false, error = result });
+        }
+        /// <summary>
+        /// 组消息回执解析——ok|组名|seq=N → N；解析失败 0。
+        /// </summary>
+        /// <param name="result">GroupStore 返回文本</param>
+        /// <returns>消息序号（失败 0）</returns>
+        private static long ParseGroupSeq(string result)
+        {
+            long seq = 0;
+            if (result == null)
+            {
+                return 0;
+            }
+            int idx = result.LastIndexOf("seq=", StringComparison.Ordinal);
+            if (idx < 0)
+            {
+                return 0;
+            }
+            string text = result.Substring(idx + 4);
+            long.TryParse(text, out seq);
+            return seq;
         }
 
         /// <summary>

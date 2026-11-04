@@ -7,6 +7,7 @@
     { "key": "http.port", "file": "app.cfg", "default": "", "sensitive": false, "writable": false, "empty_desc": "空=按端口段取值（开发区 8079 / 部署区 8080）", "desc": "HTTP 端口——显式覆盖端口段主端口；非法/越界回退区段主端口（启动时读取，改后重启生效）" },
     { "key": "llm.cache_isolation", "file": "llm.cfg", "default": "cat", "sensitive": false, "writable": true, "type": "string", "values": ["cat", "off"], "empty_desc": "空=非声明值 → 运行时回落 cat（启动与运行时各告警一次）", "desc": "LLM 缓存隔离粒度（cat=按猫 key / off=不隔离；会话标识 ≡ 猫 key，无按会话粒度）" },
     { "key": "ui.font_scale", "file": "ui.cfg", "default": "100", "sensitive": false, "writable": true, "type": "int", "min": "50", "max": "300", "desc": "界面字号缩放（百分比）——本地适配不同桌面缩放倍率；100=基准" },
+    { "key": "ui.user_name", "file": "ui.cfg", "default": "默认用户", "sensitive": false, "writable": true, "type": "string", "empty_desc": "空=回落「默认用户」", "desc": "使用者显示名——群聊页人消息的署名（对齐消息来源；改后刷新页面即生效）" },
     { "key": "app.autostart", "file": "app.cfg", "default": "false", "sensitive": false, "writable": true, "type": "bool", "desc": "开机自启（注册 HKCU Run）" },
     { "key": "app.round_notify", "file": "app.cfg", "default": "true", "sensitive": false, "writable": true, "type": "bool", "desc": "本轮结束系统通知（托盘 BalloonTip）" },
     { "key": "search.api_config_id", "file": "search.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=未配置 → 搜索工具明示不可用", "desc": "搜索 API 池配置 ID（未配置=搜索不可用）" },

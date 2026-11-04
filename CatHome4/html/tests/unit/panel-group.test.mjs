@@ -70,7 +70,7 @@ test('成员勾选渲染——全猫列出、已选中的勾上', () => {
   expect(window.collectGroupMembers()).toEqual(['coder1']);
 });
 
-test('保存载荷——name / project / memberKeys / adminKeys / subscriberKeys（cat key）', async () => {
+test('保存载荷——name / project / 静默阈值 / memberKeys / adminKeys / subscriberKeys（cat key）', async () => {
   let captured = null;
   globalThis.fetch = async (url, opt) => {
     if (opt && opt.body) { captured = JSON.parse(opt.body); }
@@ -78,12 +78,13 @@ test('保存载荷——name / project / memberKeys / adminKeys / subscriberKeys
   };
   document.getElementById('groupCfgName').value = '施工队';
   document.getElementById('groupCfgProject').value = 'CH4';
+  document.getElementById('groupCfgIdle').value = '120';
   window.renderGroupMembers([{ id: 'majordomo', name: '雾理莎' }], [], ['majordomo'], []);
   document.querySelector('#groupCfgMembers input.group-member-cb').checked = true;
   document.querySelector('#groupCfgMembers input.group-admin-cb').checked = true;
   window.saveGroupCfg();
   await new Promise((resolve) => setTimeout(resolve, 0));
-  expect(captured).toEqual({ name: '施工队', project: 'CH4', memberKeys: ['majordomo'], adminKeys: ['majordomo'], subscriberKeys: [] });
+  expect(captured).toEqual({ name: '施工队', project: 'CH4', memberKeys: ['majordomo'], adminKeys: ['majordomo'], subscriberKeys: [], subscribeIdleSec: 120 });
 });
 
 test('三列勾选渲染——成员 / 管理员 / 订阅各自的初始态与收集口', () => {

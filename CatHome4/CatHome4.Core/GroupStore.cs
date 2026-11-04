@@ -46,6 +46,10 @@ namespace CH4
 
         /// <summary>最新消息时刻——Unix 毫秒（0 = 无消息）</summary>
         public long LastAt;
+        /// <summary>订阅推送静默阈值——秒；0 = 未设置（按默认 300 秒计）</summary>
+        public int SubscribeIdleSec;
+        /// <summary>订阅者未读游标——猫 key → 已推送到的 seq（缺省 0 = 从头）</summary>
+        public Dictionary<string, long> SubscribeCursors = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
     }
 
     /// <summary>
@@ -88,6 +92,12 @@ namespace CH4
         /// <summary>单次读消息条数上限</summary>
         public const int MaxReadLimit = 500;
 
+        /// <summary>单次读消息条数缺省值</summary>
+        public const int DefaultReadLimit = 100;
+
+        /// <summary>订阅推送静默阈值缺省值（秒）</summary>
+        public const int DefaultSubscribeIdleSec = 300;
+
         /// <summary>组根目录——Data/group（空 = 仅内存，不落盘）</summary>
         private static string _root = "";
 
@@ -96,10 +106,6 @@ namespace CH4
 
         /// <summary>存储锁——全部读写锁内完成</summary>
         private static readonly object StoreLock = new object();
-        /// <summary>
-        /// 消息追加钩子——(组名, 消息)；由组合根接线做「订阅自动转发」，Core 不依赖会话面。
-        /// </summary>
-        public static Action<string, GroupMessage> MessageAppended;
 
         /// <summary>
         /// 配置组根目录——宿主启动期注入（Core 不依赖配置面，路径由入口壳给）。
@@ -217,6 +223,12 @@ namespace CH4
                     info.MemberKeys = GetStringArrayProp(root, "memberKeys");
                     info.AdminKeys = GetStringArrayProp(root, "adminKeys");
                     info.SubscriberKeys = GetStringArrayProp(root, "subscriberKeys");
+                    info.SubscribeCursors = GetLongMapProp(root, "subscribeCursors");
+                    JsonElement idleEl;
+                    if (root.TryGetProperty("subscribeIdleSec", out idleEl) && idleEl.ValueKind == JsonValueKind.Number)
+                    {
+                        info.SubscribeIdleSec = idleEl.GetInt32();
+                    }
                     info.Project = GetStringProp(root, "project");
                     info.Layer = GetStringProp(root, "layer");
                     JsonElement createdEl;
@@ -255,6 +267,8 @@ namespace CH4
             map["memberKeys"] = info.MemberKeys;
             map["adminKeys"] = info.AdminKeys;
             map["subscriberKeys"] = info.SubscriberKeys;
+            map["subscribeIdleSec"] = info.SubscribeIdleSec;
+            map["subscribeCursors"] = info.SubscribeCursors;
             map["project"] = info.Project;
             map["createdAt"] = info.CreatedAt;
             map["layer"] = info.Layer;
@@ -418,6 +432,190 @@ namespace CH4
             }
             return list.ToArray();
         }
+        /// <summary>
+        /// JSON 键值映射读取——对象形态 {键: 数值}；缺失 / 非对象返回空表（项级非数值跳过）。
+        /// </summary>
+        /// <param name="root">对象元素</param>
+        /// <param name="name">属性名</param>
+        /// <returns>键值映射（键大小写不敏感）</returns>
+        private static Dictionary<string, long> GetLongMapProp(JsonElement root, string name)
+        {
+            Dictionary<string, long> map = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            JsonElement el;
+            if (!root.TryGetProperty(name, out el) || el.ValueKind != JsonValueKind.Object)
+            {
+                return map;
+            }
+            foreach (JsonProperty prop in el.EnumerateObject())
+            {
+                if (prop.Value.ValueKind != JsonValueKind.Number)
+                {
+                    continue;
+                }
+                long value = 0;
+                if (!prop.Value.TryGetInt64(out value))
+                {
+                    continue;
+                }
+                map[prop.Name] = value;
+            }
+            return map;
+        }
+        /// <summary>
+        /// 消息流全量读取——逐行解析（坏行出声计数跳过），seq 升序。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <returns>消息列表（组不存在 / 无文件 = 空列表）</returns>
+        private static List<GroupMessage> ReadAllMessages(string name)
+        {
+            List<GroupMessage> list = new List<GroupMessage>();
+            string useName = name == null ? "" : name.Trim();
+            lock (StoreLock)
+            {
+                GroupSummary info;
+                if (!_groups.TryGetValue(useName, out info))
+                {
+                    return list;
+                }
+                string path = Path.Combine(GetGroupDir(info.Name), "messages.jsonl");
+                if (!File.Exists(path))
+                {
+                    return list;
+                }
+                int badCount = 0;
+                try
+                {
+                    foreach (string line in File.ReadLines(path))
+                    {
+                        if (line.Trim().Length == 0)
+                        {
+                            continue;
+                        }
+                        GroupMessage msg = ParseMessageLine(line);
+                        if (msg == null)
+                        {
+                            badCount = badCount + 1;
+                            continue;
+                        }
+                        list.Add(msg);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    LogStore.Add("CatHome4", 3, "组消息流读取失败: " + path + " | " + ex.Message, "GROUP");
+                }
+                if (badCount > 0)
+                {
+                    LogStore.Add("CatHome4", 2, "组消息坏行跳过：" + path + " | 共 " + badCount.ToString() + " 行", "GROUP");
+                }
+            }
+            return list;
+        }
+        /// <summary>
+        /// 读消息流尾部——取最后 limit 条（seq 升序）；hasMore = 更早还有未返回的条目。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <param name="limit">条数上限（≤0 取 100；上限 MaxReadLimit）</param>
+        /// <param name="hasMore">更早还有未返回条目</param>
+        /// <returns>消息列表</returns>
+        public static List<GroupMessage> ReadTailMessages(string name, int limit, out bool hasMore)
+        {
+            hasMore = false;
+            int useLimit = limit;
+            if (useLimit <= 0)
+            {
+                useLimit = DefaultReadLimit;
+            }
+            if (useLimit > MaxReadLimit)
+            {
+                useLimit = MaxReadLimit;
+            }
+            List<GroupMessage> all = ReadAllMessages(name);
+            List<GroupMessage> list = new List<GroupMessage>();
+            if (all.Count == 0)
+            {
+                return list;
+            }
+            int start = all.Count - useLimit;
+            if (start < 0)
+            {
+                start = 0;
+            }
+            if (start > 0)
+            {
+                hasMore = true;
+            }
+            for (int i = start; i < all.Count; i = i + 1)
+            {
+                list.Add(all[i]);
+            }
+            return list;
+        }
+        /// <summary>
+        /// 订阅静默阈值（秒）——组配置字段；未设置（≤0）按默认 300 秒。
+        /// </summary>
+        /// <param name="info">组投影</param>
+        /// <returns>阈值秒数</returns>
+        public static int GetSubscribeIdleSec(GroupSummary info)
+        {
+            if (info == null || info.SubscribeIdleSec <= 0)
+            {
+                return DefaultSubscribeIdleSec;
+            }
+            return info.SubscribeIdleSec;
+        }
+        /// <summary>
+        /// 订阅游标读取——未设置返回 0（从头）。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <param name="catKey">订阅猫 key</param>
+        /// <returns>已推送到的 seq</returns>
+        public static long GetSubscriberCursor(string name, string catKey)
+        {
+            string useName = name == null ? "" : name.Trim();
+            string useCat = catKey == null ? "" : catKey.Trim();
+            lock (StoreLock)
+            {
+                GroupSummary info;
+                if (!_groups.TryGetValue(useName, out info))
+                {
+                    return 0;
+                }
+                long seq = 0;
+                if (info.SubscribeCursors.TryGetValue(useCat, out seq))
+                {
+                    return seq;
+                }
+                return 0;
+            }
+        }
+        /// <summary>
+        /// 订阅游标推进——写入并落盘（低频操作，整文件原子写）。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <param name="catKey">订阅猫 key</param>
+        /// <param name="seq">已推送到的 seq</param>
+        /// <returns>ok| 前缀；失败 ERR| 前缀</returns>
+        public static string SetSubscriberCursor(string name, string catKey, long seq)
+        {
+            string useName = name == null ? "" : name.Trim();
+            string useCat = catKey == null ? "" : catKey.Trim();
+            if (useCat.Length == 0)
+            {
+                return "ERR|GROUP_CURSOR_KEY_EMPTY|订阅游标缺少猫 key";
+            }
+            lock (StoreLock)
+            {
+                GroupSummary info;
+                if (!_groups.TryGetValue(useName, out info))
+                {
+                    return "ERR|GROUP_NOT_FOUND|组不存在: " + useName;
+                }
+                info.SubscribeCursors[useCat] = seq;
+                WriteGroupFile(info);
+                return "ok|" + info.Name + "|" + useCat + "|" + seq.ToString();
+            }
+        }
 
         /// <summary>
         /// 组投影副本——缓存不直出（调用方改动不污染缓存）。
@@ -439,6 +637,12 @@ namespace CH4
             copy.LastSeq = src.LastSeq;
             copy.MsgCount = src.MsgCount;
             copy.LastAt = src.LastAt;
+            copy.SubscribeIdleSec = src.SubscribeIdleSec;
+            copy.SubscribeCursors = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            foreach (KeyValuePair<string, long> kv in src.SubscribeCursors)
+            {
+                copy.SubscribeCursors[kv.Key] = kv.Value;
+            }
             return copy;
         }
 
@@ -547,6 +751,40 @@ namespace CH4
             }
             return kept.ToArray();
         }
+        /// <summary>
+        /// 订阅游标收敛——只保留当前订阅者的键；新订阅者从 seedSeq 起（只收之后的消息，不补历史）。
+        /// </summary>
+        /// <param name="current">原游标表（可 null）</param>
+        /// <param name="subscribers">收敛后的订阅名单</param>
+        /// <param name="seedSeq">新订阅者游标起点（当前末序号）</param>
+        /// <returns>新游标表（键大小写不敏感）</returns>
+        private static Dictionary<string, long> ReseedCursors(Dictionary<string, long> current, string[] subscribers, long seedSeq)
+        {
+            Dictionary<string, long> next = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            if (subscribers == null)
+            {
+                return next;
+            }
+            for (int i = 0; i < subscribers.Length; i = i + 1)
+            {
+                string key = subscribers[i];
+                if (key == null || key.Trim().Length == 0)
+                {
+                    continue;
+                }
+                long cursor = seedSeq;
+                if (current != null)
+                {
+                    long existing = 0;
+                    if (current.TryGetValue(key, out existing))
+                    {
+                        cursor = existing;
+                    }
+                }
+                next[key] = cursor;
+            }
+            return next;
+        }
 
         /// <summary>
         /// 成员清洗——去空白 / 去空项 / 去重（保持入参序）。
@@ -596,8 +834,9 @@ namespace CH4
         /// <param name="project">项目绑定（可空）</param>
         /// <param name="adminKeys">管理员猫 key 数组（null = 保留原值；非成员项自动剔除）</param>
         /// <param name="subscriberKeys">订阅自动转发的猫 key 数组（null = 保留原值；非成员项自动剔除）</param>
+        /// <param name="subscribeIdleSec">订阅静默阈值秒（-1 = 保留原值；0 = 按默认 300 秒）</param>
         /// <returns>结果文本</returns>
-        public static string CreateOrUpdate(string name, string[] memberKeys, string project, string[] adminKeys = null, string[] subscriberKeys = null)
+        public static string CreateOrUpdate(string name, string[] memberKeys, string project, string[] adminKeys = null, string[] subscriberKeys = null, int subscribeIdleSec = -1)
         {
             string useName = name == null ? "" : name.Trim();
             if (!IsValidName(useName))
@@ -629,6 +868,12 @@ namespace CH4
                 string[] wantSubs = subscriberKeys == null ? info.SubscriberKeys : subscriberKeys;
                 info.AdminKeys = KeepMembers(wantAdmins, members);
                 info.SubscriberKeys = KeepMembers(wantSubs, members);
+                if (subscribeIdleSec >= 0)
+                {
+                    info.SubscribeIdleSec = subscribeIdleSec;
+                }
+                // 游标收敛——取消订阅即删游标；新订阅者从当前末序号起（只收之后的消息，不补历史）
+                info.SubscribeCursors = ReseedCursors(info.SubscribeCursors, info.SubscriberKeys, info.LastSeq);
                 WriteGroupFile(info);
                 string verb = "组新建: ";
                 if (found)
@@ -780,6 +1025,56 @@ namespace CH4
                 return "ok|" + info.Name;
             }
         }
+        /// <summary>
+        /// 清空消息流——原地归档 messages.jsonl（改名 .bak）后重建空流；统计与订阅游标归零（新流从 #1 起）。
+        /// </summary>
+        /// <param name="name">组名</param>
+        /// <returns>ok|组名|归档文件名（无消息文件时末段为空）；失败 ERR| 前缀</returns>
+        public static string ClearMessages(string name)
+        {
+            string useName = name == null ? "" : name.Trim();
+            lock (StoreLock)
+            {
+                GroupSummary info;
+                if (!_groups.TryGetValue(useName, out info))
+                {
+                    return "ERR|GROUP_NOT_FOUND|组不存在: " + useName;
+                }
+                string dir = GetGroupDir(info.Name);
+                string path = Path.Combine(dir, "messages.jsonl");
+                string archived = "";
+                if (File.Exists(path))
+                {
+                    // [段1] 归档——同秒重复清空按序号避让（不覆盖旧归档）
+                    string stamp = DateTimeOffset.UtcNow.ToLocalTime().ToString("yyyyMMdd_HHmmss");
+                    string target = Path.Combine(dir, "messages." + stamp + ".jsonl.bak");
+                    int suffix = 1;
+                    while (File.Exists(target))
+                    {
+                        target = Path.Combine(dir, "messages." + stamp + "_" + suffix.ToString() + ".jsonl.bak");
+                        suffix = suffix + 1;
+                    }
+                    try
+                    {
+                        File.Move(path, target);
+                        archived = Path.GetFileName(target);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogStore.Add("CatHome4", 3, "组消息归档失败: " + path + " | " + ex.Message, "GROUP");
+                        return "ERR|GROUP_WRITE_FAIL|消息归档失败: " + ex.Message;
+                    }
+                }
+                // [段2] 统计与游标归零——新流 seq 从 1 起；游标留在高位会让订阅永远推不出去
+                info.LastSeq = 0;
+                info.MsgCount = 0;
+                info.LastAt = 0;
+                info.SubscribeCursors = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                WriteGroupFile(info);
+                LogStore.Add("CatHome4", 1, "组消息清空: " + info.Name + " | 归档 " + (archived.Length == 0 ? "（无消息文件）" : archived), "GROUP");
+                return "ok|" + info.Name + "|" + archived;
+            }
+        }
 
         /// <summary>
         /// 追加消息——组内 seq 单调递增（末序号 + 1），一行一条追加写 messages.jsonl。
@@ -813,7 +1108,6 @@ namespace CH4
             }
             string nameOut = "";
             long seqOut = 0;
-            GroupMessage appended = null;
             lock (StoreLock)
             {
                 GroupSummary info;
@@ -824,6 +1118,24 @@ namespace CH4
                 if (!info.Running)
                 {
                     return "ERR|GROUP_NOT_RUNNING|组未启用: " + useName;
+                }
+                // [段1.4] 发送方校验——非空须为本组成员（网页恒空 = 人；防冒充非成员署名 / 订阅误触）
+                string fromMemberKey = from == null ? "" : from.Trim();
+                if (fromMemberKey.Length > 0)
+                {
+                    bool fromIsMember = false;
+                    for (int i = 0; i < info.MemberKeys.Length; i = i + 1)
+                    {
+                        if (string.Equals(info.MemberKeys[i], fromMemberKey, StringComparison.Ordinal))
+                        {
+                            fromIsMember = true;
+                            break;
+                        }
+                    }
+                    if (!fromIsMember)
+                    {
+                        return "ERR|GROUP_FROM_NOT_MEMBER|发送方不在组内: " + fromMemberKey;
+                    }
                 }
                 string dir = GetGroupDir(info.Name);
                 // [段1.5] @ 目标校验——组内成员才可指向；自 @ 拒绝（自激一轮且无业务意义）
@@ -873,27 +1185,6 @@ namespace CH4
                 info.LastAt = now;
                 nameOut = info.Name;
                 seqOut = nextSeq;
-                appended = new GroupMessage();
-                appended.Seq = nextSeq;
-                appended.From = from == null ? "" : from.Trim();
-                appended.To = useTo;
-                appended.Type = useType;
-                appended.Text = useText;
-                appended.Ts = now;
-                appended.Refs = refs == null ? "" : refs.Trim();
-            }
-            // [段2] 订阅自动转发钩子——锁外触发（处理器碰会话面，不持存储锁回调；异常不吞写入结果）
-            Action<string, GroupMessage> hook = MessageAppended;
-            if (hook != null && appended != null)
-            {
-                try
-                {
-                    hook(nameOut, appended);
-                }
-                catch (Exception ex)
-                {
-                    LogStore.Add("CatHome4", 3, "组消息转发钩子异常: " + nameOut + " | " + ex.Message, "GROUP");
-                }
             }
             return "ok|" + nameOut + "|seq=" + seqOut.ToString();
         }
@@ -966,7 +1257,7 @@ namespace CH4
         /// 当前时刻——Unix 毫秒（UTC）。
         /// </summary>
         /// <returns>Unix 毫秒</returns>
-        private static long Now()
+        public static long Now()
         {
             return DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         }

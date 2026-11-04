@@ -12,14 +12,18 @@ var gPollTimer = 0;     // 增量轮询句柄（0 = 未启动）
 var gPollMs = 2000;     // 轮询间隔（毫秒）——A311：5s → 2s
 var gPolling = false;   // 防重入——上一次增量拉取未回不叠发
 var gBurstLeft = 0;     // 新消息后的快速跟拉余量（最多 2 次，间隔 800ms）
+var gHasMore = false;    // 首屏尾部读取——更早还有未加载条目（仅提示，不翻页）
+var gUserName = '默认用户';  // 使用者显示名——全局设置 ui.user_name 的组端口投影（info 每次加载刷新）
 
 var gTitleEl = document.getElementById('chatTitle');
 var gInfoEl = document.getElementById('chatInfo');
 var gMsgEl = document.getElementById('groupMsg');
 var gMsgsEl = document.getElementById('chatMsgs');
-var gFromSel = document.getElementById('fromSel');
+var gToSel = document.getElementById('toSel');
 var gInputEl = document.getElementById('chatSendInput');
 var gSendBtn = document.getElementById('chatSendBtn');
+var gClearConfirm = document.getElementById('chatClearConfirm');
+var gClearBtn = document.getElementById('chatClear');
 
 // [段0] 滚动带依赖桩
 // scroll.js 按行 data-type 查块声明表取刻度角色（registry.js 的 tickRole）；
@@ -61,15 +65,23 @@ function gTypeLabel(type) {
     return '讨论';
 }
 
-// 发送方文本——显示名优先；与 key 不同时附 key；人（无 from）显示「人」
+// 发送方文本——显示名优先；与 key 不同时附 key；人（无 from）显示使用者名（全局设置投影）
 function gSenderText(m) {
     if (!m.from) {
-        return '人';
+        return gUserName;
     }
     if (m.displayName && m.displayName !== m.from) {
         return m.displayName + '（' + m.from + '）';
     }
     return m.from;
+}
+
+// 署名回填——info 晚于消息首屏到达时只改既有节点的文本（不重建行，滚动位置不动）
+function gApplyUserName() {
+    var whos = gMsgsEl.querySelectorAll('.chat-row.user .mm-who');
+    for (var i = 0; i < whos.length; i = i + 1) {
+        whos[i].textContent = gUserName;
+    }
 }
 
 // [段2] 组信息与消息流
@@ -86,6 +98,12 @@ function gLoadInfo() {
             }
             var g = d.group;
             gName = g.name;
+            // 使用者显示名——全局设置 ui.user_name（空 / 缺省回落「默认用户」）
+            if (typeof d.userName === 'string' && d.userName.length > 0) {
+                gUserName = d.userName;
+                // info 可能晚于消息首屏到达——回填已渲染行，避免旧气泡停在上一次的署名
+                gApplyUserName();
+            }
             gLastSeq = Math.max(gLastSeq, Number(g.lastSeq) || 0);
             gTitleEl.textContent = g.name;
             var state = '运行中';
@@ -97,6 +115,8 @@ function gLoadInfo() {
                 parts.push('项目 ' + g.project);
             }
             gInfoEl.textContent = parts.join(' · ');
+            gInfoEl.title = gMemberRoster(g.members || []);
+            gFillTargets(g.members || []);
             document.title = 'CH4 群聊 · ' + g.name;
         })
         .catch(function () {
@@ -114,6 +134,7 @@ function gLoadMessages() {
                 gMsgsEl.textContent = '读取失败: ' + (d.error || '');
                 return;
             }
+            gHasMore = d.hasMore === true;
             gLastSeq = Math.max(gLastSeq, Number(d.lastSeq) || 0);
             gRenderMessages(d.messages || []);
             gStartPoll();
@@ -135,6 +156,8 @@ function gBuildRow(m) {
     var md = document.createElement('div');
     md.className = 'md-block';
     md.innerHTML = mdToHtml(m.text || '');
+    // 表格 / 代码块复制按钮（与对话页同一件：md.js 出结构，md-copy.js 挂按钮）
+    mdBindCopy(md);
     bubble.appendChild(md);
     row.appendChild(bubble);
     return row;
@@ -149,8 +172,18 @@ function gBuildMeta(m, isHuman) {
     kind.textContent = gTypeLabel(m.type);
     meta.appendChild(kind);
     var who = document.createElement('span');
-    who.className = 'mm-who';
     who.textContent = gSenderText(m);
+    if (isHuman) {
+        who.className = 'mm-who';
+    } else {
+        // A313 @ 快捷填入——点发送方名字只把该猫填进 @ 选择器（纯快捷输入：不发送、不引用）
+        who.className = 'mm-who mm-who-pick';
+        who.title = '点击填入 @ 目标——只填选择器，不自动发送';
+        who.setAttribute('role', 'button');
+        who.addEventListener('click', function () {
+            gPickTarget(m.from);
+        });
+    }
     meta.appendChild(who);
     if (m.to) {
         var target = document.createElement('span');
@@ -175,6 +208,7 @@ function gBuildMeta(m, isHuman) {
     time.className = 'mm-time';
     time.textContent = gTimeText(m.ts);
     meta.appendChild(time);
+    meta.appendChild(gBuildCopyBtn(m));
     return meta;
 }
 
@@ -189,6 +223,12 @@ function gBuildEmpty() {
 // 全量重建——首次加载 / 手动刷新（滚到最新）
 function gRenderMessages(list) {
     gMsgsEl.textContent = '';
+    if (gHasMore) {
+        var hint = document.createElement('div');
+        hint.className = 'chat-plain group-hint';
+        hint.textContent = '（仅显示最近 200 条——更早的消息未加载）';
+        gMsgsEl.appendChild(hint);
+    }
     if (list.length === 0) {
         gMsgsEl.appendChild(gBuildEmpty());
         return;
@@ -220,18 +260,20 @@ function gAppendMessages(list) {
 
 // [段3] 发送
 
-// 发送一条讨论消息（type=note；组名由端口决定，body 不带 group）
+// 发送一条消息——选 @ 走派单（delegation，回执自动回组）；不选只记流水（note）
 function gSend() {
     var text = gInputEl.value.trim();
     if (text.length === 0) {
         return;
     }
-    var from = gFromSel.value;
+    var to = gToSel.value || '';
+    var isDelegation = to.length > 0;
     gSendBtn.disabled = true;
+    gMsgEl.textContent = isDelegation ? '派单中…' : '发送中…';
     fetch('/api/v1/group/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: from, type: 'note', text: text })
+        body: JSON.stringify({ type: isDelegation ? 'delegation' : 'note', to: to, text: text })
     })
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -241,7 +283,13 @@ function gSend() {
                 return;
             }
             gInputEl.value = '';
-            gMsgEl.textContent = '已发送';
+            if (d.warning && d.warning.length > 0) {
+                gMsgEl.textContent = '已入组，未投递（目标猫未运行）';
+            } else if (isDelegation) {
+                gMsgEl.textContent = '已派单';
+            } else {
+                gMsgEl.textContent = '已发送';
+            }
             gPollTick();
             gLoadInfo();
         })
@@ -316,31 +364,90 @@ function gOnVisibilityChange() {
 
 // [段5] 身份下拉与初始化
 
-// 猫列表——发送身份可选（空 = 人 / 匿名）
-function gLoadCats() {
-    fetch('/api/v1/cats', { cache: 'no-store' })
+// 成员名册文本——顶栏 title（姓名（key）+ 角色，一行一人）
+function gMemberRoster(members) {
+    if (members.length === 0) {
+        return '（无成员）';
+    }
+    var lines = [];
+    for (var i = 0; i < members.length; i = i + 1) {
+        var m = members[i];
+        if (!m || !m.key) {
+            continue;
+        }
+        var role = '';
+        if (m.admin) {
+            role = role + ' 管理员';
+        }
+        if (m.subscriber) {
+            role = role + ' 订阅';
+        }
+        lines.push((m.displayName || m.key) + '（' + m.key + '）' + role);
+    }
+    return lines.join('\n');
+}
+
+// @ 目标下拉——本组成员（★ 管理员 / 🔔 订阅）；首项「无 @」= 只记流水
+function gFillTargets(members) {
+    var keep = gToSel.value;
+    gToSel.textContent = '';
+    var none = document.createElement('option');
+    none.value = '';
+    none.textContent = '无 @（只记流水，订阅渠道推送）';
+    gToSel.appendChild(none);
+    for (var i = 0; i < members.length; i = i + 1) {
+        var m = members[i];
+        if (!m || !m.key) {
+            continue;
+        }
+        var opt = document.createElement('option');
+        opt.value = m.key;
+        var prefix = '';
+        if (m.admin) {
+            prefix = '★ ';
+        }
+        if (m.subscriber) {
+            prefix = prefix + '🔔 ';
+        }
+        opt.textContent = prefix + (m.displayName || m.key) + '（' + m.key + '）';
+        gToSel.appendChild(opt);
+    }
+    gToSel.value = keep;
+}
+
+// [段6] 清空——勾选确认后归档旧流并重置（新流 #1 起）
+
+// 清空本组消息流（旧流原地归档为 .bak；订阅游标随服务端一并归零）
+function gClearMessages() {
+    if (!gClearConfirm.checked) {
+        gMsgEl.textContent = '请先勾选「确认清空」';
+        return;
+    }
+    gClearConfirm.checked = false;
+    gClearBtn.disabled = true;
+    gMsgEl.textContent = '清空中…';
+    fetch('/api/v1/group/clear', { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function (d) {
-            var cats = d.cats || [];
-            gFromSel.textContent = '';
-            var human = document.createElement('option');
-            human.value = '';
-            human.textContent = '人（匿名）';
-            gFromSel.appendChild(human);
-            for (var i = 0; i < cats.length; i = i + 1) {
-                var opt = document.createElement('option');
-                opt.value = cats[i].id;
-                var prefix = '';
-                if (cats[i].special) {
-                    prefix = '★ ';
-                }
-                opt.textContent = prefix + (cats[i].name || cats[i].id);
-                gFromSel.appendChild(opt);
+            if (!d.ok) {
+                gMsgEl.textContent = '清空失败: ' + (d.error || '');
+                return;
             }
+            gLastSeq = 0;
+            gHasMore = false;
+            gMsgsEl.textContent = '';
+            gMsgEl.textContent = '已清空（旧消息已归档）';
+            gLoadInfo();
+            gLoadMessages();
         })
-        .catch(function () {
-            gMsgEl.textContent = '猫列表读取失败（发送可用匿名）';
+        .catch(function (e) {
+            gMsgEl.textContent = '清空失败: ' + e;
         });
+}
+
+// 勾选态联动按钮可用性
+function gSyncClearState() {
+    gClearBtn.disabled = !gClearConfirm.checked;
 }
 
 document.getElementById('chatRefresh').onclick = function () {
@@ -348,6 +455,8 @@ document.getElementById('chatRefresh').onclick = function () {
     gLoadMessages();
 };
 gSendBtn.onclick = gSend;
+gClearBtn.onclick = gClearMessages;
+gClearConfirm.onchange = gSyncClearState;
 gInputEl.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -356,9 +465,55 @@ gInputEl.addEventListener('keydown', function (e) {
 });
 document.addEventListener('visibilitychange', gOnVisibilityChange);
 
-// 引导——版本标记 / 身份列表 / 组信息 / 消息流 / 自绘滚动带接线
+// 引导——版本标记 / @ 目标（随组信息填充）/ 组信息 / 消息流 / 自绘滚动带接线
 loadUiVersion();
-gLoadCats();
 gLoadInfo();
 gLoadMessages();
 chatScrollInit();
+
+// [段7] 消息操作（A313）——@ 快捷填入 · 单条复制（纯前端，无业务语义）
+
+// 点某条猫消息的发送方名字——把该猫填进 @ 目标选择器（唯一语义：快捷输入，不发送、不引用）
+function gPickTarget(key) {
+    if (!key) {
+        return;
+    }
+    var hit = '';
+    for (var i = 0; i < gToSel.options.length; i = i + 1) {
+        if (gToSel.options[i].value === key) {
+            hit = key;
+            break;
+        }
+    }
+    if (hit === '') {
+        gMsgEl.textContent = '该发送方不在组内成员，无法 @';
+        return;
+    }
+    gToSel.value = hit;
+    gMsgEl.textContent = '已填入 @' + key;
+    gInputEl.focus();
+}
+
+// 复制一条消息的原文——纯前端剪贴板（写入通道复用 md-copy：127.0.0.1 / localhost 属安全上下文）
+function gCopyMessage(text, btn) {
+    mdWriteClipboard(text || '').then(function () {
+        btn.classList.add('done');
+        window.setTimeout(function () { btn.classList.remove('done'); }, 1200);
+    }).catch(function (e) {
+        gMsgEl.textContent = '复制失败: ' + (e && e.message ? e.message : e);
+    });
+}
+
+// 单条复制按钮——线条图标（复用 mdCopyIcon：零文本节点，不污染 textContent 断言与朗读）
+function gBuildCopyBtn(m) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'msg-copy-btn';
+    btn.title = '复制本条原文';
+    btn.setAttribute('aria-label', '复制本条原文');
+    btn.appendChild(mdCopyIcon());
+    btn.addEventListener('click', function () {
+        gCopyMessage(m.text, btn);
+    });
+    return btn;
+}

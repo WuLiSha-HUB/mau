@@ -2,3 +2,4 @@
 # P8.5d 配置自改最小闭环：Html 前端 Chat 区用户偏好，宿主持久化（前端不自行留存）
 # 键格式 key=value；# 开头为注释；空行跳过；键归属 schema.json（ui.* 段）——值域见 schema 声明
 ui.font_scale=100
+ui.user_name=默认用户

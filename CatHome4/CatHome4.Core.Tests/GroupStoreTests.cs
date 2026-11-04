@@ -86,10 +86,10 @@ namespace CatHome4.Core.Tests
             Assert.Equal(new string[] { "majordomo" }, list[0].AdminKeys);
         }
         /// <summary>
-        /// 订阅名单——subscriberKeys 只保留成员；消息追加后转发钩子带组名与序号触发一次（订阅面接线判据）。
+        /// 订阅名单与游标——subscriberKeys 只保留成员；游标缺省 0、推进后可读回；静默阈值缺省 300 秒。
         /// </summary>
         [Fact]
-        public void Subscribers_KeepMembers_And_HookFires()
+        public void Subscribers_KeepMembers_And_CursorRoundTrip()
         {
             GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", null, new string[] { "coder1", "outsider" });
             GroupSummary g = GroupStore.GetGroup("施工队");
@@ -99,23 +99,102 @@ namespace CatHome4.Core.Tests
                 return;
             }
             Assert.Equal(new string[] { "coder1" }, g.SubscriberKeys);
-            string hookedGroup = "";
-            long hookedSeq = 0;
-            GroupStore.MessageAppended = delegate (string groupName, GroupMessage msg)
+            Assert.Equal(0, GroupStore.GetSubscriberCursor("施工队", "coder1"));
+            Assert.Equal(GroupStore.DefaultSubscribeIdleSec, GroupStore.GetSubscribeIdleSec(g));
+            Assert.StartsWith("ok|", GroupStore.SetSubscriberCursor("施工队", "coder1", 7), StringComparison.Ordinal);
+            Assert.Equal(7, GroupStore.GetSubscriberCursor("施工队", "coder1"));
+        }
+
+        /// <summary>
+        /// 游标收敛——取消订阅删游标；重新订阅从当前末序号起（不补历史）；原订阅者游标保留。
+        /// </summary>
+        [Fact]
+        public void Cursors_Reseed_On_SubscriptionChange()
+        {
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", null, new string[] { "coder1" });
+            Assert.Equal(0, GroupStore.GetSubscriberCursor("施工队", "coder1"));
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "第一条", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "第二条", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.SetSubscriberCursor("施工队", "coder1", 1), StringComparison.Ordinal);
+            // 改组不动原订阅者游标
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", null, new string[] { "coder1" });
+            Assert.Equal(1, GroupStore.GetSubscriberCursor("施工队", "coder1"));
+            // 取消订阅 → 游标删除
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", null, new string[0]);
+            GroupSummary g = GroupStore.GetGroup("施工队");
+            Assert.NotNull(g);
+            if (g == null)
             {
-                hookedGroup = groupName;
-                hookedSeq = msg.Seq;
-            };
-            try
-            {
-                Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "第一条", ""), StringComparison.Ordinal);
+                return;
             }
-            finally
+            Assert.False(g.SubscribeCursors.ContainsKey("coder1"));
+            Assert.Equal(0, GroupStore.GetSubscriberCursor("施工队", "coder1"));
+            // 重新订阅 → 从当前末序号（2）起，不补历史
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", null, new string[] { "coder1" });
+            Assert.Equal(2, GroupStore.GetSubscriberCursor("施工队", "coder1"));
+        }
+
+        /// <summary>
+        /// 发送方校验——非成员署名拒绝；空发送方（人 / 外部通道）放行。
+        /// </summary>
+        [Fact]
+        public void Append_FromNotMember_Rejected()
+        {
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo" }, "");
+            Assert.StartsWith("ERR|GROUP_FROM_NOT_MEMBER", GroupStore.AppendMessage("施工队", "outsider", "note", "冒充", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "", "note", "人说的", ""), StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// 尾部读取——超 limit 返回最后 N 条并置 hasMore；不足时 hasMore=false。
+        /// </summary>
+        [Fact]
+        public void ReadTail_ReturnsLastAndHasMore()
+        {
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo" }, "");
+            for (int i = 1; i <= 5; i = i + 1)
             {
-                GroupStore.MessageAppended = null;
+                Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "第" + i.ToString() + "条", ""), StringComparison.Ordinal);
             }
-            Assert.Equal("施工队", hookedGroup);
-            Assert.Equal(1, hookedSeq);
+            bool hasMore = false;
+            List<GroupMessage> tail = GroupStore.ReadTailMessages("施工队", 3, out hasMore);
+            Assert.True(hasMore);
+            Assert.Equal(3, tail.Count);
+            Assert.Equal(3, tail[0].Seq);
+            Assert.Equal(5, tail[2].Seq);
+            List<GroupMessage> all = GroupStore.ReadTailMessages("施工队", 10, out hasMore);
+            Assert.False(hasMore);
+            Assert.Equal(5, all.Count);
+        }
+
+        /// <summary>
+        /// 清空消息流——旧流原地归档为 .bak；统计与订阅游标归零；新流 seq 从 1 起重开。
+        /// </summary>
+        [Fact]
+        public void ClearMessages_ArchivesAndResets()
+        {
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "", null, new string[] { "coder1" });
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "第一条", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "第二条", ""), StringComparison.Ordinal);
+            Assert.StartsWith("ok|", GroupStore.SetSubscriberCursor("施工队", "coder1", 2), StringComparison.Ordinal);
+            string result = GroupStore.ClearMessages("施工队");
+            Assert.StartsWith("ok|施工队|messages.", result, StringComparison.Ordinal);
+            Assert.EndsWith(".jsonl.bak", result, StringComparison.Ordinal);
+            GroupSummary g = GroupStore.GetGroup("施工队");
+            Assert.NotNull(g);
+            if (g == null)
+            {
+                return;
+            }
+            Assert.Equal(0, g.LastSeq);
+            Assert.Equal(0, g.MsgCount);
+            Assert.Empty(g.SubscribeCursors);
+            string archivedName = result.Split('|')[2];
+            Assert.True(File.Exists(Path.Combine(_dir, "施工队", archivedName)));
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "note", "清空后第一条", ""), StringComparison.Ordinal);
+            List<GroupMessage> all = GroupStore.ReadMessages("施工队", 0, 0);
+            Assert.Single(all);
+            Assert.Equal(1, all[0].Seq);
         }
 
         /// <summary>
@@ -145,8 +224,8 @@ namespace CatHome4.Core.Tests
         [Fact]
         public void Append_SeqMonotonic_AndReadAfter()
         {
-            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo" }, "");
-            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "delegation", "第一条", ""), StringComparison.Ordinal);
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1" }, "");
+            Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "majordomo", "delegation", "第一条", "", "coder1"), StringComparison.Ordinal);
             Assert.StartsWith("ok|", GroupStore.AppendMessage("施工队", "coder1", "receipt", "收到", "d-1"), StringComparison.Ordinal);
             List<GroupMessage> all = GroupStore.ReadMessages("施工队", 0, 0);
             Assert.Equal(2, all.Count);

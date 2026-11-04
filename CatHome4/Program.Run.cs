@@ -84,6 +84,8 @@ namespace CH4
                 segTicks = Stopwatch.GetTimestamp();
                 _chatBridge.PumpSessions();
                 LoopTiming.Accumulate("sessions", ElapsedMsSince(segTicks));
+                // 组订阅巡检——静默窗口到期且订阅者有未读时汇总推送（内部 1 秒节流，开销可忽略）
+                CatHome4.Admin.GroupAutoForward.PumpIdle();
                 segTicks = Stopwatch.GetTimestamp();
                 AdminService.PumpInputQueue();
                 LoopTiming.Accumulate("catqueue", ElapsedMsSince(segTicks));
