@@ -299,7 +299,7 @@ namespace CatHome4.Admin
             string summary = g.Name + " | 已派单 → " + toName + " · #" + seq.ToString();
             return BuildReply("group-delegate", g.Name, -1, extras, summary, new List<string>());
         }
-        /// <summary>重建会话（group-newsession）——管理员发起；目标须成员且运行中；目标是调用者自己时挂起到轮末。</summary>
+        /// <summary>重建会话（group-newsession）——管理员发起；目标须成员且运行中；管理员不得重建另一名管理员（单向数据流）；目标是调用者自己时挂起到轮末。</summary>
         /// <param name="argsJson">工具参数 JSON（group / to / reason 必填；firstMessage 可选）</param>
         /// <returns>A214 回执（头行 + 摘要行 + 正文行）；失败为 ERR| 前缀</returns>
         public string NewSession(string argsJson)
@@ -348,6 +348,11 @@ namespace CatHome4.Admin
             if (!IsMember(g, to))
             {
                 return "ERR|GROUP_TARGET_NOT_MEMBER|@ 目标不在组内: " + to;
+            }
+            // 单向数据流：管理员不得重建另一名管理员——只能重建自己或非管理成员
+            if (!string.Equals(to, catId, StringComparison.Ordinal) && IsAdmin(g, to))
+            {
+                return "ERR|GROUP_TARGET_IS_ADMIN|管理员不得重建另一名管理员（仅可重建自己或非管理成员）: " + to;
             }
             if (reason.Length == 0)
             {
