@@ -1,6 +1,7 @@
 ﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 五件独立 Flow）
-// 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-say / group-send / group-newsession
-// 权限：组成员（info / inbox / say）；派单与重建会话（send / newsession）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
+// 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-post / group-delegate / group-newsession
+// 权限：组成员（info / inbox / post）；派活与重建会话（delegate / newsession）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
+// 命名（2026-11-05 莎裁 β）：group-post 只写组流不唤醒、无 @ 目标参数；group-delegate 才派活并唤醒目标猫（积木名 group.say / group.send 为内部实现名，不改）
 // 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 5 线认领执行 → complete_str 回执
 // 载荷协议：officeName = 工具名（连字符分隔）；载荷 key "args" = 整包工具参数 JSON（含宿主注入保留键 catId）
 // 线程模型：全部主线程同步——投递触碰会话面（ThreadGuard 主线程守卫），不得 par 化
@@ -9,15 +10,15 @@
 // ── 状态机（5 线——每线独立生命周期）──
 § 'S_Info' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_Inbox' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
-§ 'S_Say' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
-§ 'S_Send' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Post' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Delegate' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_New' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 
 // ── 主动传感器壳——5 线各自探测（纯只读判断积木 → bool 落盒）──
 § 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-info"] > @giOpen
 § 'P_InboxOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-inbox"] > @gxOpen
-§ 'P_SayOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-say"] > @gsOpen
-§ 'P_SendOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-send"] > @gdOpen
+§ 'P_PostOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-post"] > @gsOpen
+§ 'P_DelegateOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-delegate"] > @gdOpen
 § 'P_NewOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-newsession"] > @gnOpen
 
 // ══════════════ group-info 线 ══════════════
@@ -34,19 +35,19 @@
 § 'T_InboxReply' : 'S_Inbox' = 'Done' → 'oa.complete_str'[@gxOffice, @gxRes] | 'self.desc'["空闲待命", "", ""] | 'S_Inbox' = 'Idle' | 'S_Inbox' = 'Idle'
 § 'T_InboxAbort' : 'S_Inbox' = 'Failed' → 'oa.complete_str'[@gxOffice, @gxRes] | 'S_Inbox' = 'Idle' | 'S_Inbox' = 'Idle'
 
-// ══════════════ group-say 线 ══════════════
-§ 'T_SayClaim' : @gsOpen & 'S_Say' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-say"] > @gsOffice | 'S_Say' = 'Claimed' | 'S_Say' = 'Idle'
-§ 'T_SayArgs' : 'S_Say' = 'Claimed' → 'oa.get_str'[@gsOffice, "args"] > @gsArgs | 'self.desc'["group-say 执行中", "", ""] | 'S_Say' = 'Ready' | 'S_Say' = 'Failed'
-§ 'T_SayExec' : 'S_Say' = 'Ready' → 'group.say'[@gsArgs] > @gsRes | 'S_Say' = 'Done' | 'S_Say' = 'Failed'
-§ 'T_SayReply' : 'S_Say' = 'Done' → 'oa.complete_str'[@gsOffice, @gsRes] | 'self.desc'["空闲待命", "", ""] | 'S_Say' = 'Idle' | 'S_Say' = 'Idle'
-§ 'T_SayAbort' : 'S_Say' = 'Failed' → 'oa.complete_str'[@gsOffice, @gsRes] | 'S_Say' = 'Idle' | 'S_Say' = 'Idle'
+// ══════════════ group-post 线 ══════════════
+§ 'T_PostClaim' : @gsOpen & 'S_Post' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-post"] > @gsOffice | 'S_Post' = 'Claimed' | 'S_Post' = 'Idle'
+§ 'T_PostArgs' : 'S_Post' = 'Claimed' → 'oa.get_str'[@gsOffice, "args"] > @gsArgs | 'self.desc'["group-post 执行中", "", ""] | 'S_Post' = 'Ready' | 'S_Post' = 'Failed'
+§ 'T_PostExec' : 'S_Post' = 'Ready' → 'group.say'[@gsArgs] > @gsRes | 'S_Post' = 'Done' | 'S_Post' = 'Failed'
+§ 'T_PostReply' : 'S_Post' = 'Done' → 'oa.complete_str'[@gsOffice, @gsRes] | 'self.desc'["空闲待命", "", ""] | 'S_Post' = 'Idle' | 'S_Post' = 'Idle'
+§ 'T_PostAbort' : 'S_Post' = 'Failed' → 'oa.complete_str'[@gsOffice, @gsRes] | 'S_Post' = 'Idle' | 'S_Post' = 'Idle'
 
-// ══════════════ group-send 线（派单：写组消息 + 投递目标猫）══════════════
-§ 'T_SendClaim' : @gdOpen & 'S_Send' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-send"] > @gdOffice | 'S_Send' = 'Claimed' | 'S_Send' = 'Idle'
-§ 'T_SendArgs' : 'S_Send' = 'Claimed' → 'oa.get_str'[@gdOffice, "args"] > @gdArgs | 'self.desc'["group-send 执行中", "", ""] | 'S_Send' = 'Ready' | 'S_Send' = 'Failed'
-§ 'T_SendExec' : 'S_Send' = 'Ready' → 'group.send'[@gdArgs] > @gdRes | 'S_Send' = 'Done' | 'S_Send' = 'Failed'
-§ 'T_SendReply' : 'S_Send' = 'Done' → 'oa.complete_str'[@gdOffice, @gdRes] | 'self.desc'["空闲待命", "", ""] | 'S_Send' = 'Idle' | 'S_Send' = 'Idle'
-§ 'T_SendAbort' : 'S_Send' = 'Failed' → 'oa.complete_str'[@gdOffice, @gdRes] | 'S_Send' = 'Idle' | 'S_Send' = 'Idle'
+// ══════════════ group-delegate 线（派活并唤醒：写组消息 + 投递目标猫）══════════════
+§ 'T_DelegateClaim' : @gdOpen & 'S_Delegate' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-delegate"] > @gdOffice | 'S_Delegate' = 'Claimed' | 'S_Delegate' = 'Idle'
+§ 'T_DelegateArgs' : 'S_Delegate' = 'Claimed' → 'oa.get_str'[@gdOffice, "args"] > @gdArgs | 'self.desc'["group-delegate 执行中", "", ""] | 'S_Delegate' = 'Ready' | 'S_Delegate' = 'Failed'
+§ 'T_DelegateExec' : 'S_Delegate' = 'Ready' → 'group.send'[@gdArgs] > @gdRes | 'S_Delegate' = 'Done' | 'S_Delegate' = 'Failed'
+§ 'T_DelegateReply' : 'S_Delegate' = 'Done' → 'oa.complete_str'[@gdOffice, @gdRes] | 'self.desc'["空闲待命", "", ""] | 'S_Delegate' = 'Idle' | 'S_Delegate' = 'Idle'
+§ 'T_DelegateAbort' : 'S_Delegate' = 'Failed' → 'oa.complete_str'[@gdOffice, @gdRes] | 'S_Delegate' = 'Idle' | 'S_Delegate' = 'Idle'
 
 // ══════════════ group-newsession 线（重建会话：管理员发起 + 组内留痕）══════════════
 § 'T_NewClaim' : @gnOpen & 'S_New' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-newsession"] > @gnOffice | 'S_New' = 'Claimed' | 'S_New' = 'Idle'

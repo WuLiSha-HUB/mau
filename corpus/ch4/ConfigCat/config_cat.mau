@@ -6,10 +6,10 @@
 // 与 cs-* 线同构：oa.is_open 探测 → claim_next_simple 原子接单 → get_str 读载荷 → config.bridge / catcfg.bridge 直执 → complete_str 回执
 // 写入唯一实现 = ConfigStore.SetChecked/ResetToDefault（schema 白名单 + 值域校验 + 原子写 + 失败回滚）；llm.* 私密环境变量只读
 //   config-cat-* = cat.cfg 字段级合并写（读现值 → 改单字段 → 全量写回；内核指令 cat.cfg.get/set）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；config-* 4 线执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；config-* 4 线执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 🔴 config-cat-get / config-cat-set 两线不得 par 化：cat.cfg 内核触碰注册表与会话面（ThreadGuard 主线程守卫）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
-//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 2400 帧（120s）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 1200 帧（120s）
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ trace.timeout / trace.late_discard
 // 变更（2026-09-14 A48）：exec 导线 par 化——self.desc 挪至 args 导线（par 导线单动作约束）
 
@@ -35,28 +35,28 @@
 // ══════════════ config-list 线 ══════════════
 § 'T_CfgListClaim' : @cfLstOpen & 'S_CfgList' = 'Idle' → 'oa.claim_next_simple'["TOOL", "config-list"] > @cfLstOffice | 'S_CfgList' = 'Claimed' | 'S_CfgList' = 'Idle'
 § 'T_CfgListArgs' : 'S_CfgList' = 'Claimed' → 'oa.get_str'[@cfLstOffice, "args"] > @cfLstArgs | 'self.desc'["config-list 执行中", "", ""] | 'S_CfgList' = 'Ready' | 'S_CfgList' = 'Failed'
-§ 'T_CfgListExec' [t=2400, par] : 'S_CfgList' = 'Ready' → 'config.bridge'["list", @cfLstArgs] > @cfLstRes | 'S_CfgList' = 'Done' | 'S_CfgList' = 'Failed'
+§ 'T_CfgListExec' [t=1200, par] : 'S_CfgList' = 'Ready' → 'config.bridge'["list", @cfLstArgs] > @cfLstRes | 'S_CfgList' = 'Done' | 'S_CfgList' = 'Failed'
 § 'T_CfgListReply' : 'S_CfgList' = 'Done' → 'oa.complete_str'[@cfLstOffice, @cfLstRes] | 'self.desc'["空闲待命", "", ""] | 'S_CfgList' = 'Idle' | 'S_CfgList' = 'Idle'
 § 'T_CfgListAbort' : 'S_CfgList' = 'Failed' → 'oa.complete_str'[@cfLstOffice, @cfLstRes] | 'S_CfgList' = 'Idle' | 'S_CfgList' = 'Idle'
 
 // ══════════════ config-get 线 ══════════════
 § 'T_CfgGetClaim' : @cfGetOpen & 'S_CfgGet' = 'Idle' → 'oa.claim_next_simple'["TOOL", "config-get"] > @cfGetOffice | 'S_CfgGet' = 'Claimed' | 'S_CfgGet' = 'Idle'
 § 'T_CfgGetArgs' : 'S_CfgGet' = 'Claimed' → 'oa.get_str'[@cfGetOffice, "args"] > @cfGetArgs | 'self.desc'["config-get 执行中", "", ""] | 'S_CfgGet' = 'Ready' | 'S_CfgGet' = 'Failed'
-§ 'T_CfgGetExec' [t=2400, par] : 'S_CfgGet' = 'Ready' → 'config.bridge'["get", @cfGetArgs] > @cfGetRes | 'S_CfgGet' = 'Done' | 'S_CfgGet' = 'Failed'
+§ 'T_CfgGetExec' [t=1200, par] : 'S_CfgGet' = 'Ready' → 'config.bridge'["get", @cfGetArgs] > @cfGetRes | 'S_CfgGet' = 'Done' | 'S_CfgGet' = 'Failed'
 § 'T_CfgGetReply' : 'S_CfgGet' = 'Done' → 'oa.complete_str'[@cfGetOffice, @cfGetRes] | 'self.desc'["空闲待命", "", ""] | 'S_CfgGet' = 'Idle' | 'S_CfgGet' = 'Idle'
 § 'T_CfgGetAbort' : 'S_CfgGet' = 'Failed' → 'oa.complete_str'[@cfGetOffice, @cfGetRes] | 'S_CfgGet' = 'Idle' | 'S_CfgGet' = 'Idle'
 
 // ══════════════ config-set 线 ══════════════
 § 'T_CfgSetClaim' : @cfSetOpen & 'S_CfgSet' = 'Idle' → 'oa.claim_next_simple'["TOOL", "config-set"] > @cfSetOffice | 'S_CfgSet' = 'Claimed' | 'S_CfgSet' = 'Idle'
 § 'T_CfgSetArgs' : 'S_CfgSet' = 'Claimed' → 'oa.get_str'[@cfSetOffice, "args"] > @cfSetArgs | 'self.desc'["config-set 执行中", "", ""] | 'S_CfgSet' = 'Ready' | 'S_CfgSet' = 'Failed'
-§ 'T_CfgSetExec' [t=2400, par] : 'S_CfgSet' = 'Ready' → 'config.bridge'["set", @cfSetArgs] > @cfSetRes | 'S_CfgSet' = 'Done' | 'S_CfgSet' = 'Failed'
+§ 'T_CfgSetExec' [t=1200, par] : 'S_CfgSet' = 'Ready' → 'config.bridge'["set", @cfSetArgs] > @cfSetRes | 'S_CfgSet' = 'Done' | 'S_CfgSet' = 'Failed'
 § 'T_CfgSetReply' : 'S_CfgSet' = 'Done' → 'oa.complete_str'[@cfSetOffice, @cfSetRes] | 'self.desc'["空闲待命", "", ""] | 'S_CfgSet' = 'Idle' | 'S_CfgSet' = 'Idle'
 § 'T_CfgSetAbort' : 'S_CfgSet' = 'Failed' → 'oa.complete_str'[@cfSetOffice, @cfSetRes] | 'S_CfgSet' = 'Idle' | 'S_CfgSet' = 'Idle'
 
 // ══════════════ config-reset 线 ══════════════
 § 'T_CfgResetClaim' : @cfRstOpen & 'S_CfgReset' = 'Idle' → 'oa.claim_next_simple'["TOOL", "config-reset"] > @cfRstOffice | 'S_CfgReset' = 'Claimed' | 'S_CfgReset' = 'Idle'
 § 'T_CfgResetArgs' : 'S_CfgReset' = 'Claimed' → 'oa.get_str'[@cfRstOffice, "args"] > @cfRstArgs | 'self.desc'["config-reset 执行中", "", ""] | 'S_CfgReset' = 'Ready' | 'S_CfgReset' = 'Failed'
-§ 'T_CfgResetExec' [t=2400, par] : 'S_CfgReset' = 'Ready' → 'config.bridge'["reset", @cfRstArgs] > @cfRstRes | 'S_CfgReset' = 'Done' | 'S_CfgReset' = 'Failed'
+§ 'T_CfgResetExec' [t=1200, par] : 'S_CfgReset' = 'Ready' → 'config.bridge'["reset", @cfRstArgs] > @cfRstRes | 'S_CfgReset' = 'Done' | 'S_CfgReset' = 'Failed'
 § 'T_CfgResetReply' : 'S_CfgReset' = 'Done' → 'oa.complete_str'[@cfRstOffice, @cfRstRes] | 'self.desc'["空闲待命", "", ""] | 'S_CfgReset' = 'Idle' | 'S_CfgReset' = 'Idle'
 § 'T_CfgResetAbort' : 'S_CfgReset' = 'Failed' → 'oa.complete_str'[@cfRstOffice, @cfRstRes] | 'S_CfgReset' = 'Idle' | 'S_CfgReset' = 'Idle'
 

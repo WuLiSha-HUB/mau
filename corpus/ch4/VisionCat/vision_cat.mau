@@ -4,9 +4,9 @@
 // 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON
 // 无值分支：工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：@vrOffice 等私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
-//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 2400 帧（120s）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 1200 帧（120s）
 //   —— 视觉 API 网络等待原为同步阻塞主线程——par 化后主循环不中断
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ trace.timeout / trace.late_discard
 // 变更（2026-09-14 A48）：exec 导线 par 化——self.desc 挪至 args 导线（par 导线单动作约束）
@@ -29,7 +29,7 @@
 § 'T_VisionArgs' : 'S_Vision' = 'Claimed' → 'oa.get_str'[@vrOffice, "args"] > @vrArgs | 'self.desc'["image-analyze 执行中", "", ""] | 'S_Vision' = 'Ready' | 'S_Vision' = 'Failed'
 
 // T_VisionExec：执行积木（识图——图片读取与格式化在工具内部；失败侧 ERR 文本也在 @vrRes）——后台执行
-§ 'T_VisionExec' [t=2400, par] : 'S_Vision' = 'Ready' → 'vision.analyze'[@vrArgs] > @vrRes | 'S_Vision' = 'Done' | 'S_Vision' = 'Failed'
+§ 'T_VisionExec' [t=1200, par] : 'S_Vision' = 'Ready' → 'vision.analyze'[@vrArgs] > @vrRes | 'S_Vision' = 'Done' | 'S_Vision' = 'Failed'
 
 // T_VisionReply：成功回执（result=分析结果文本）
 § 'T_VisionReply' : 'S_Vision' = 'Done' → 'oa.complete_str'[@vrOffice, @vrRes] | 'self.desc'["空闲待命", "", ""] | 'S_Vision' = 'Idle' | 'S_Vision' = 'Idle'

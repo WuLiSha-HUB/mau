@@ -4,10 +4,10 @@
 // 载荷协议：officeName = 工具名（powershell / powershell7）；载荷 key "args" = 整包工具参数 JSON（command/cwd/timeout_ms）
 // 无值分支：每工具一条认领线，工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：@psOffice/@psArgs/@psRes + @pwshOffice/@pwshArgs/@pwshRes 私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
 //   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）
-//   —— 超时 2400 帧（120s）：后台未回投则主动按失败结算（T_ExecAbort 回执 ERR 可见）
+//   —— 超时 1200 帧（120s）：后台未回投则主动按失败结算（T_ExecAbort 回执 ERR 可见）
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ trace.timeout / trace.late_discard
 // 拦截语义：写文件/Start-Process/ReadKey 在 PsService 侧词法拦截（ERR| 回执——错误可见性）
 // 变更（2026-09-14 A48）：exec 导线 par 化——self.desc 挪至 args 导线（par 导线单动作约束）
@@ -33,7 +33,7 @@
 § 'T_ExecArgs' : 'S_Exec' = 'Claimed' → 'oa.get_str'[@psOffice, "args"] > @psArgs | 'self.desc'["PowerShell 执行中", "", ""] | 'S_Exec' = 'Ready' | 'S_Exec' = 'Failed'
 
 // T_ExecExec：执行积木（argsJson 整包——积木内部解析；失败侧 ERR 文本也在 @psRes）——后台执行
-§ 'T_ExecExec' [t=2400, par] : 'S_Exec' = 'Ready' → 'ps.exec'[@psArgs, "powershell"] > @psRes | 'S_Exec' = 'Done' | 'S_Exec' = 'Failed'
+§ 'T_ExecExec' [t=1200, par] : 'S_Exec' = 'Ready' → 'ps.exec'[@psArgs, "powershell"] > @psRes | 'S_Exec' = 'Done' | 'S_Exec' = 'Failed'
 
 // T_ExecReply：成功回执（result=结果 JSON）
 § 'T_ExecReply' : 'S_Exec' = 'Done' → 'oa.complete_str'[@psOffice, @psRes] | 'self.desc'["PowerShell 空闲待命", "", ""] | 'S_Exec' = 'Idle' | 'S_Exec' = 'Idle'
@@ -53,7 +53,7 @@
 § 'T_PwshArgs' : 'S_Pwsh' = 'Claimed' → 'oa.get_str'[@pwshOffice, "args"] > @pwshArgs | 'self.desc'["PowerShell 7 执行中", "", ""] | 'S_Pwsh' = 'Ready' | 'S_Pwsh' = 'Failed'
 
 // T_PwshExec：执行积木（shell 标识 "powershell7"——未配置路径回 ERR|PS_PWSH_MISSING，路径不存在回 ERR|PS_PWSH_NOT_FOUND）——后台执行
-§ 'T_PwshExec' [t=2400, par] : 'S_Pwsh' = 'Ready' → 'ps.exec'[@pwshArgs, "powershell7"] > @pwshRes | 'S_Pwsh' = 'Done' | 'S_Pwsh' = 'Failed'
+§ 'T_PwshExec' [t=1200, par] : 'S_Pwsh' = 'Ready' → 'ps.exec'[@pwshArgs, "powershell7"] > @pwshRes | 'S_Pwsh' = 'Done' | 'S_Pwsh' = 'Failed'
 
 // T_PwshReply：成功回执（result=结果 JSON）
 § 'T_PwshReply' : 'S_Pwsh' = 'Done' → 'oa.complete_str'[@pwshOffice, @pwshRes] | 'self.desc'["PowerShell 7 空闲待命", "", ""] | 'S_Pwsh' = 'Idle' | 'S_Pwsh' = 'Idle'

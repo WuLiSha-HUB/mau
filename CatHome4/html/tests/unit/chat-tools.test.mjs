@@ -49,7 +49,7 @@ const POOL = [
     // TsCat 5（A294——TS 编码工具面）
     'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
     // GroupCat 5（A306 / A309——群聊 / 派单回执 / 会话重建）
-    'group-info', 'group-inbox', 'group-say', 'group-send', 'group-newsession',
+    'group-info', 'group-inbox', 'group-post', 'group-delegate', 'group-newsession',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -543,23 +543,23 @@ describe('GroupCat——群聊 / 派单工具（A306）', () => {
         expect(text).toContain('#6 [回执] GroupTest');
     });
 
-    it('group-send——落位序号进折叠行，两行交付说明', () => {
-        const res = '{"ok":true,"tool":"group-send","target":"猫窝施工大队","seq":7,"to":"k2"}'
+    it('group-delegate——落位序号进折叠行，两行交付说明（派活并唤醒）', () => {
+        const res = '{"ok":true,"tool":"group-delegate","target":"猫窝施工大队","seq":7,"to":"k2"}'
             + '\n猫窝施工大队 | 已派单 → GroupTest · #7';
-        const node = window.buildToolBlock(card('group-send', { group: '猫窝施工大队', to: 'k2', text: '干活' }, res), 'toolcard');
+        const node = window.buildToolBlock(card('group-delegate', { group: '猫窝施工大队', to: 'k2', text: '干活' }, res), 'toolcard');
         const text = node.textContent;
-        expect(text).toContain('派单 → k2 · #7 已投递');
+        expect(text).toContain('派活 → k2 · #7 已唤醒');
         expect(text).toContain('已入组 #7');
-        expect(text).toContain('已投递给 k2');
+        expect(text).toContain('已唤醒 k2');
     });
 
-    it('group-say——发言只记流水（不投递）；失败态机器码可见', () => {
-        const ok = window.buildToolBlock(card('group-say', { group: '猫窝施工大队', text: '讨论' },
-            '{"ok":true,"tool":"group-say","target":"猫窝施工大队","seq":8}\n猫窝施工大队 | 已记 #8'), 'toolcard');
+    it('group-post——发言只记流水（不唤醒任何人）；失败态机器码可见', () => {
+        const ok = window.buildToolBlock(card('group-post', { group: '猫窝施工大队', text: '讨论' },
+            '{"ok":true,"tool":"group-post","target":"猫窝施工大队","seq":8}\n猫窝施工大队 | 已记 #8'), 'toolcard');
         expect(ok.textContent).toContain('#8');
-        expect(ok.textContent).toContain('不投递');
+        expect(ok.textContent).toContain('不唤醒任何人');
 
-        const err = window.buildToolBlock(card('group-send', { group: '猫窝施工大队', to: 'x', text: 'y' },
+        const err = window.buildToolBlock(card('group-delegate', { group: '猫窝施工大队', to: 'x', text: 'y' },
             'ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: k9'), 'toolcard');
         expect(err.textContent).toContain('GROUP_NOT_ADMIN');
     });

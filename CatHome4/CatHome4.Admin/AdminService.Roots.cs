@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
+using CH4;
 using Mau.Runtime;
 
 namespace CatHome4.Admin
@@ -576,7 +577,10 @@ namespace CatHome4.Admin
             string content = "[来自组:" + group + "] #" + seq + " 回执\n" + body;
             if (!cat.Session.PostUserMessage(content, "user", "", ""))
             {
-                LogStore.Add("CatHome4", 2, "组回执通知未受理: " + group + " | " + targetKey, "GROUP");
+                // 停机窗口（host_restart_state=requested）拒收——事实不丢：转延迟队列待重投（落盘跨重启，重启后由
+                // 新宿主 Load + PumpDelays 以 sys 通道补投；登记失败也在日志里出声）
+                string addResult = DelayQueue.Add(targetKey, content, "group-receipt", DelayQueue.Now());
+                LogStore.Add("CatHome4", 2, "组回执通知未受理 → 已转待重投: " + group + " | " + targetKey + " | " + addResult, "GROUP");
             }
         }
     }

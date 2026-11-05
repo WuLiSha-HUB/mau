@@ -4,10 +4,10 @@
 // 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON
 // 无值分支：每工具一条认领线，工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：@ckOffice 等私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
 //   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）
-//   —— 超时 2400 帧（120s）：后台未回投则主动按失败结算（T_*Abort 回执 ERR 可见）
+//   —— 超时 1200 帧（120s）：后台未回投则主动按失败结算（T_*Abort 回执 ERR 可见）
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ trace.timeout / trace.late_discard
 // 变更（2026-09-14 A48）：exec 导线 par 化——self.desc 挪至 args 导线（par 导线单动作约束）；执行脱离主线程
 
@@ -47,90 +47,90 @@
 // ══════════════ cs-check 线 ══════════════
 § 'T_CheckClaim' : @ckOpen & 'S_Check' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-check"] > @ckOffice | 'S_Check' = 'Claimed' | 'S_Check' = 'Idle'
 § 'T_CheckArgs' : 'S_Check' = 'Claimed' → 'oa.get_str'[@ckOffice, "args"] > @ckArgs | 'self.desc'["cs-check 执行中", "", ""] | 'S_Check' = 'Ready' | 'S_Check' = 'Failed'
-§ 'T_CheckExec' [t=2400, par] : 'S_Check' = 'Ready' → 'csharp.bridge'["check", @ckArgs] > @ckRes | 'S_Check' = 'Done' | 'S_Check' = 'Failed'
+§ 'T_CheckExec' [t=1200, par] : 'S_Check' = 'Ready' → 'csharp.bridge'["check", @ckArgs] > @ckRes | 'S_Check' = 'Done' | 'S_Check' = 'Failed'
 § 'T_CheckReply' : 'S_Check' = 'Done' → 'oa.complete_str'[@ckOffice, @ckRes] | 'self.desc'["空闲待命", "", ""] | 'S_Check' = 'Idle' | 'S_Check' = 'Idle'
 § 'T_CheckAbort' : 'S_Check' = 'Failed' → 'oa.complete_str'[@ckOffice, @ckRes] | 'S_Check' = 'Idle' | 'S_Check' = 'Idle'
 
 // ══════════════ cs-build 线 ══════════════
 § 'T_BuildClaim' : @buOpen & 'S_Build' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-build"] > @buOffice | 'S_Build' = 'Claimed' | 'S_Build' = 'Idle'
 § 'T_BuildArgs' : 'S_Build' = 'Claimed' → 'oa.get_str'[@buOffice, "args"] > @buArgs | 'self.desc'["cs-build 执行中", "", ""] | 'S_Build' = 'Ready' | 'S_Build' = 'Failed'
-§ 'T_BuildExec' [t=2400, par] : 'S_Build' = 'Ready' → 'csharp.bridge'["build", @buArgs] > @buRes | 'S_Build' = 'Done' | 'S_Build' = 'Failed'
+§ 'T_BuildExec' [t=1200, par] : 'S_Build' = 'Ready' → 'csharp.bridge'["build", @buArgs] > @buRes | 'S_Build' = 'Done' | 'S_Build' = 'Failed'
 § 'T_BuildReply' : 'S_Build' = 'Done' → 'oa.complete_str'[@buOffice, @buRes] | 'self.desc'["空闲待命", "", ""] | 'S_Build' = 'Idle' | 'S_Build' = 'Idle'
 § 'T_BuildAbort' : 'S_Build' = 'Failed' → 'oa.complete_str'[@buOffice, @buRes] | 'S_Build' = 'Idle' | 'S_Build' = 'Idle'
 
 // ══════════════ cs-list 线 ══════════════
 § 'T_ListClaim' : @liOpen & 'S_List' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-list"] > @liOffice | 'S_List' = 'Claimed' | 'S_List' = 'Idle'
 § 'T_ListArgs' : 'S_List' = 'Claimed' → 'oa.get_str'[@liOffice, "args"] > @liArgs | 'self.desc'["cs-list 执行中", "", ""] | 'S_List' = 'Ready' | 'S_List' = 'Failed'
-§ 'T_ListExec' [t=2400, par] : 'S_List' = 'Ready' → 'csharp.bridge'["list", @liArgs] > @liRes | 'S_List' = 'Done' | 'S_List' = 'Failed'
+§ 'T_ListExec' [t=1200, par] : 'S_List' = 'Ready' → 'csharp.bridge'["list", @liArgs] > @liRes | 'S_List' = 'Done' | 'S_List' = 'Failed'
 § 'T_ListReply' : 'S_List' = 'Done' → 'oa.complete_str'[@liOffice, @liRes] | 'self.desc'["空闲待命", "", ""] | 'S_List' = 'Idle' | 'S_List' = 'Idle'
 § 'T_ListAbort' : 'S_List' = 'Failed' → 'oa.complete_str'[@liOffice, @liRes] | 'S_List' = 'Idle' | 'S_List' = 'Idle'
 
 // ══════════════ cs-read 线 ══════════════
 § 'T_CsReadClaim' : @csOpen & 'S_CsRead' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-read"] > @csOffice | 'S_CsRead' = 'Claimed' | 'S_CsRead' = 'Idle'
 § 'T_CsReadArgs' : 'S_CsRead' = 'Claimed' → 'oa.get_str'[@csOffice, "args"] > @csArgs | 'self.desc'["cs-read 执行中", "", ""] | 'S_CsRead' = 'Ready' | 'S_CsRead' = 'Failed'
-§ 'T_CsReadExec' [t=2400, par] : 'S_CsRead' = 'Ready' → 'csharp.bridge'["read", @csArgs] > @csRes | 'S_CsRead' = 'Done' | 'S_CsRead' = 'Failed'
+§ 'T_CsReadExec' [t=1200, par] : 'S_CsRead' = 'Ready' → 'csharp.bridge'["read", @csArgs] > @csRes | 'S_CsRead' = 'Done' | 'S_CsRead' = 'Failed'
 § 'T_CsReadReply' : 'S_CsRead' = 'Done' → 'oa.complete_str'[@csOffice, @csRes] | 'self.desc'["空闲待命", "", ""] | 'S_CsRead' = 'Idle' | 'S_CsRead' = 'Idle'
 § 'T_CsReadAbort' : 'S_CsRead' = 'Failed' → 'oa.complete_str'[@csOffice, @csRes] | 'S_CsRead' = 'Idle' | 'S_CsRead' = 'Idle'
 
 // ══════════════ cs-find_ref 线 ══════════════
 § 'T_FindRefClaim' : @frOpen & 'S_FindRef' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-find_ref"] > @frOffice | 'S_FindRef' = 'Claimed' | 'S_FindRef' = 'Idle'
 § 'T_FindRefArgs' : 'S_FindRef' = 'Claimed' → 'oa.get_str'[@frOffice, "args"] > @frArgs | 'self.desc'["cs-find_ref 执行中", "", ""] | 'S_FindRef' = 'Ready' | 'S_FindRef' = 'Failed'
-§ 'T_FindRefExec' [t=2400, par] : 'S_FindRef' = 'Ready' → 'csharp.bridge'["find_ref", @frArgs] > @frRes | 'S_FindRef' = 'Done' | 'S_FindRef' = 'Failed'
+§ 'T_FindRefExec' [t=1200, par] : 'S_FindRef' = 'Ready' → 'csharp.bridge'["find_ref", @frArgs] > @frRes | 'S_FindRef' = 'Done' | 'S_FindRef' = 'Failed'
 § 'T_FindRefReply' : 'S_FindRef' = 'Done' → 'oa.complete_str'[@frOffice, @frRes] | 'self.desc'["空闲待命", "", ""] | 'S_FindRef' = 'Idle' | 'S_FindRef' = 'Idle'
 § 'T_FindRefAbort' : 'S_FindRef' = 'Failed' → 'oa.complete_str'[@frOffice, @frRes] | 'S_FindRef' = 'Idle' | 'S_FindRef' = 'Idle'
 
 // ══════════════ cs-find 线 ══════════════
 § 'T_FindClaim' : @fiOpen & 'S_Find' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-find"] > @fiOffice | 'S_Find' = 'Claimed' | 'S_Find' = 'Idle'
 § 'T_FindArgs' : 'S_Find' = 'Claimed' → 'oa.get_str'[@fiOffice, "args"] > @fiArgs | 'self.desc'["cs-find 执行中", "", ""] | 'S_Find' = 'Ready' | 'S_Find' = 'Failed'
-§ 'T_FindExec' [t=2400, par] : 'S_Find' = 'Ready' → 'csharp.bridge'["find", @fiArgs] > @fiRes | 'S_Find' = 'Done' | 'S_Find' = 'Failed'
+§ 'T_FindExec' [t=1200, par] : 'S_Find' = 'Ready' → 'csharp.bridge'["find", @fiArgs] > @fiRes | 'S_Find' = 'Done' | 'S_Find' = 'Failed'
 § 'T_FindReply' : 'S_Find' = 'Done' → 'oa.complete_str'[@fiOffice, @fiRes] | 'self.desc'["空闲待命", "", ""] | 'S_Find' = 'Idle' | 'S_Find' = 'Idle'
 § 'T_FindAbort' : 'S_Find' = 'Failed' → 'oa.complete_str'[@fiOffice, @fiRes] | 'S_Find' = 'Idle' | 'S_Find' = 'Idle'
 
 // ══════════════ cs-patch 线 ══════════════
 § 'T_PatchClaim' : @ptOpen & 'S_Patch' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-patch"] > @ptOffice | 'S_Patch' = 'Claimed' | 'S_Patch' = 'Idle'
 § 'T_PatchArgs' : 'S_Patch' = 'Claimed' → 'oa.get_str'[@ptOffice, "args"] > @ptArgs | 'self.desc'["cs-patch 执行中", "", ""] | 'S_Patch' = 'Ready' | 'S_Patch' = 'Failed'
-§ 'T_PatchExec' [t=2400, par] : 'S_Patch' = 'Ready' → 'csharp.bridge'["patch", @ptArgs] > @ptRes | 'S_Patch' = 'Done' | 'S_Patch' = 'Failed'
+§ 'T_PatchExec' [t=1200, par] : 'S_Patch' = 'Ready' → 'csharp.bridge'["patch", @ptArgs] > @ptRes | 'S_Patch' = 'Done' | 'S_Patch' = 'Failed'
 § 'T_PatchReply' : 'S_Patch' = 'Done' → 'oa.complete_str'[@ptOffice, @ptRes] | 'self.desc'["空闲待命", "", ""] | 'S_Patch' = 'Idle' | 'S_Patch' = 'Idle'
 § 'T_PatchAbort' : 'S_Patch' = 'Failed' → 'oa.complete_str'[@ptOffice, @ptRes] | 'S_Patch' = 'Idle' | 'S_Patch' = 'Idle'
 
 // ══════════════ cs-member 线 ══════════════
 § 'T_MemberClaim' : @mbOpen & 'S_Member' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-member"] > @mbOffice | 'S_Member' = 'Claimed' | 'S_Member' = 'Idle'
 § 'T_MemberArgs' : 'S_Member' = 'Claimed' → 'oa.get_str'[@mbOffice, "args"] > @mbArgs | 'self.desc'["cs-member 执行中", "", ""] | 'S_Member' = 'Ready' | 'S_Member' = 'Failed'
-§ 'T_MemberExec' [t=2400, par] : 'S_Member' = 'Ready' → 'csharp.bridge'["member", @mbArgs] > @mbRes | 'S_Member' = 'Done' | 'S_Member' = 'Failed'
+§ 'T_MemberExec' [t=1200, par] : 'S_Member' = 'Ready' → 'csharp.bridge'["member", @mbArgs] > @mbRes | 'S_Member' = 'Done' | 'S_Member' = 'Failed'
 § 'T_MemberReply' : 'S_Member' = 'Done' → 'oa.complete_str'[@mbOffice, @mbRes] | 'self.desc'["空闲待命", "", ""] | 'S_Member' = 'Idle' | 'S_Member' = 'Idle'
 § 'T_MemberAbort' : 'S_Member' = 'Failed' → 'oa.complete_str'[@mbOffice, @mbRes] | 'S_Member' = 'Idle' | 'S_Member' = 'Idle'
 
 // ══════════════ cs-comment 线 ══════════════
 § 'T_CommentClaim' : @cmOpen & 'S_Comment' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-comment"] > @cmOffice | 'S_Comment' = 'Claimed' | 'S_Comment' = 'Idle'
 § 'T_CommentArgs' : 'S_Comment' = 'Claimed' → 'oa.get_str'[@cmOffice, "args"] > @cmArgs | 'self.desc'["cs-comment 执行中", "", ""] | 'S_Comment' = 'Ready' | 'S_Comment' = 'Failed'
-§ 'T_CommentExec' [t=2400, par] : 'S_Comment' = 'Ready' → 'csharp.bridge'["comment", @cmArgs] > @cmRes | 'S_Comment' = 'Done' | 'S_Comment' = 'Failed'
+§ 'T_CommentExec' [t=1200, par] : 'S_Comment' = 'Ready' → 'csharp.bridge'["comment", @cmArgs] > @cmRes | 'S_Comment' = 'Done' | 'S_Comment' = 'Failed'
 § 'T_CommentReply' : 'S_Comment' = 'Done' → 'oa.complete_str'[@cmOffice, @cmRes] | 'self.desc'["空闲待命", "", ""] | 'S_Comment' = 'Idle' | 'S_Comment' = 'Idle'
 § 'T_CommentAbort' : 'S_Comment' = 'Failed' → 'oa.complete_str'[@cmOffice, @cmRes] | 'S_Comment' = 'Idle' | 'S_Comment' = 'Idle'
 
 // ══════════════ cs-dead 线 ══════════════
 § 'T_DeadClaim' : @ddOpen & 'S_Dead' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-dead"] > @ddOffice | 'S_Dead' = 'Claimed' | 'S_Dead' = 'Idle'
 § 'T_DeadArgs' : 'S_Dead' = 'Claimed' → 'oa.get_str'[@ddOffice, "args"] > @ddArgs | 'self.desc'["cs-dead 执行中", "", ""] | 'S_Dead' = 'Ready' | 'S_Dead' = 'Failed'
-§ 'T_DeadExec' [t=2400, par] : 'S_Dead' = 'Ready' → 'csharp.bridge'["dead", @ddArgs] > @ddRes | 'S_Dead' = 'Done' | 'S_Dead' = 'Failed'
+§ 'T_DeadExec' [t=1200, par] : 'S_Dead' = 'Ready' → 'csharp.bridge'["dead", @ddArgs] > @ddRes | 'S_Dead' = 'Done' | 'S_Dead' = 'Failed'
 § 'T_DeadReply' : 'S_Dead' = 'Done' → 'oa.complete_str'[@ddOffice, @ddRes] | 'self.desc'["空闲待命", "", ""] | 'S_Dead' = 'Idle' | 'S_Dead' = 'Idle'
 § 'T_DeadAbort' : 'S_Dead' = 'Failed' → 'oa.complete_str'[@ddOffice, @ddRes] | 'S_Dead' = 'Idle' | 'S_Dead' = 'Idle'
 
 // ══════════════ cs-comment_check 线 ══════════════
 § 'T_CommentCheckClaim' : @ccOpen & 'S_CommentCheck' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-comment_check"] > @ccOffice | 'S_CommentCheck' = 'Claimed' | 'S_CommentCheck' = 'Idle'
 § 'T_CommentCheckArgs' : 'S_CommentCheck' = 'Claimed' → 'oa.get_str'[@ccOffice, "args"] > @ccArgs | 'self.desc'["cs-comment_check 执行中", "", ""] | 'S_CommentCheck' = 'Ready' | 'S_CommentCheck' = 'Failed'
-§ 'T_CommentCheckExec' [t=2400, par] : 'S_CommentCheck' = 'Ready' → 'csharp.bridge'["comment_check", @ccArgs] > @ccRes | 'S_CommentCheck' = 'Done' | 'S_CommentCheck' = 'Failed'
+§ 'T_CommentCheckExec' [t=1200, par] : 'S_CommentCheck' = 'Ready' → 'csharp.bridge'["comment_check", @ccArgs] > @ccRes | 'S_CommentCheck' = 'Done' | 'S_CommentCheck' = 'Failed'
 § 'T_CommentCheckReply' : 'S_CommentCheck' = 'Done' → 'oa.complete_str'[@ccOffice, @ccRes] | 'self.desc'["空闲待命", "", ""] | 'S_CommentCheck' = 'Idle' | 'S_CommentCheck' = 'Idle'
 § 'T_CommentCheckAbort' : 'S_CommentCheck' = 'Failed' → 'oa.complete_str'[@ccOffice, @ccRes] | 'S_CommentCheck' = 'Idle' | 'S_CommentCheck' = 'Idle'
 
 // ══════════════ cs-format 线 ══════════════
 § 'T_FormatClaim' : @fmOpen & 'S_Format' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-format"] > @fmOffice | 'S_Format' = 'Claimed' | 'S_Format' = 'Idle'
 § 'T_FormatArgs' : 'S_Format' = 'Claimed' → 'oa.get_str'[@fmOffice, "args"] > @fmArgs | 'self.desc'["cs-format 执行中", "", ""] | 'S_Format' = 'Ready' | 'S_Format' = 'Failed'
-§ 'T_FormatExec' [t=2400, par] : 'S_Format' = 'Ready' → 'csharp.bridge'["format", @fmArgs] > @fmRes | 'S_Format' = 'Done' | 'S_Format' = 'Failed'
+§ 'T_FormatExec' [t=1200, par] : 'S_Format' = 'Ready' → 'csharp.bridge'["format", @fmArgs] > @fmRes | 'S_Format' = 'Done' | 'S_Format' = 'Failed'
 § 'T_FormatReply' : 'S_Format' = 'Done' → 'oa.complete_str'[@fmOffice, @fmRes] | 'self.desc'["空闲待命", "", ""] | 'S_Format' = 'Idle' | 'S_Format' = 'Idle'
 § 'T_FormatAbort' : 'S_Format' = 'Failed' → 'oa.complete_str'[@fmOffice, @fmRes] | 'S_Format' = 'Idle' | 'S_Format' = 'Idle'
 
 // ══════════════ cs-test 线 ══════════════
 § 'T_TestClaim' : @ttOpen & 'S_Test' = 'Idle' → 'oa.claim_next_simple'["TOOL", "cs-test"] > @ttOffice | 'S_Test' = 'Claimed' | 'S_Test' = 'Idle'
 § 'T_TestArgs' : 'S_Test' = 'Claimed' → 'oa.get_str'[@ttOffice, "args"] > @ttArgs | 'self.desc'["cs-test 执行中", "", ""] | 'S_Test' = 'Ready' | 'S_Test' = 'Failed'
-§ 'T_TestExec' [t=2400, par] : 'S_Test' = 'Ready' → 'csharp.bridge'["test", @ttArgs] > @ttRes | 'S_Test' = 'Done' | 'S_Test' = 'Failed'
+§ 'T_TestExec' [t=1200, par] : 'S_Test' = 'Ready' → 'csharp.bridge'["test", @ttArgs] > @ttRes | 'S_Test' = 'Done' | 'S_Test' = 'Failed'
 § 'T_TestReply' : 'S_Test' = 'Done' → 'oa.complete_str'[@ttOffice, @ttRes] | 'self.desc'["空闲待命", "", ""] | 'S_Test' = 'Idle' | 'S_Test' = 'Idle'
 § 'T_TestAbort' : 'S_Test' = 'Failed' → 'oa.complete_str'[@ttOffice, @ttRes] | 'S_Test' = 'Idle' | 'S_Test' = 'Idle'

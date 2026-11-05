@@ -4,9 +4,9 @@
 // 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（宿主发单落盒——CH2 Dog 机制验证格式）
 // 无值分支：每工具一条认领线，工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：@rdOffice 等私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
-//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 2400 帧（120s）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 1200 帧（120s）
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ log.write TOOL 类别 + trace.timeout / trace.late_discard
 // 变更（2026-09-14 A48）：exec 导线 par 化——self.desc 挪至 args 导线（par 导线单动作约束）
 // 变更（2026-09-20 A67）：结构面 4 线（tree/find/move/delete）迁出 FileCat 独立组——本组收缩为内容面 7 工具
@@ -35,7 +35,7 @@
 § 'T_ReadArgs' : 'S_Read' = 'Claimed' → 'oa.get_str'[@rdOffice, "args"] > @rdArgs | 'self.desc'["text-read 执行中", "", ""] | 'S_Read' = 'Ready' | 'S_Read' = 'Failed'
 
 // T_ReadExec：执行积木（argsJson 整包——积木内部解析；失败侧 ERR 文本也在 @rdRes）——后台执行
-§ 'T_ReadExec' [t=2400, par] : 'S_Read' = 'Ready' → 'text.read'[@rdArgs] > @rdRes | 'S_Read' = 'Done' | 'S_Read' = 'Failed'
+§ 'T_ReadExec' [t=1200, par] : 'S_Read' = 'Ready' → 'text.read'[@rdArgs] > @rdRes | 'S_Read' = 'Done' | 'S_Read' = 'Failed'
 
 // T_ReadReply：成功回执（result=文件内容）
 § 'T_ReadReply' : 'S_Read' = 'Done' → 'oa.complete_str'[@rdOffice, @rdRes] | 'self.desc'["空闲待命", "", ""] | 'S_Read' = 'Idle' | 'S_Read' = 'Idle'
@@ -52,7 +52,7 @@
 § 'T_WriteArgs' : 'S_Write' = 'Claimed' → 'oa.get_str'[@wrOffice, "args"] > @wrArgs | 'self.desc'["text-write 执行中", "", ""] | 'S_Write' = 'Ready' | 'S_Write' = 'Failed'
 
 // T_WriteExec：执行积木——后台执行
-§ 'T_WriteExec' [t=2400, par] : 'S_Write' = 'Ready' → 'text.write'[@wrArgs] > @wrRes | 'S_Write' = 'Done' | 'S_Write' = 'Failed'
+§ 'T_WriteExec' [t=1200, par] : 'S_Write' = 'Ready' → 'text.write'[@wrArgs] > @wrRes | 'S_Write' = 'Done' | 'S_Write' = 'Failed'
 
 // T_WriteReply：成功回执
 § 'T_WriteReply' : 'S_Write' = 'Done' → 'oa.complete_str'[@wrOffice, @wrRes] | 'self.desc'["空闲待命", "", ""] | 'S_Write' = 'Idle' | 'S_Write' = 'Idle'
@@ -69,7 +69,7 @@
 § 'T_AppendArgs' : 'S_Append' = 'Claimed' → 'oa.get_str'[@apOffice, "args"] > @apArgs | 'self.desc'["text-append 执行中", "", ""] | 'S_Append' = 'Ready' | 'S_Append' = 'Failed'
 
 // T_AppendExec：执行积木——后台执行
-§ 'T_AppendExec' [t=2400, par] : 'S_Append' = 'Ready' → 'text.append'[@apArgs] > @apRes | 'S_Append' = 'Done' | 'S_Append' = 'Failed'
+§ 'T_AppendExec' [t=1200, par] : 'S_Append' = 'Ready' → 'text.append'[@apArgs] > @apRes | 'S_Append' = 'Done' | 'S_Append' = 'Failed'
 
 // T_AppendReply：成功回执
 § 'T_AppendReply' : 'S_Append' = 'Done' → 'oa.complete_str'[@apOffice, @apRes] | 'self.desc'["空闲待命", "", ""] | 'S_Append' = 'Idle' | 'S_Append' = 'Idle'
@@ -86,7 +86,7 @@
 § 'T_ReplaceArgs' : 'S_Replace' = 'Claimed' → 'oa.get_str'[@rpOffice, "args"] > @rpArgs | 'self.desc'["text-replace 执行中", "", ""] | 'S_Replace' = 'Ready' | 'S_Replace' = 'Failed'
 
 // T_ReplaceExec：执行积木——后台执行
-§ 'T_ReplaceExec' [t=2400, par] : 'S_Replace' = 'Ready' → 'text.replace'[@rpArgs] > @rpRes | 'S_Replace' = 'Done' | 'S_Replace' = 'Failed'
+§ 'T_ReplaceExec' [t=1200, par] : 'S_Replace' = 'Ready' → 'text.replace'[@rpArgs] > @rpRes | 'S_Replace' = 'Done' | 'S_Replace' = 'Failed'
 
 // T_ReplaceReply：成功回执
 § 'T_ReplaceReply' : 'S_Replace' = 'Done' → 'oa.complete_str'[@rpOffice, @rpRes] | 'self.desc'["空闲待命", "", ""] | 'S_Replace' = 'Idle' | 'S_Replace' = 'Idle'
@@ -95,7 +95,7 @@
 § 'T_ReplaceAbort' : 'S_Replace' = 'Failed' → 'oa.complete_str'[@rpOffice, @rpRes] | 'S_Replace' = 'Idle' | 'S_Replace' = 'Idle'
 // ════════════════════════════════════════════════════════════════
 // text-* v2 扩展 7 线（design-ch4-text-tools C4——检索面/区间读/文件管理）
-// 模式同前 4 线：状态机 + 主动传感器 + 认领/参数/执行/回执/失败五导线（exec 同走 [t=2400, par] 后台执行）
+// 模式同前 4 线：状态机 + 主动传感器 + 认领/参数/执行/回执/失败五导线（exec 同走 [t=1200, par] 后台执行）
 
 // ── 状态机（3 线——A67：tree/find/move/delete 迁出 FileCat）──
 § 'S_Lines' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
@@ -110,20 +110,20 @@
 // ══════════════ text-read_lines 线 ══════════════
 § 'T_LinesClaim' : @lnOpen & 'S_Lines' = 'Idle' → 'oa.claim_next_simple'["TOOL", "text-read_lines"] > @lnOffice | 'S_Lines' = 'Claimed' | 'S_Lines' = 'Idle'
 § 'T_LinesArgs' : 'S_Lines' = 'Claimed' → 'oa.get_str'[@lnOffice, "args"] > @lnArgs | 'self.desc'["text-read_lines 执行中", "", ""] | 'S_Lines' = 'Ready' | 'S_Lines' = 'Failed'
-§ 'T_LinesExec' [t=2400, par] : 'S_Lines' = 'Ready' → 'text.read_lines'[@lnArgs] > @lnRes | 'S_Lines' = 'Done' | 'S_Lines' = 'Failed'
+§ 'T_LinesExec' [t=1200, par] : 'S_Lines' = 'Ready' → 'text.read_lines'[@lnArgs] > @lnRes | 'S_Lines' = 'Done' | 'S_Lines' = 'Failed'
 § 'T_LinesReply' : 'S_Lines' = 'Done' → 'oa.complete_str'[@lnOffice, @lnRes] | 'self.desc'["空闲待命", "", ""] | 'S_Lines' = 'Idle' | 'S_Lines' = 'Idle'
 § 'T_LinesAbort' : 'S_Lines' = 'Failed' → 'oa.complete_str'[@lnOffice, @lnRes] | 'S_Lines' = 'Idle' | 'S_Lines' = 'Idle'
 
 // ══════════════ text-read_between 线 ══════════════
 § 'T_BetweenClaim' : @btOpen & 'S_Between' = 'Idle' → 'oa.claim_next_simple'["TOOL", "text-read_between"] > @btOffice | 'S_Between' = 'Claimed' | 'S_Between' = 'Idle'
 § 'T_BetweenArgs' : 'S_Between' = 'Claimed' → 'oa.get_str'[@btOffice, "args"] > @btArgs | 'self.desc'["text-read_between 执行中", "", ""] | 'S_Between' = 'Ready' | 'S_Between' = 'Failed'
-§ 'T_BetweenExec' [t=2400, par] : 'S_Between' = 'Ready' → 'text.read_between'[@btArgs] > @btRes | 'S_Between' = 'Done' | 'S_Between' = 'Failed'
+§ 'T_BetweenExec' [t=1200, par] : 'S_Between' = 'Ready' → 'text.read_between'[@btArgs] > @btRes | 'S_Between' = 'Done' | 'S_Between' = 'Failed'
 § 'T_BetweenReply' : 'S_Between' = 'Done' → 'oa.complete_str'[@btOffice, @btRes] | 'self.desc'["空闲待命", "", ""] | 'S_Between' = 'Idle' | 'S_Between' = 'Idle'
 § 'T_BetweenAbort' : 'S_Between' = 'Failed' → 'oa.complete_str'[@btOffice, @btRes] | 'S_Between' = 'Idle' | 'S_Between' = 'Idle'
 
 // ══════════════ text-grep 线 ══════════════
 § 'T_GrepClaim' : @grOpen & 'S_Grep' = 'Idle' → 'oa.claim_next_simple'["TOOL", "text-grep"] > @grOffice | 'S_Grep' = 'Claimed' | 'S_Grep' = 'Idle'
 § 'T_GrepArgs' : 'S_Grep' = 'Claimed' → 'oa.get_str'[@grOffice, "args"] > @grArgs | 'self.desc'["text-grep 执行中", "", ""] | 'S_Grep' = 'Ready' | 'S_Grep' = 'Failed'
-§ 'T_GrepExec' [t=2400, par] : 'S_Grep' = 'Ready' → 'text.grep'[@grArgs] > @grRes | 'S_Grep' = 'Done' | 'S_Grep' = 'Failed'
+§ 'T_GrepExec' [t=1200, par] : 'S_Grep' = 'Ready' → 'text.grep'[@grArgs] > @grRes | 'S_Grep' = 'Done' | 'S_Grep' = 'Failed'
 § 'T_GrepReply' : 'S_Grep' = 'Done' → 'oa.complete_str'[@grOffice, @grRes] | 'self.desc'["空闲待命", "", ""] | 'S_Grep' = 'Idle' | 'S_Grep' = 'Idle'
 § 'T_GrepAbort' : 'S_Grep' = 'Failed' → 'oa.complete_str'[@grOffice, @grRes] | 'S_Grep' = 'Idle' | 'S_Grep' = 'Idle'

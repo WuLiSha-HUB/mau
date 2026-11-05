@@ -7,8 +7,11 @@ using Mau.Runtime;
 namespace CatHome4.Admin
 {
     /// <summary>
-    /// 群组服务实现（IGroupService）——Group 工具面五件：group-info / group-inbox / group-say / group-send / group-newsession。
-    /// 权限：调用者须为组成员（Info / Inbox / Say）；Send 与 NewSession 另须组管理员（group.json adminKeys）。
+    /// 群组服务实现（IGroupService）——Group 工具面五件：group-info / group-inbox / group-post / group-delegate / group-newsession。
+    /// 权限：调用者须为组成员（Info / Inbox / Post）；Delegate 与 NewSession 另须组管理员（group.json adminKeys）。
+    /// 命名（2026-11-05 莎裁 β）：旧名 group-say / group-send 表达的是实现动作而非意图，且 say 的 to 参数是纯展示标记、
+    /// 与 send 的投递目标同名不同义——改为 post（只写组流，无 @ 目标参数）/ delegate（派活并唤醒目标猫）。
+    /// 内部方法名 Say / Send 保留（接口面不变），工具名映射见各方法注释。
     /// 投递：Send 在同一方法内顺序完成「写组消息 → 以 origin 投递目标猫」——不拆两步（避免单有记录或单有投递）。
     /// 返回体：统一口径 A214——首行元数据头（ok / tool / target / items + 专有字段）+ 摘要行 + 正文行；失败走 ERR| 前缀。
     /// 线程模型：主线程同步（工具组 Flow 认领线调用；投递触碰会话面）。
@@ -165,8 +168,8 @@ namespace CatHome4.Admin
             return BuildReply("group-inbox", g.Name, messages.Count, extras, summary, lines);
         }
 
-        /// <summary>发讨论消息（note）——只写组消息流，不投递。</summary>
-        /// <param name="argsJson">工具参数 JSON（group / text 必填；to 可选）</param>
+        /// <summary>发讨论消息（工具名 group-post）——只写组消息流，不投递、不唤醒；无 @ 目标参数（2026-11-05 删 to）。</summary>
+        /// <param name="argsJson">工具参数 JSON（group / text 必填）</param>
         /// <returns>A214 回执（头行 + 摘要行 + 正文行）；失败为 ERR| 前缀</returns>
         public string Say(string argsJson)
         {
@@ -178,14 +181,12 @@ namespace CatHome4.Admin
                 return err;
             }
             string text = "";
-            string to = "";
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(argsJson))
                 {
                     JsonElement root = doc.RootElement;
                     text = JsonString(root, "text");
-                    to = JsonString(root, "to");
                 }
             }
             catch (Exception ex)
@@ -205,7 +206,7 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
             }
-            string result = GroupStore.AppendMessage(g.Name, catId, "note", text, "", to);
+            string result = GroupStore.AppendMessage(g.Name, catId, "note", text, "", "");
             if (!result.StartsWith("ok|", StringComparison.Ordinal))
             {
                 return result;
@@ -214,10 +215,10 @@ namespace CatHome4.Admin
             Dictionary<string, object> extras = new Dictionary<string, object>();
             extras["seq"] = seq;
             string summary = g.Name + " | 已记 #" + seq.ToString();
-            return BuildReply("group-say", g.Name, -1, extras, summary, new List<string>());
+            return BuildReply("group-post", g.Name, -1, extras, summary, new List<string>());
         }
 
-        /// <summary>派单（delegation）——写组消息 + 投递目标猫（同一方法内顺序完成）。</summary>
+        /// <summary>派单（工具名 group-delegate）——写组消息 + 唤醒目标猫（同一方法内顺序完成）。</summary>
         /// <param name="argsJson">工具参数 JSON（group / to / text 必填；refs 可选）</param>
         /// <returns>A214 回执（头行 + 摘要行）；失败为 ERR| 前缀（消息已入组时在文本中带 seq）</returns>
         public string Send(string argsJson)
@@ -296,7 +297,7 @@ namespace CatHome4.Admin
             extras["seq"] = seq;
             extras["to"] = to;
             string summary = g.Name + " | 已派单 → " + toName + " · #" + seq.ToString();
-            return BuildReply("group-send", g.Name, -1, extras, summary, new List<string>());
+            return BuildReply("group-delegate", g.Name, -1, extras, summary, new List<string>());
         }
         /// <summary>重建会话（group-newsession）——管理员发起；目标须成员且运行中；目标是调用者自己时挂起到轮末。</summary>
         /// <param name="argsJson">工具参数 JSON（group / to / reason 必填；firstMessage 可选）</param>

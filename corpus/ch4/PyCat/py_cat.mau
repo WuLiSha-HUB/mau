@@ -4,10 +4,10 @@
 // 载荷协议：officeName = 工具名（py-run / py-list / py-service）；载荷 key "args" = 整包工具参数 JSON
 // 无值分支：每工具一条认领线，工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：每线 @xxxOffice/@xxxArgs/@xxxRes 私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
 //   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）
-//   —— 超时 2400 帧（120s）：后台未回投则主动按失败结算（T_*Abort 回执 ERR 可见）
+//   —— 超时 1200 帧（120s）：后台未回投则主动按失败结算（T_*Abort 回执 ERR 可见）
 // 服务面：py-service 只做启停查（start 等就绪握手可能数秒；stop 优雅退出）——服务调用由各业务组自有积木消费 IPyService
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）
 // 变更（2026-10-15 步3）：新建——py 执行器面工具化（design-ch4-pytools §四）
@@ -34,7 +34,7 @@
 § 'T_RunArgs' : 'S_Run' = 'Claimed' → 'oa.get_str'[@pyrOffice, "args"] > @pyrArgs | 'self.desc'["py 脚本执行中", "", ""] | 'S_Run' = 'Ready' | 'S_Run' = 'Failed'
 
 // T_RunExec：执行积木（argsJson 整包——积木内部解析；失败侧 ERR 文本也在 @pyrRes）——后台执行
-§ 'T_RunExec' [t=2400, par] : 'S_Run' = 'Ready' → 'py.run'[@pyrArgs] > @pyrRes | 'S_Run' = 'Done' | 'S_Run' = 'Failed'
+§ 'T_RunExec' [t=1200, par] : 'S_Run' = 'Ready' → 'py.run'[@pyrArgs] > @pyrRes | 'S_Run' = 'Done' | 'S_Run' = 'Failed'
 
 // T_RunReply：成功回执（result = 结果 JSON）
 § 'T_RunReply' : 'S_Run' = 'Done' → 'oa.complete_str'[@pyrOffice, @pyrRes] | 'self.desc'["py 空闲待命", "", ""] | 'S_Run' = 'Idle' | 'S_Run' = 'Idle'
@@ -54,7 +54,7 @@
 § 'T_ListArgs' : 'S_List' = 'Claimed' → 'oa.get_str'[@pylOffice, "args"] > @pylArgs | 'S_List' = 'Ready' | 'S_List' = 'Failed'
 
 // T_ListExec：执行积木——后台执行
-§ 'T_ListExec' [t=2400, par] : 'S_List' = 'Ready' → 'py.list'[@pylArgs] > @pylRes | 'S_List' = 'Done' | 'S_List' = 'Failed'
+§ 'T_ListExec' [t=1200, par] : 'S_List' = 'Ready' → 'py.list'[@pylArgs] > @pylRes | 'S_List' = 'Done' | 'S_List' = 'Failed'
 
 // T_ListReply：成功回执（result = scripts 数组 JSON）
 § 'T_ListReply' : 'S_List' = 'Done' → 'oa.complete_str'[@pylOffice, @pylRes] | 'S_List' = 'Idle' | 'S_List' = 'Idle'
@@ -74,7 +74,7 @@
 § 'T_SvcArgs' : 'S_Svc' = 'Claimed' → 'oa.get_str'[@pysOffice, "args"] > @pysArgs | 'self.desc'["py 服务操作中", "", ""] | 'S_Svc' = 'Ready' | 'S_Svc' = 'Failed'
 
 // T_SvcExec：执行积木（start 含就绪握手——冷启动可能数秒）——后台执行
-§ 'T_SvcExec' [t=2400, par] : 'S_Svc' = 'Ready' → 'py.service'[@pysArgs] > @pysRes | 'S_Svc' = 'Done' | 'S_Svc' = 'Failed'
+§ 'T_SvcExec' [t=1200, par] : 'S_Svc' = 'Ready' → 'py.service'[@pysArgs] > @pysRes | 'S_Svc' = 'Done' | 'S_Svc' = 'Failed'
 
 // T_SvcReply：成功回执（result = 服务态 JSON）
 § 'T_SvcReply' : 'S_Svc' = 'Done' → 'oa.complete_str'[@pysOffice, @pysRes] | 'self.desc'["py 空闲待命", "", ""] | 'S_Svc' = 'Idle' | 'S_Svc' = 'Idle'

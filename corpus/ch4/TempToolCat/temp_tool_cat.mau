@@ -6,9 +6,9 @@
 // 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON
 // 无值分支：每工具一条认领线，工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：@tiOffice/@teOffice 等私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽）
-//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 2400 帧（120s）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 1200 帧（120s）
 //   —— 🔴 后台线程约束（TempRegistry handler 必读）：不传播 FlowContext（ThreadStatic）——handler 不得依赖 OA/Flow 身份；
 //      不碰 OA / CommandBus / FlowRegistry / CommandBus 等主线程动作；DataBox 读写线程安全可用
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ trace.timeout / trace.late_discard
@@ -35,7 +35,7 @@
 § 'T_InfoArgs' : 'S_Info' = 'Claimed' → 'oa.get_str'[@tiOffice, "args"] > @tiArgs | 'S_Info' = 'Ready' | 'S_Info' = 'Failed'
 
 // T_InfoExec：执行积木——枚举当前临时工具 Key 组（逗号分隔）——后台执行
-§ 'T_InfoExec' [t=2400, par] : 'S_Info' = 'Ready' → 'temp.keys' > @tiRes | 'S_Info' = 'Done' | 'S_Info' = 'Failed'
+§ 'T_InfoExec' [t=1200, par] : 'S_Info' = 'Ready' → 'temp.keys' > @tiRes | 'S_Info' = 'Done' | 'S_Info' = 'Failed'
 
 // T_InfoReply：成功回执（result=Key 组列表）
 § 'T_InfoReply' : 'S_Info' = 'Done' → 'oa.complete_str'[@tiOffice, @tiRes] | 'self.desc'["TempTool 空闲待命", "", ""] | 'S_Info' = 'Idle' | 'S_Info' = 'Idle'
@@ -52,7 +52,7 @@
 § 'T_ExecArgs' : 'S_Exec' = 'Claimed' → 'oa.get_str'[@teOffice, "args"] > @teArgs | 'self.desc'["temp-exec 执行中", "", ""] | 'S_Exec' = 'Ready' | 'S_Exec' = 'Failed'
 
 // T_ExecExec：执行积木（str→str 分发；失败侧 ERR 文本也在 @teRes）——后台执行
-§ 'T_ExecExec' [t=2400, par] : 'S_Exec' = 'Ready' → 'temp.exec'[@teArgs] > @teRes | 'S_Exec' = 'Done' | 'S_Exec' = 'Failed'
+§ 'T_ExecExec' [t=1200, par] : 'S_Exec' = 'Ready' → 'temp.exec'[@teArgs] > @teRes | 'S_Exec' = 'Done' | 'S_Exec' = 'Failed'
 
 // T_ExecReply：成功回执（result=str 结果）
 § 'T_ExecReply' : 'S_Exec' = 'Done' → 'oa.complete_str'[@teOffice, @teRes] | 'self.desc'["TempTool 空闲待命", "", ""] | 'S_Exec' = 'Idle' | 'S_Exec' = 'Idle'

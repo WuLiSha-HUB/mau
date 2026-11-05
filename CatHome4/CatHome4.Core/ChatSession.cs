@@ -32,7 +32,7 @@ namespace CH4
     /// </summary>
     internal sealed partial class ChatSession
     {
-        /// <summary>LLM 超时帧上限——同原 WaitForLlm MaxFramesPerRun 语义（30000 帧 ≈ 25 分钟空转上限）</summary>
+        /// <summary>LLM 超时帧上限——同原 WaitForLlm MaxFramesPerRun 语义（30000 帧 ≈ 50 分钟空转上限，100ms/帧）</summary>
         private const long LlmTimeoutFrames = 30000;
 
         /// <summary>工具批等待帧上限——最长工具 1200 帧（120 秒，100ms/帧）+ 300 余量</summary>
@@ -44,7 +44,7 @@ namespace CH4
         /// <summary>RoundSummary 工单 owner ID——独立于会话工具工单（避免 RemoveByOwner 互扰）</summary>
         private const long RoundSummaryOwnerId = 2;
 
-        /// <summary>RoundSummary 工单超时帧上限——一次性 LLM 调用（60s 现实耗时 + 余量）</summary>
+        /// <summary>RoundSummary 工单超时帧上限——一次性 LLM 调用（现实耗时约 60 s；2400 帧 = 240 秒上限，100ms/帧）</summary>
         private const long RoundSummaryTimeoutFrames = 2400;
 
         /// <summary>RoundSummary 播报串行键——播报名与正文、全部猫的总结共用（跨猫全串行，不并发）。</summary>

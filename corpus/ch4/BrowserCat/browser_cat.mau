@@ -4,10 +4,10 @@
 // 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON
 // 无值分支：工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：@boOffice 等私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 浏览器导航可达数十秒（首调还要拉起 Edge 实例），必须后台化
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽）
-//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 2400 帧（120s）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 1200 帧（120s）
 // 门禁：5 工具均域限定（仅 timeback 作用域内可用）——宿主工具登记段拦截（域外 ERR|TIMEBACK_REQUIRED），本语料不重复判定
 // 生命周期（A110 域级）：实例随域起停——首次调用懒启动 Edge；timeback back 回收时由会话侧关闭该猫实例
 //   （ChatSession.ApplyTimebackBack 段7 → IBrowserLifecycle.CloseCat）；宿主正常退出走 Main finally 钩子；被强杀靠启动前 PID 自愈
@@ -40,7 +40,7 @@
 § 'T_OpenArgs' : 'S_Open' = 'Claimed' → 'oa.get_str'[@boOffice, "args"] > @boArgs | 'self.desc'["browser-open 执行中", "", ""] | 'S_Open' = 'Ready' | 'S_Open' = 'Failed'
 
 // T_OpenExec：执行积木（导航 + 等加载——含首调 Edge 拉起）——后台执行
-§ 'T_OpenExec' [t=2400, par] : 'S_Open' = 'Ready' → 'browser.open'[@boArgs] > @boRes | 'S_Open' = 'Done' | 'S_Open' = 'Failed'
+§ 'T_OpenExec' [t=1200, par] : 'S_Open' = 'Ready' → 'browser.open'[@boArgs] > @boRes | 'S_Open' = 'Done' | 'S_Open' = 'Failed'
 
 // T_OpenReply：成功回执
 § 'T_OpenReply' : 'S_Open' = 'Done' → 'oa.complete_str'[@boOffice, @boRes] | 'self.desc'["空闲待命", "", ""] | 'S_Open' = 'Idle' | 'S_Open' = 'Idle'
@@ -54,7 +54,7 @@
 
 § 'T_ReadArgs' : 'S_Read' = 'Claimed' → 'oa.get_str'[@brOffice, "args"] > @brArgs | 'self.desc'["browser-read 执行中", "", ""] | 'S_Read' = 'Ready' | 'S_Read' = 'Failed'
 
-§ 'T_ReadExec' [t=2400, par] : 'S_Read' = 'Ready' → 'browser.read'[@brArgs] > @brRes | 'S_Read' = 'Done' | 'S_Read' = 'Failed'
+§ 'T_ReadExec' [t=1200, par] : 'S_Read' = 'Ready' → 'browser.read'[@brArgs] > @brRes | 'S_Read' = 'Done' | 'S_Read' = 'Failed'
 
 § 'T_ReadReply' : 'S_Read' = 'Done' → 'oa.complete_str'[@brOffice, @brRes] | 'self.desc'["空闲待命", "", ""] | 'S_Read' = 'Idle' | 'S_Read' = 'Idle'
 
@@ -66,7 +66,7 @@
 
 § 'T_EvalArgs' : 'S_Eval' = 'Claimed' → 'oa.get_str'[@beOffice, "args"] > @beArgs | 'self.desc'["browser-eval 执行中", "", ""] | 'S_Eval' = 'Ready' | 'S_Eval' = 'Failed'
 
-§ 'T_EvalExec' [t=2400, par] : 'S_Eval' = 'Ready' → 'browser.eval'[@beArgs] > @beRes | 'S_Eval' = 'Done' | 'S_Eval' = 'Failed'
+§ 'T_EvalExec' [t=1200, par] : 'S_Eval' = 'Ready' → 'browser.eval'[@beArgs] > @beRes | 'S_Eval' = 'Done' | 'S_Eval' = 'Failed'
 
 § 'T_EvalReply' : 'S_Eval' = 'Done' → 'oa.complete_str'[@beOffice, @beRes] | 'self.desc'["空闲待命", "", ""] | 'S_Eval' = 'Idle' | 'S_Eval' = 'Idle'
 
@@ -78,7 +78,7 @@
 
 § 'T_ShotArgs' : 'S_Shot' = 'Claimed' → 'oa.get_str'[@bsOffice, "args"] > @bsArgs | 'self.desc'["browser-shot 执行中", "", ""] | 'S_Shot' = 'Ready' | 'S_Shot' = 'Failed'
 
-§ 'T_ShotExec' [t=2400, par] : 'S_Shot' = 'Ready' → 'browser.shot'[@bsArgs] > @bsRes | 'S_Shot' = 'Done' | 'S_Shot' = 'Failed'
+§ 'T_ShotExec' [t=1200, par] : 'S_Shot' = 'Ready' → 'browser.shot'[@bsArgs] > @bsRes | 'S_Shot' = 'Done' | 'S_Shot' = 'Failed'
 
 § 'T_ShotReply' : 'S_Shot' = 'Done' → 'oa.complete_str'[@bsOffice, @bsRes] | 'self.desc'["空闲待命", "", ""] | 'S_Shot' = 'Idle' | 'S_Shot' = 'Idle'
 
@@ -90,7 +90,7 @@
 
 § 'T_TabsArgs' : 'S_Tabs' = 'Claimed' → 'oa.get_str'[@btOffice, "args"] > @btArgs | 'self.desc'["browser-tabs 执行中", "", ""] | 'S_Tabs' = 'Ready' | 'S_Tabs' = 'Failed'
 
-§ 'T_TabsExec' [t=2400, par] : 'S_Tabs' = 'Ready' → 'browser.tabs'[@btArgs] > @btRes | 'S_Tabs' = 'Done' | 'S_Tabs' = 'Failed'
+§ 'T_TabsExec' [t=1200, par] : 'S_Tabs' = 'Ready' → 'browser.tabs'[@btArgs] > @btRes | 'S_Tabs' = 'Done' | 'S_Tabs' = 'Failed'
 
 § 'T_TabsReply' : 'S_Tabs' = 'Done' → 'oa.complete_str'[@btOffice, @btRes] | 'self.desc'["空闲待命", "", ""] | 'S_Tabs' = 'Idle' | 'S_Tabs' = 'Idle'
 
@@ -106,7 +106,7 @@
 
 § 'T_HeadfulArgs' : 'S_Headful' = 'Claimed' → 'oa.get_str'[@bhOffice, "args"] > @bhArgs | 'self.desc'["browser-headful 执行中", "", ""] | 'S_Headful' = 'Ready' | 'S_Headful' = 'Failed'
 
-§ 'T_HeadfulExec' [t=2400, par] : 'S_Headful' = 'Ready' → 'browser.headful'[@bhArgs] > @bhRes | 'S_Headful' = 'Done' | 'S_Headful' = 'Failed'
+§ 'T_HeadfulExec' [t=1200, par] : 'S_Headful' = 'Ready' → 'browser.headful'[@bhArgs] > @bhRes | 'S_Headful' = 'Done' | 'S_Headful' = 'Failed'
 
 § 'T_HeadfulReply' : 'S_Headful' = 'Done' → 'oa.complete_str'[@bhOffice, @bhRes] | 'self.desc'["空闲待命", "", ""] | 'S_Headful' = 'Idle' | 'S_Headful' = 'Idle'
 

@@ -16,7 +16,7 @@ namespace CatHome4.Contracts
     /// </summary>
     public static class LoopTiming
     {
-        /// <summary>采样窗口帧数（约 6 秒 @ 50 ms 帧间隔）</summary>
+        /// <summary>采样窗口帧数（120 帧 ≈ 12 秒 @ 100 ms 帧间隔）</summary>
         private const int WindowFrames = 120;
 
         /// <summary>分段上限（超出忽略——防段名无界增长）</summary>

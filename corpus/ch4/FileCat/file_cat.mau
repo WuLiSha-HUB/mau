@@ -4,9 +4,9 @@
 // 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（宿主发单落盒——CH2 Dog 机制验证格式）
 // 无值分支：每工具一条认领线，工具名写死在候选列表（信号即解析结果——分支拓扑靠多传感器）
 // 数据面：@ftOffice 等私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
-//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 2400 帧（120s）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 1200 帧（120s）
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ log.write TOOL 类别 + trace.timeout / trace.late_discard
 
 // ── 状态机（5 线——每线独立生命周期）──
@@ -35,7 +35,7 @@
 § 'T_TreeArgs' : 'S_Tree' = 'Claimed' → 'oa.get_str'[@ftOffice, "args"] > @ftArgs | 'self.desc'["file-tree 执行中", "", ""] | 'S_Tree' = 'Ready' | 'S_Tree' = 'Failed'
 
 // T_TreeExec：执行积木（argsJson 整包——积木内部解析；失败侧 ERR 文本也在 @ftRes）——后台执行
-§ 'T_TreeExec' [t=2400, par] : 'S_Tree' = 'Ready' → 'file.tree'[@ftArgs] > @ftRes | 'S_Tree' = 'Done' | 'S_Tree' = 'Failed'
+§ 'T_TreeExec' [t=1200, par] : 'S_Tree' = 'Ready' → 'file.tree'[@ftArgs] > @ftRes | 'S_Tree' = 'Done' | 'S_Tree' = 'Failed'
 
 // T_TreeReply：成功回执（result=目录树文本）
 § 'T_TreeReply' : 'S_Tree' = 'Done' → 'oa.complete_str'[@ftOffice, @ftRes] | 'self.desc'["空闲待命", "", ""] | 'S_Tree' = 'Idle' | 'S_Tree' = 'Idle'
@@ -47,7 +47,7 @@
 
 § 'T_FindClaim' : @fdOpen & 'S_Find' = 'Idle' → 'oa.claim_next_simple'["TOOL", "file-find"] > @fdOffice | 'S_Find' = 'Claimed' | 'S_Find' = 'Idle'
 § 'T_FindArgs' : 'S_Find' = 'Claimed' → 'oa.get_str'[@fdOffice, "args"] > @fdArgs | 'self.desc'["file-find 执行中", "", ""] | 'S_Find' = 'Ready' | 'S_Find' = 'Failed'
-§ 'T_FindExec' [t=2400, par] : 'S_Find' = 'Ready' → 'file.find'[@fdArgs] > @fdRes | 'S_Find' = 'Done' | 'S_Find' = 'Failed'
+§ 'T_FindExec' [t=1200, par] : 'S_Find' = 'Ready' → 'file.find'[@fdArgs] > @fdRes | 'S_Find' = 'Done' | 'S_Find' = 'Failed'
 § 'T_FindReply' : 'S_Find' = 'Done' → 'oa.complete_str'[@fdOffice, @fdRes] | 'self.desc'["空闲待命", "", ""] | 'S_Find' = 'Idle' | 'S_Find' = 'Idle'
 § 'T_FindAbort' : 'S_Find' = 'Failed' → 'oa.complete_str'[@fdOffice, @fdRes] | 'S_Find' = 'Idle' | 'S_Find' = 'Idle'
 
@@ -55,7 +55,7 @@
 
 § 'T_MoveClaim' : @mvOpen & 'S_Move' = 'Idle' → 'oa.claim_next_simple'["TOOL", "file-move"] > @mvOffice | 'S_Move' = 'Claimed' | 'S_Move' = 'Idle'
 § 'T_MoveArgs' : 'S_Move' = 'Claimed' → 'oa.get_str'[@mvOffice, "args"] > @mvArgs | 'self.desc'["file-move 执行中", "", ""] | 'S_Move' = 'Ready' | 'S_Move' = 'Failed'
-§ 'T_MoveExec' [t=2400, par] : 'S_Move' = 'Ready' → 'file.move'[@mvArgs] > @mvRes | 'S_Move' = 'Done' | 'S_Move' = 'Failed'
+§ 'T_MoveExec' [t=1200, par] : 'S_Move' = 'Ready' → 'file.move'[@mvArgs] > @mvRes | 'S_Move' = 'Done' | 'S_Move' = 'Failed'
 § 'T_MoveReply' : 'S_Move' = 'Done' → 'oa.complete_str'[@mvOffice, @mvRes] | 'self.desc'["空闲待命", "", ""] | 'S_Move' = 'Idle' | 'S_Move' = 'Idle'
 § 'T_MoveAbort' : 'S_Move' = 'Failed' → 'oa.complete_str'[@mvOffice, @mvRes] | 'S_Move' = 'Idle' | 'S_Move' = 'Idle'
 
@@ -63,7 +63,7 @@
 
 § 'T_DeleteClaim' : @dlOpen & 'S_Delete' = 'Idle' → 'oa.claim_next_simple'["TOOL", "file-delete"] > @dlOffice | 'S_Delete' = 'Claimed' | 'S_Delete' = 'Idle'
 § 'T_DeleteArgs' : 'S_Delete' = 'Claimed' → 'oa.get_str'[@dlOffice, "args"] > @dlArgs | 'self.desc'["file-delete 执行中", "", ""] | 'S_Delete' = 'Ready' | 'S_Delete' = 'Failed'
-§ 'T_DeleteExec' [t=2400, par] : 'S_Delete' = 'Ready' → 'file.delete'[@dlArgs] > @dlRes | 'S_Delete' = 'Done' | 'S_Delete' = 'Failed'
+§ 'T_DeleteExec' [t=1200, par] : 'S_Delete' = 'Ready' → 'file.delete'[@dlArgs] > @dlRes | 'S_Delete' = 'Done' | 'S_Delete' = 'Failed'
 § 'T_DeleteReply' : 'S_Delete' = 'Done' → 'oa.complete_str'[@dlOffice, @dlRes] | 'self.desc'["空闲待命", "", ""] | 'S_Delete' = 'Idle' | 'S_Delete' = 'Idle'
 § 'T_DeleteAbort' : 'S_Delete' = 'Failed' → 'oa.complete_str'[@dlOffice, @dlRes] | 'S_Delete' = 'Idle' | 'S_Delete' = 'Idle'
 
@@ -71,7 +71,7 @@
 
 § 'T_CopyClaim' : @cpOpen & 'S_Copy' = 'Idle' → 'oa.claim_next_simple'["TOOL", "file-copy"] > @cpOffice | 'S_Copy' = 'Claimed' | 'S_Copy' = 'Idle'
 § 'T_CopyArgs' : 'S_Copy' = 'Claimed' → 'oa.get_str'[@cpOffice, "args"] > @cpArgs | 'self.desc'["file-copy 执行中", "", ""] | 'S_Copy' = 'Ready' | 'S_Copy' = 'Failed'
-§ 'T_CopyExec' [t=2400, par] : 'S_Copy' = 'Ready' → 'file.copy'[@cpArgs] > @cpRes | 'S_Copy' = 'Done' | 'S_Copy' = 'Failed'
+§ 'T_CopyExec' [t=1200, par] : 'S_Copy' = 'Ready' → 'file.copy'[@cpArgs] > @cpRes | 'S_Copy' = 'Done' | 'S_Copy' = 'Failed'
 § 'T_CopyReply' : 'S_Copy' = 'Done' → 'oa.complete_str'[@cpOffice, @cpRes] | 'self.desc'["空闲待命", "", ""] | 'S_Copy' = 'Idle' | 'S_Copy' = 'Idle'
 § 'T_CopyAbort' : 'S_Copy' = 'Failed' → 'oa.complete_str'[@cpOffice, @cpRes] | 'S_Copy' = 'Idle' | 'S_Copy' = 'Idle'
 
@@ -83,6 +83,6 @@
 
 § 'T_VersionClaim' : @vsOpen & 'S_Version' = 'Idle' → 'oa.claim_next_simple'["TOOL", "file-version"] > @vsOffice | 'S_Version' = 'Claimed' | 'S_Version' = 'Idle'
 § 'T_VersionArgs' : 'S_Version' = 'Claimed' → 'oa.get_str'[@vsOffice, "args"] > @vsArgs | 'self.desc'["file-version 执行中", "", ""] | 'S_Version' = 'Ready' | 'S_Version' = 'Failed'
-§ 'T_VersionExec' [t=2400, par] : 'S_Version' = 'Ready' → 'file.version'[@vsArgs] > @vsRes | 'S_Version' = 'Done' | 'S_Version' = 'Failed'
+§ 'T_VersionExec' [t=1200, par] : 'S_Version' = 'Ready' → 'file.version'[@vsArgs] > @vsRes | 'S_Version' = 'Done' | 'S_Version' = 'Failed'
 § 'T_VersionReply' : 'S_Version' = 'Done' → 'oa.complete_str'[@vsOffice, @vsRes] | 'self.desc'["空闲待命", "", ""] | 'S_Version' = 'Idle' | 'S_Version' = 'Idle'
 § 'T_VersionAbort' : 'S_Version' = 'Failed' → 'oa.complete_str'[@vsOffice, @vsRes] | 'S_Version' = 'Idle' | 'S_Version' = 'Idle'

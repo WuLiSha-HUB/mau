@@ -2,9 +2,9 @@
 // 角色：工具组 Flow——认领 TOOL 域 mau-* 4 工具（verify/gen/proj/setup）
 // 单级 OA 单：Dog Post → 本 Flow 4 线认领执行 → complete_str 回执
 // 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON
-// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=2400, par] 后台线程执行（主线程零阻塞）
+// 线程模型（A48 后台化）：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
 //   —— 在途期间状态停在 Ready（不接新单，新单留 OA 队列）+ Busy 门防重入（线级唯一在途槽 = 结构性不可并发的锁）
-//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 2400 帧（120s）
+//   —— 回投由主线程 Drain 应用（代际守卫：超时作废后迟到的结果按代际丢弃）；超时 1200 帧（120s）
 //   —— mau.proj dotnet build / mau.setup SetUp 全链原为长耗时阻塞主线程——par 化后主循环不中断（A48 主要受益面）
 // 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）+ trace.timeout / trace.late_discard
 // 变更（2026-09-14 A48）：exec 导线 par 化——self.desc 挪至 args 导线（par 导线单动作约束）
@@ -33,7 +33,7 @@
 § 'T_VerifyArgs' : 'S_Verify' = 'Claimed' → 'oa.get_str'[@vfOffice, "args"] > @vfArgs | 'self.desc'["mau-verify 执行中", "", ""] | 'S_Verify' = 'Ready' | 'S_Verify' = 'Failed'
 
 // T_VerifyExec：执行积木——后台执行
-§ 'T_VerifyExec' [t=2400, par] : 'S_Verify' = 'Ready' → 'mau.verify'[@vfArgs] > @vfRes | 'S_Verify' = 'Done' | 'S_Verify' = 'Failed'
+§ 'T_VerifyExec' [t=1200, par] : 'S_Verify' = 'Ready' → 'mau.verify'[@vfArgs] > @vfRes | 'S_Verify' = 'Done' | 'S_Verify' = 'Failed'
 
 // T_VerifyReply：成功回执（诊断文本/OK 确认）
 § 'T_VerifyReply' : 'S_Verify' = 'Done' → 'oa.complete_str'[@vfOffice, @vfRes] | 'self.desc'["空闲待命", "", ""] | 'S_Verify' = 'Idle' | 'S_Verify' = 'Idle'
@@ -50,7 +50,7 @@
 § 'T_GenArgs' : 'S_Gen' = 'Claimed' → 'oa.get_str'[@gnOffice, "args"] > @gnArgs | 'self.desc'["mau-gen 执行中", "", ""] | 'S_Gen' = 'Ready' | 'S_Gen' = 'Failed'
 
 // T_GenExec：执行积木（组翻译——中间产物不编译）——后台执行
-§ 'T_GenExec' [t=2400, par] : 'S_Gen' = 'Ready' → 'mau.gen'[@gnArgs] > @gnRes | 'S_Gen' = 'Done' | 'S_Gen' = 'Failed'
+§ 'T_GenExec' [t=1200, par] : 'S_Gen' = 'Ready' → 'mau.gen'[@gnArgs] > @gnRes | 'S_Gen' = 'Done' | 'S_Gen' = 'Failed'
 
 // T_GenReply：成功回执
 § 'T_GenReply' : 'S_Gen' = 'Done' → 'oa.complete_str'[@gnOffice, @gnRes] | 'self.desc'["空闲待命", "", ""] | 'S_Gen' = 'Idle' | 'S_Gen' = 'Idle'
@@ -67,7 +67,7 @@
 § 'T_ProjArgs' : 'S_Proj' = 'Claimed' → 'oa.get_str'[@pjOffice, "args"] > @pjArgs | 'self.desc'["mau-proj 执行中", "", ""] | 'S_Proj' = 'Ready' | 'S_Proj' = 'Failed'
 
 // T_ProjExec：执行积木（组翻译 + dotnet build——长耗时）——后台执行
-§ 'T_ProjExec' [t=2400, par] : 'S_Proj' = 'Ready' → 'mau.proj'[@pjArgs] > @pjRes | 'S_Proj' = 'Done' | 'S_Proj' = 'Failed'
+§ 'T_ProjExec' [t=1200, par] : 'S_Proj' = 'Ready' → 'mau.proj'[@pjArgs] > @pjRes | 'S_Proj' = 'Done' | 'S_Proj' = 'Failed'
 
 // T_ProjReply：成功回执（[!] 日志标记——热重载行为验证点）
 § 'T_ProjReply' [!] : 'S_Proj' = 'Done' → 'oa.complete_str'[@pjOffice, @pjRes] | 'self.desc'["空闲待命", "", ""] | 'S_Proj' = 'Idle' | 'S_Proj' = 'Idle'
@@ -84,7 +84,7 @@
 § 'T_SetupArgs' : 'S_Setup' = 'Claimed' → 'oa.get_str'[@spOffice, "args"] > @spArgs | 'self.desc'["mau-setup 执行中", "", ""] | 'S_Setup' = 'Ready' | 'S_Setup' = 'Failed'
 
 // T_SetupExec：执行积木（起 SetUp.exe 并阻塞等待至结束——长耗时通道）——后台执行
-§ 'T_SetupExec' [t=2400, par] : 'S_Setup' = 'Ready' → 'mau.setup'[@spArgs] > @spRes | 'S_Setup' = 'Done' | 'S_Setup' = 'Failed'
+§ 'T_SetupExec' [t=1200, par] : 'S_Setup' = 'Ready' → 'mau.setup'[@spArgs] > @spRes | 'S_Setup' = 'Done' | 'S_Setup' = 'Failed'
 
 // T_SetupReply：成功回执（[!] 日志标记——部署链行为验证点）
 § 'T_SetupReply' [!] : 'S_Setup' = 'Done' → 'oa.complete_str'[@spOffice, @spRes] | 'self.desc'["空闲待命", "", ""] | 'S_Setup' = 'Idle' | 'S_Setup' = 'Idle'

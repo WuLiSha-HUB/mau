@@ -145,8 +145,8 @@ var TOOL_SKELETONS = {
     // group——群聊 / 派单回执（GroupCat · A306）
     'group-info': 'listing',
     'group-inbox': 'listing',
-    'group-say': 'text',
-    'group-send': 'text',
+    'group-post': 'text',
+    'group-delegate': 'text',
     'group-newsession': 'text',
     // ts——TypeScript 编码工具面（TsCat · A294）
     'ts-check': 'diagnostics',
