@@ -45,5 +45,31 @@ namespace CatHome4.Core.Tests
             CH4.ToolOrderDog dog = new CH4.ToolOrderDog("1", "tool.a", "{}");
             Assert.Equal(-1, dog.ElapsedMs());
         }
+        /// <summary>
+        /// 两段计时——排队（派发→认领）+ 执行（认领→闭合），两者之和等于总时长。
+        /// </summary>
+        [Fact]
+        public void QueueMs_RunMs_SplitTotal()
+        {
+            CH4.ToolOrderDog dog = new CH4.ToolOrderDog("1", "tool.a", "{}");
+            dog.StartedAtMs = 1000;
+            dog.ClaimedAtMs = 9000;
+            dog.ClosedAtMs = 9100;
+            Assert.Equal(8000, dog.QueueMs());
+            Assert.Equal(100, dog.RunMs());
+            Assert.Equal(8100, dog.ElapsedMs());
+        }
+        /// <summary>
+        /// 认领未观测（快单在两轮轮询之间直接闭合）——两段均返回 -1，不造值。
+        /// </summary>
+        [Fact]
+        public void QueueMs_RunMs_Unclaimed_ReturnsMinusOne()
+        {
+            CH4.ToolOrderDog dog = new CH4.ToolOrderDog("1", "tool.a", "{}");
+            dog.StartedAtMs = 1000;
+            dog.ClosedAtMs = 1200;
+            Assert.Equal(-1, dog.QueueMs());
+            Assert.Equal(-1, dog.RunMs());
+        }
     }
 }

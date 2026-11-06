@@ -180,10 +180,16 @@ function buildToolCard(tool, open) {
     }
     sum.appendChild(document.createTextNode(headline + (hasHeadline ? '' : toolResultSuffix(resultInfo(t.result)))));
 
-    // [段6] 工具用时——后端 durMs 真值（>0 显示；未记录 / 不适用不写）
+    // [段6] 工具用时——两段口径：排队 ≥200ms 时显示「排队 X · 执行 Y」（长排队看得见），否则回落总时长
     var dur = (typeof t.durMs === 'number') ? t.durMs : -1;
-    if (dur > 0 && typeof fmtMs === 'function') {
-        sum.appendChild(elText('span', 'chat-dur', ' · ' + fmtMs(dur)));
+    var queueMs = (typeof t.queueMs === 'number') ? t.queueMs : -1;
+    var runMs = (typeof t.runMs === 'number') ? t.runMs : -1;
+    if (typeof fmtMs === 'function') {
+        if (queueMs >= 200 && runMs >= 0) {
+            sum.appendChild(elText('span', 'chat-dur', ' · 排队 ' + fmtMs(queueMs) + ' · 执行 ' + fmtMs(runMs)));
+        } else if (dur > 0) {
+            sum.appendChild(elText('span', 'chat-dur', ' · ' + fmtMs(dur)));
+        }
     }
     // [段6b] 在途用时（A263）——结果未定稿即流式中：按首次出现时刻自增；定稿后归段6 的 durMs
     if (t.result === undefined || t.result === null) {

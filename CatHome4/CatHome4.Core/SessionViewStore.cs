@@ -406,7 +406,9 @@ namespace CH4
         /// <param name="m">真实前文消息</param>
         /// <param name="msgIndex">真实前文消息索引（条目业务定位字段）</param>
         /// <param name="durMs">运行时长（毫秒；-1 = 未记录——由会话侧按工具单派发时刻结算；进载荷）</param>
-        public void OnToolResult(LlmMessage m, int msgIndex, long durMs)
+        /// <param name="queueMs">排队时长——派发 → 认领（毫秒；-1 = 未观测）</param>
+        /// <param name="runMs">执行时长——认领 → 闭合（毫秒；-1 = 未记录）</param>
+        public void OnToolResult(LlmMessage m, int msgIndex, long durMs, long queueMs = -1, long runMs = -1)
         {
             string toolCallId = m.ToolCallId ?? "";
             PendingTool target = null;
@@ -426,7 +428,7 @@ namespace CH4
             string name = target.Name.Length > 0 ? target.Name : (m.ToolName ?? "");
             // A69 视图层报错中文注释——真实前文保持原文，仅视图条目追加中文注释
             string viewResult = ErrorNote.Apply(m.Content ?? "");
-            Dictionary<string, object> payload = ViewCardPayload.BuildToolCard(name, target.Arguments, viewResult, target.Index, target.Total, durMs);
+            Dictionary<string, object> payload = ViewCardPayload.BuildToolCard(name, target.Arguments, viewResult, target.Index, target.Total, durMs, queueMs, runMs);
             Append(m, "toolcard", payload, msgIndex, target.Ts);
         }
 

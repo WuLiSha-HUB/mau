@@ -3018,7 +3018,7 @@ namespace CH4
                 AppendMessage(_context.AddToolResult(dog.ToolCallId, dog.Name, dog.Result));
                 NoteTimebackEvent();
                 NoteTimebackWrite(dog.Name, dog.ArgsJson, dog.Result);
-                _viewStore.OnToolResult(LastMessage(), _context.GetMessageCount() - 1, dog.ElapsedMs());
+                _viewStore.OnToolResult(LastMessage(), _context.GetMessageCount() - 1, dog.ElapsedMs(), dog.QueueMs(), dog.RunMs());
             }
             _toolBatchActive = false;
             // [段2d-0] 图片注入——本批 image-inject 登记合并为一条 user 注入消息（落在作用域区间内：back 回收时一并删除）

@@ -54,6 +54,8 @@ namespace CH4
 
         /// <summary>闭合时刻（Unix 毫秒）——本单回执 / 直执完成的墙钟时刻（工具卡运行时长终点·单工具口径；0 = 未闭合——回落采样时刻）。</summary>
         public long ClosedAtMs;
+        /// <summary>认领时刻（Unix 毫秒）——工单状态首次观测到 Work 的墙钟时刻（排队 / 执行两段计时的分界；0 = 未观测——快单可能在两轮轮询之间从 Open 直接闭合）。</summary>
+        public long ClaimedAtMs;
 
         /// <summary>
         /// 执行序值——工具分批调度的分桶依据（A127；宿主内部静态表裁决，非 LLM 传参）。
@@ -106,6 +108,12 @@ namespace CH4
                 return;
             }
             OfficeState state = oa.GetStatus(OfficeId);
+            // [段0] 认领时刻——状态首次观测到 Work 即记（排队 / 执行两段计时的分界）。
+            // 快单可能在两轮轮询之间直接 Open → Closed（Work 帧从未被观测）→ 保持 0 = 未观测，下游按 -1 不造值。
+            if (state == OfficeState.Work && ClaimedAtMs <= 0)
+            {
+                ClaimedAtMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            }
             if (state == OfficeState.Closed)
             {
                 // 回执 = Office.Result 载荷（complete_str 写 "result" key——与 oa.get_result_str 积木同源）
@@ -122,10 +130,22 @@ namespace CH4
                 IsClosed = true;
                 // 单工具计时终点——OA 回执到达帧置闭合时刻（工具卡运行时长按各自回执计）
                 ClosedAtMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                // [段1] 快单兜底——本帧直接观测到 Closed（Work 帧未采到）但工单确曾被认领（ClaimFrame > 0，
+                //   Complete 不清零、仅 Post/Relist 清零）：认领与闭合落在同一轮询窗口内，
+                //   认领时刻记作闭合时刻（排队 = 总时长、执行 = 0——近似而非造值，口径见 design-ch4-tool-timing §三·一）。
+                if (ClaimedAtMs <= 0 && office.ClaimFrame > 0)
+                {
+                    ClaimedAtMs = ClosedAtMs;
+                }
             }
             else if (state == OfficeState.TimeOut)
             {
                 IsTimedOut = true;
+                // 超时同样闭幕——闭合时刻置值，避免下游按「未闭合」回落采样时刻（两段计时口径一致）
+                if (ClosedAtMs <= 0)
+                {
+                    ClosedAtMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                }
             }
         }
         /// <summary>
@@ -144,6 +164,47 @@ namespace CH4
                 endMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             }
             long span = endMs - StartedAtMs;
+            if (span < 0)
+            {
+                return -1;
+            }
+            return span;
+        }
+        /// <summary>
+        /// 排队时长——派发时刻 → 认领时刻（毫秒）。
+        /// 认领时刻仅在轮询观测到 Work 时记录；快单（两轮之间直接闭合）返回 -1（未观测，不造值）。
+        /// </summary>
+        /// <returns>排队时长毫秒（-1 = 未观测）</returns>
+        public long QueueMs()
+        {
+            if (StartedAtMs <= 0 || ClaimedAtMs <= 0)
+            {
+                return -1;
+            }
+            long span = ClaimedAtMs - StartedAtMs;
+            if (span < 0)
+            {
+                return -1;
+            }
+            return span;
+        }
+        /// <summary>
+        /// 执行时长——认领时刻 → 闭合时刻（毫秒）；未闭合回落采样时刻。
+        /// 认领时刻未观测返回 -1（未记录，不造值）——与 ElapsedMs 的总时长口径互补。
+        /// </summary>
+        /// <returns>执行时长毫秒（-1 = 未记录）</returns>
+        public long RunMs()
+        {
+            if (ClaimedAtMs <= 0)
+            {
+                return -1;
+            }
+            long endMs = ClosedAtMs;
+            if (endMs <= 0)
+            {
+                endMs = System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            }
+            long span = endMs - ClaimedAtMs;
             if (span < 0)
             {
                 return -1;

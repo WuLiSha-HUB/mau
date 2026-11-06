@@ -23,8 +23,10 @@ namespace CH4
         /// <param name="index">并发序号（1-based）</param>
         /// <param name="total">并发总数</param>
         /// <param name="durMs">运行时长（毫秒；-1 = 未记录 / 不适用——进载荷供前端显示）</param>
+        /// <param name="queueMs">排队时长——派发 → 认领（毫秒；-1 = 未观测，前端不显示拆分）</param>
+        /// <param name="runMs">执行时长——认领 → 闭合（毫秒；-1 = 未记录，前端不显示拆分）</param>
         /// <returns>工具卡载荷字典</returns>
-        public static Dictionary<string, object> BuildToolCard(string name, string arguments, string result, int index, int total, long durMs = -1)
+        public static Dictionary<string, object> BuildToolCard(string name, string arguments, string result, int index, int total, long durMs = -1, long queueMs = -1, long runMs = -1)
         {
             Dictionary<string, object> payload = new Dictionary<string, object>();
             payload["name"] = name;
@@ -37,6 +39,9 @@ namespace CH4
             payload["toolTotal"] = total;
             payload["order"] = ToolOrderTable.OrderText(name);
             payload["durMs"] = durMs;
+            // 两段计时（排队 / 执行）——durMs 仍是总时长（向后兼容）；两值 -1 = 未观测，前端不显示拆分
+            payload["queueMs"] = queueMs;
+            payload["runMs"] = runMs;
             return payload;
         }
         /// <summary>
