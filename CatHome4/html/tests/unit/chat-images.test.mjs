@@ -58,6 +58,32 @@ describe('图片包裹解析（imgSplit）', () => {
         expect(r.before).toContain('没有段尾');
         expect(r.after).toBe('尾部');
     });
+
+    it('代码围栏内的包裹——照样出图，紧邻围栏行一并吞掉', () => {
+        const text = '前文\n\n```\n[image-open]\n图片1-1：ccbp:a.png\n[image-end]\n```\n\n后文';
+        const r = window.imgSplit(text);
+        expect(r.items.length).toBe(1);
+        expect(r.items[0].ref).toBe('1-1');
+        expect(r.before).toBe('前文');
+        expect(r.after).toBe('后文');
+    });
+
+    it('围栏外的包裹——前后段各自内容原样保留', () => {
+        const text = '```\ncode\n```\n\n[image-open]\n图片3-1：ccbp:c.png\n[image-end]\n尾部';
+        const r = window.imgSplit(text);
+        expect(r.items.length).toBe(1);
+        expect(r.items[0].ref).toBe('3-1');
+        expect(r.before).toContain('code');
+        expect(r.after).toBe('尾部');
+    });
+
+    it('包裹后紧跟代码块（包裹在围栏外）——真代码块的围栏行不被吞', () => {
+        const text = '[image-open]\n图片2-1：ccbp:b.png\n[image-end]\n\n```js\nvar a = 1;\n```';
+        const r = window.imgSplit(text);
+        expect(r.items.length).toBe(1);
+        expect(r.before).toBe('');
+        expect(r.after).toBe('```js\nvar a = 1;\n```');
+    });
 });
 
 describe('图片包裹渲染', () => {
@@ -94,6 +120,16 @@ describe('图片包裹渲染', () => {
         expect(texts.length).toBe(2);
         expect(texts[0].textContent).toContain('A200 完成。');
         expect(texts[1].textContent).toContain('以下是说明。');
+    });
+
+    it('text 泡——围栏内包裹照样出图，不留空代码块、不吞后段正文', () => {
+        const text = '```\n[image-open]\n图片1-1：ccbp:a.png\n[image-end]\n```\n\n**正文**';
+        const row = window.buildTextBlock({ text: text });
+        const bubble = row.querySelector('.chat-bubble');
+        expect(bubble.querySelectorAll('.chat-imgs .chat-img').length).toBe(1);
+        expect(bubble.querySelectorAll('pre').length).toBe(0);
+        expect(bubble.querySelectorAll('.md-block').length).toBe(1);
+        expect(bubble.querySelector('strong').textContent).toBe('正文');
     });
 
     it('零回归——无包裹走原路径（单 MD 块 / user 纯文本）', () => {

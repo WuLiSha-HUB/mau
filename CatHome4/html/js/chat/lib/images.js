@@ -2,6 +2,7 @@
 // lib/images.js —— 对话图片附件（包裹解析 + 缩略图组）
 // 来源：chat-view.js 第 496-644 行（A65 对话图片附件）· 规格 design-ch4-chat-images.md §四/§六
 // 契约：包裹格式（严格门：段头 + ≥1 条目 + 段尾齐备，包裹内部无杂行；不成立 = 整段按普通文本）
+//   包裹识别**优先于代码围栏**——围栏内的上述三行照样命中出图，紧邻的围栏行一并吞掉（2026-11-06 莎裁：图片渲染高优先级）
 //   [image-open]
 //   图片<前文条数>-<批内序号>：<路径>
 //   [image-end]
@@ -21,6 +22,15 @@ function imgSplit(text) {
     // 继续向后找下一处段头；全部候选不成立才整段按普通文本）
     var raw = (text === undefined || text === null) ? '' : String(text);
     var lines = raw.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    // 🔴 图片渲染优先级最高（2026-11-06 莎裁）——三行齐备即命中，**不受代码围栏限制**：
+    //   包裹被 ``` 包住时照样出图；围栏行只在这时吞掉（否则残留孤围栏各开空 code 块、后段正文被吞）
+    //   围栏状态预扫——inCodeAt[i] = 第 i 行之前是否处于代码围栏内（只用于吞并判定，不参与命中判定）
+    var inCodeAt = [];
+    var inCode = false;
+    for (var f = 0; f < lines.length; f = f + 1) {
+        inCodeAt.push(inCode);
+        if (lines[f].trim().indexOf('```') === 0) { inCode = !inCode; }
+    }
     for (var s = 0; s < lines.length; s = s + 1) {
         if (lines[s].trim() !== IMG_OPEN) { continue; }
         var items = [];
@@ -36,10 +46,17 @@ function imgSplit(text) {
             i = i + 1;
         }
         if (broken || items.length === 0 || i >= lines.length) { continue; }
+        // 围栏行吞并——仅当包裹被代码围栏包住时才吞紧邻的那对围栏行；
+        // 包裹在围栏外时，相邻的 ``` 属于真正的代码块，必须原样保留
+        var fenced = inCodeAt[s] === true;
+        var bEnd = s;
+        if (fenced && bEnd > 0 && lines[bEnd - 1].trim().indexOf('```') === 0) { bEnd = bEnd - 1; }
+        var aStart = i + 1;
+        if (fenced && aStart < lines.length && lines[aStart].trim().indexOf('```') === 0) { aStart = aStart + 1; }
         return {
             items: items,
-            before: imgTrimBlank(lines.slice(0, s).join('\n')),
-            after: imgTrimBlank(lines.slice(i + 1).join('\n'))
+            before: imgTrimBlank(lines.slice(0, bEnd).join('\n')),
+            after: imgTrimBlank(lines.slice(aStart).join('\n'))
         };
     }
     return { items: [], before: raw, after: '' };

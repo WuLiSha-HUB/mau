@@ -696,7 +696,7 @@ namespace CatHome4.Core.Tests
             {
                 if (all[i].Role == LlmRole.User && all[i].Content != null)
                 {
-                    Assert.False(all[i].Content.Contains("sleep 作废"));
+                    Assert.DoesNotContain("sleep 作废", all[i].Content);
                 }
             }
             Assert.Empty(CH4.DelayQueue.List("test-session"));

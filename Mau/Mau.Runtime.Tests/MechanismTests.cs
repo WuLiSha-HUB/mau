@@ -30,11 +30,13 @@ namespace Mau.Runtime.Tests
         /// 后台线程调用抛 InvalidOperationException
         /// </summary>
         [Fact]
-        public async Task ThreadGuardRejectsForeignThread()
+        public void ThreadGuardRejectsForeignThread()
         {
             ThreadGuard guard = new ThreadGuard();
             Exception? captured = null;
-            await Task.Run(delegate
+            // 🔴 显式线程，不用 Task.Run——Task.Run 在延迟调度下可能内联到调用方的线程池线程，
+            // 与测试方法同线程 → 守卫不触发、断言前提不成立（判例 2026-11-06：并行跑时偶发失败，单跑必过）
+            Thread worker = new Thread(delegate ()
             {
                 try
                 {
@@ -44,7 +46,9 @@ namespace Mau.Runtime.Tests
                 {
                     captured = ex;
                 }
-            }, TestContext.Current.CancellationToken);
+            });
+            worker.Start();
+            worker.Join();
 
             Assert.NotNull(captured);
             Assert.IsType<InvalidOperationException>(captured);

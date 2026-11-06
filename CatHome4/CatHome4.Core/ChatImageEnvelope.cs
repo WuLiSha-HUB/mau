@@ -104,6 +104,7 @@ namespace CH4
         /// 解析包裹——严格门：段头 + ≥1 条目 + 段尾齐备，包裹内部无杂行。
         /// 🔴 2026-10-06 放宽：包裹可位于消息**任意位置**（行粒度）——原「必须首个非空行」退役；
         ///    前一候选不成立（缺段尾 / 内部杂行 / 零条目）继续向后找下一处段头。
+        /// 🔴 图片包裹优先级最高——代码围栏（```）内的段头照样判包裹，紧邻的围栏行不留在前后段（与前端 lib/images.js imgSplit 同判据，2026-11-06 莎裁）。
         /// 不成立时：items 空列表、before = 原文 Trim、after = 空串（调用方按普通文本处理）。
         /// </summary>
         /// <param name="text">消息文本（可空）</param>
@@ -122,7 +123,20 @@ namespace CH4
             }
             before = text.Trim();
             string[] lines = text.Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
-            // [段1] 段头定位——任意位置扫描（放宽后不再要求首个非空行）
+            // [段0] 围栏状态预扫——inCodeAt[f] = 第 f 行之前是否处于代码围栏内
+            // 只用于「包裹是否被围栏包住」的吞并判定，不参与命中判定（图片渲染优先，围栏内照样命中）
+            bool[] inCodeAt = new bool[lines.Length];
+            bool inCode = false;
+            for (int f = 0; f < lines.Length; f = f + 1)
+            {
+                inCodeAt[f] = inCode;
+                if (lines[f].Trim().StartsWith("```", StringComparison.Ordinal))
+                {
+                    inCode = !inCode;
+                }
+            }
+            // [段1] 段头定位——任意位置扫描（放宽后不再要求首个非空行）；图片包裹优先级最高，
+            // 不受代码围栏限制——围栏内的段头照样判包裹（与前端 lib/images.js imgSplit 同判据）
             for (int s = 0; s < lines.Length; s = s + 1)
             {
                 if (lines[s].Trim() != OpenTag)
@@ -163,8 +177,21 @@ namespace CH4
                     continue;
                 }
                 items = found;
-                before = JoinLines(lines, 0, s).Trim();
-                after = JoinLines(lines, i + 1, lines.Length).Trim();
+                // 围栏行吞并——仅当包裹被围栏包住时才吞紧邻的围栏行；包裹在围栏外时，
+                // 相邻的 ``` 属于真正的代码块，必须原样保留（与前端 imgSplit 同判据）
+                bool fenced = inCodeAt[s];
+                int beforeEnd = s;
+                if (fenced && beforeEnd > 0 && lines[beforeEnd - 1].Trim().StartsWith("```", StringComparison.Ordinal))
+                {
+                    beforeEnd = beforeEnd - 1;
+                }
+                int afterStart = i + 1;
+                if (fenced && afterStart < lines.Length && lines[afterStart].Trim().StartsWith("```", StringComparison.Ordinal))
+                {
+                    afterStart = afterStart + 1;
+                }
+                before = JoinLines(lines, 0, beforeEnd).Trim();
+                after = JoinLines(lines, afterStart, lines.Length).Trim();
                 return true;
             }
             return false;

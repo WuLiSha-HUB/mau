@@ -186,6 +186,53 @@ namespace CatHome4.Core.Tests
             Assert.False(ChatImageEnvelope.TryParse("[image-open]\n[image-end]\n正文", out items, out before, out after));
             Assert.Empty(items);
         }
+        /// <summary>
+        /// 图片优先——代码围栏内的包裹照样命中，紧邻围栏行不留在前后段（与前端 imgSplit 同判据）。
+        /// </summary>
+        [Fact]
+        public void TryParse_EnvelopeInsideCodeFence_Accepted()
+        {
+            string text = "前文\n\n```\n[image-open]\n图片1-1：C:\\a.png\n[image-end]\n```\n\n后文";
+            List<ChatImageItem> items;
+            string before;
+            string after;
+            Assert.True(ChatImageEnvelope.TryParse(text, out items, out before, out after));
+            Assert.Single(items);
+            Assert.Equal("1-1", items[0].Ref);
+            Assert.Equal("前文", before);
+            Assert.Equal("后文", after);
+        }
+        /// <summary>
+        /// 围栏外的包裹——围栏闭合完整、与包裹不相邻，前后段各自内容原样保留。
+        /// </summary>
+        [Fact]
+        public void TryParse_EnvelopeAfterClosedFence_Accepted()
+        {
+            string text = "```\ncode\n```\n\n[image-open]\n图片3-1：C:\\c.png\n[image-end]\n尾部";
+            List<ChatImageItem> items;
+            string before;
+            string after;
+            Assert.True(ChatImageEnvelope.TryParse(text, out items, out before, out after));
+            Assert.Single(items);
+            Assert.Equal("3-1", items[0].Ref);
+            Assert.Equal("```\ncode\n```", before);
+            Assert.Equal("尾部", after);
+        }
+        /// <summary>
+        /// 包裹在围栏外、其后紧跟代码块——真代码块的围栏行不被吞。
+        /// </summary>
+        [Fact]
+        public void TryParse_CodeFenceAfterEnvelope_Kept()
+        {
+            string text = "[image-open]\n图片2-1：C:\\b.png\n[image-end]\n\n```js\nvar a = 1;\n```";
+            List<ChatImageItem> items;
+            string before;
+            string after;
+            Assert.True(ChatImageEnvelope.TryParse(text, out items, out before, out after));
+            Assert.Single(items);
+            Assert.Equal("", before);
+            Assert.Equal("```js\nvar a = 1;\n```", after);
+        }
 
         /// <summary>
         /// 往返一致——组装产物必被自身解析命中（条目与正文逐一还原）。
