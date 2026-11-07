@@ -1317,6 +1317,48 @@ namespace CatHome4.Admin
             return Results.Json(new { ok = true, roots = rootsIn.Count });
         }
 
+        /// <summary>
+        /// 宿主重启请求——POST /api/v1/host-restart（body: {mode?: "host"|"incr"|"full", push?}）。
+        /// 语义与猫侧 restart-* 特权工具同源：只登记请求 + 置停机态，主循环闸门等全局 Idle 后执行接力（本处不起进程）。
+        /// 默认 mode=host（原地重启：不编译不覆盖）——配置类改动（如受控根）生效走这一档；incr / full 留给显式调用方。
+        /// </summary>
+        /// <param name="ctx">HTTP 上下文</param>
+        /// <returns>回执 JSON</returns>
+        internal static async Task<IResult> HandleHostRestartPost(HttpContext ctx)
+        {
+            string body = await ReadBodyText(ctx);
+            string mode = "host";
+            string push = "管理面板请求重启";
+            try
+            {
+                using (JsonDocument doc = JsonUtil.ParseStrict(body))
+                {
+                    string m = GetJsonString(doc.RootElement, "mode").Trim();
+                    if (m.Length > 0)
+                    {
+                        mode = m;
+                    }
+                    string p = GetJsonString(doc.RootElement, "push").Trim();
+                    if (p.Length > 0)
+                    {
+                        push = p;
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                return Results.Json(new { ok = false, error = "body 非 JSON" });
+            }
+            if (mode != "host" && mode != "incr" && mode != "full")
+            {
+                return Results.Json(new { ok = false, error = "mode 非法（只接受 host / incr / full）: " + mode });
+            }
+            DataBox.Set<string>("global", "host_restart_request", JsonUtil.Object(("mode", mode), ("push", push)));
+            DataBox.Set<string>("global", "host_restart_state", "requested");
+            LogStore.Add("CatHome4", 1, "管理面板请求宿主重启（mode=" + mode + "）——等待全局空闲后执行", "RESTART");
+            return Results.Json(new { ok = true, mode = mode, note = "已登记——全局空闲后执行重启（闸门超时会自动撤销）" });
+        }
+
 
 
         /// <summary>

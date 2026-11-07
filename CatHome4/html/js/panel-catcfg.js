@@ -1155,6 +1155,187 @@ document.getElementById('rootAddBtn').onclick = function () {
     document.getElementById('rootNewNote').value = '';
     renderRoots();
 };
+// ── 根池「应用给猫」——把当前根池全域写进各猫 enabledRoots（一致者标「一样」并跳过，不重复写） ──
+var rootsApplyTargets = [];   // 目标根 id 全集（取磁盘态，不取表格里未保存的编辑）
+var rootsApplyCats = [];      // [{id, name, cfg}]
+
+// 猫现值 vs 目标全集——缺 / 多 分开报，两者皆空才算「一样」
+function rootsApplyDiff(cfg) {
+    var cur = normalizeRoots(cfg.enabledRoots);
+    var missing = [];
+    var extra = [];
+    for (var i = 0; i < rootsApplyTargets.length; i++) {
+        if (cur.indexOf(rootsApplyTargets[i]) < 0) { missing.push(rootsApplyTargets[i]); }
+    }
+    for (var j = 0; j < cur.length; j++) {
+        if (rootsApplyTargets.indexOf(cur[j]) < 0) { extra.push(cur[j]); }
+    }
+    return { same: missing.length === 0 && extra.length === 0, missing: missing, extra: extra };
+}
+
+function openRootsApply() {
+    document.getElementById('rootsApplyList').textContent = '读取猫列表…';
+    document.getElementById('rootsApplyMsg').textContent = '';
+    document.getElementById('rootsApplyDesc').textContent = '读取中…';
+    document.getElementById('rootsApplyModal').style.display = 'flex';
+    fetch('/api/v1/workspace')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d.ok) { throw new Error(d.error || '根池读取失败'); }
+            var roots = d.roots || [];
+            var ids = [];
+            for (var i = 0; i < roots.length; i++) {
+                var id = String(roots[i].id || '').toLowerCase();
+                if (id.length > 0 && ids.indexOf(id) < 0) { ids.push(id); }
+            }
+            ids.sort();
+            rootsApplyTargets = ids;
+            return fetch('/api/v1/cats');
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (d) { return loadRootsApplyCats(d.cats || []); })
+        .then(function () { renderRootsApplyList(); })
+        .catch(function (e) { document.getElementById('rootsApplyList').textContent = '读取失败: ' + e; });
+}
+
+// 逐猫读配置（串行）——比对要现况
+function loadRootsApplyCats(cats) {
+    rootsApplyCats = [];
+    var idx = 0;
+    function next() {
+        if (idx >= cats.length) { return Promise.resolve(); }
+        var c = cats[idx];
+        idx = idx + 1;
+        return fetch('/api/v1/cat-config?cat=' + encodeURIComponent(c.id))
+            .then(function (r) { return r.json(); })
+            .then(function (cfg) {
+                rootsApplyCats.push({ id: c.id, name: c.name, cfg: (cfg && cfg.ok) ? cfg : null });
+                return next();
+            })
+            .catch(function () {
+                rootsApplyCats.push({ id: c.id, name: c.name, cfg: null });
+                return next();
+            });
+    }
+    return next();
+}
+
+function renderRootsApplyList() {
+    var box = document.getElementById('rootsApplyList');
+    box.textContent = '';
+    document.getElementById('rootsApplyDesc').textContent =
+        '根池全域（' + rootsApplyTargets.join(' / ') + '）将写入所勾选的猫；已一致者标「一样」并跳过，不重复写。写入后「新会话」生效。';
+    if (rootsApplyCats.length === 0) { box.textContent = '暂无猫'; return; }
+    var sameCount = 0;
+    for (var i = 0; i < rootsApplyCats.length; i++) {
+        var item = rootsApplyCats[i];
+        var diff = item.cfg !== null ? rootsApplyDiff(item.cfg) : null;
+        var row = document.createElement('label');
+        row.style.cssText = 'display:flex;gap:6px;align-items:center;font-size:var(--ch-fs-tag);padding:3px 0;cursor:pointer';
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'roots-apply-cb';
+        cb.setAttribute('data-cat', item.id);
+        cb.checked = item.cfg !== null && !diff.same;
+        // 读不到配置 → 无法安全写；已一致 → 无需写（两者都禁用勾选）
+        cb.disabled = item.cfg === null || (diff !== null && diff.same);
+        row.appendChild(cb);
+        var label = item.name + '（' + item.id + '）';
+        if (item.cfg === null) { label = label + ' · 配置读取失败（不可套用）'; }
+        else if (diff.same) { sameCount = sameCount + 1; label = label + ' · 一样'; }
+        else {
+            var parts = [];
+            if (diff.missing.length > 0) { parts.push('缺 ' + diff.missing.join('/')); }
+            if (diff.extra.length > 0) { parts.push('多 ' + diff.extra.join('/')); }
+            label = label + ' · ' + parts.join('，');
+        }
+        var txt = document.createElement('span');
+        txt.textContent = label;
+        txt.style.color = item.cfg === null ? 'var(--ch-err)' : (diff !== null && diff.same ? 'var(--ch-ok-weak)' : 'var(--ch-fg-muted)');
+        row.appendChild(txt);
+        box.appendChild(row);
+    }
+    if (sameCount === rootsApplyCats.length) {
+        document.getElementById('rootsApplyMsg').textContent = '全部猫已与根池一致（一样）——无需写入';
+    }
+}
+
+function closeRootsApply() {
+    document.getElementById('rootsApplyModal').style.display = 'none';
+}
+
+// 逐猫串行写入——只写勾选的猫；载荷只带 cat + enabledRoots（字段级合并写，其余字段保留）
+function applyRootsToCats() {
+    var boxes = document.querySelectorAll('#rootsApplyList input.roots-apply-cb');
+    var targets = [];
+    for (var i = 0; i < boxes.length; i++) {
+        if (boxes[i].checked && !boxes[i].disabled) { targets.push(boxes[i].getAttribute('data-cat')); }
+    }
+    var msg = document.getElementById('rootsApplyMsg');
+    if (targets.length === 0) {
+        msg.textContent = '没有需要写入的猫（其余已一致）';
+        return;
+    }
+    var idx = 0;
+    var okCount = 0;
+    var fail = [];
+    function next() {
+        if (idx >= targets.length) {
+            msg.textContent = '应用完成——写入 ' + okCount + ' 只' + (fail.length > 0 ? '；失败: ' + fail.join('、') : '') + '（新会话生效）';
+            return;
+        }
+        var id = targets[idx];
+        idx = idx + 1;
+        msg.textContent = '应用中… ' + idx + '/' + targets.length;
+        fetch('/api/v1/cat-config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ cat: id, enabledRoots: rootsApplyTargets })
+        })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+                if (d.ok) { okCount = okCount + 1; }
+                else { fail.push(id + '(' + (d.error || '') + ')'); }
+                return next();
+            })
+            .catch(function () {
+                fail.push(id);
+                return next();
+            });
+    }
+    next();
+}
+
+document.getElementById('rootsApplyCats').onclick = openRootsApply;
+document.getElementById('rootsApplyGo').onclick = applyRootsToCats;
+document.getElementById('rootsApplyCancel').onclick = closeRootsApply;
+document.getElementById('rootsApplyClose').onclick = closeRootsApply;
+
+// 宿主重启——配置类改动（受控根保存后）由面板直接发起：只登记请求，接力由宿主主循环在全局 Idle 后执行
+function restartHost() {
+    var msg = document.getElementById('rootsMsg');
+    if (!window.confirm('重启宿主？会在全局空闲后执行（有猫在跑或工具在途时最多等 30 秒，超时自动撤销）。重启期间页面会短暂断开，恢复后自动重连。')) {
+        return;
+    }
+    msg.textContent = '提交重启请求…';
+    fetch('/api/v1/host-restart', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'host', push: '管理面板：配置页请求重启' })
+    })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            msg.textContent = d.ok
+                ? '已登记重启（' + d.mode + '）——' + (d.note || '')
+                : '重启请求失败: ' + (d.error || '');
+        })
+        .catch(function () {
+            msg.textContent = '重启请求已发出——宿主可能正在停机';
+        });
+}
+
+document.getElementById('rootsRestart').onclick = restartHost;
+
 document.getElementById('rootsSave').onclick = saveRoots;
 loadRoots();
 

@@ -168,7 +168,9 @@
                                 <button id="rootAddBtn" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">添加</button>
                             </div>
                             <div style="display:flex;gap:6px;margin-top:10px;justify-content:flex-end">
+                                <button id="rootsApplyCats" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">应用给猫</button>
                                 <button id="rootsSave" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">保存（重启生效）</button>
+                                <button id="rootsRestart" style="background:var(--ch-bg-raised);border:1px solid var(--ch-err);color:var(--ch-err);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">重启宿主</button>
                             </div>
                             <div id="rootsMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag);margin-top:6px"></div>
                         </div>
@@ -469,6 +471,24 @@
             <div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end">
                 <button id="tplApplyCancel" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消</button>
                 <button id="tplApplyGo" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">确认应用</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 根池「应用给猫」弹层——把当前根池全域写进各猫 enabledRoots（已一致者标「一样」并跳过） -->
+    <div id="rootsApplyModal" style="display:none;position:fixed;inset:0;background:var(--ch-overlay);z-index:50;align-items:center;justify-content:center">
+        <div style="width:580px;max-height:80vh;overflow-y:auto;background:var(--ch-bg-panel);border:1px solid var(--ch-line);border-radius:8px;padding:14px">
+            <div style="display:flex;align-items:center;margin-bottom:8px">
+                <span style="color:var(--ch-identity);font-weight:bold;font-size:var(--ch-fs-sub)">根池应用给猫</span>
+                <span style="flex:1"></span>
+                <button id="rootsApplyClose" style="background:transparent;border:none;color:var(--ch-fg-weak);font-size:var(--ch-fs-title);cursor:pointer">✕</button>
+            </div>
+            <div id="rootsApplyDesc" style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-bottom:8px">读取中…</div>
+            <div id="rootsApplyList"></div>
+            <div id="rootsApplyMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag);margin-top:8px"></div>
+            <div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end">
+                <button id="rootsApplyCancel" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消</button>
+                <button id="rootsApplyGo" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">确认应用</button>
             </div>
         </div>
     </div>

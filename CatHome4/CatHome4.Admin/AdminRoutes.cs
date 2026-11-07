@@ -40,6 +40,9 @@ namespace CatHome4.Admin
             sink.MapGet("/api/v1/workspace", (Delegate)AdminService.HandleWorkspaceGet);
             sink.MapPost("/api/v1/workspace", (Delegate)AdminService.HandleWorkspacePost);
 
+            // 宿主重启——配置类改动（受控根等）保存后由面板直接发起（只登记请求 + 停机态；接力由主循环闸门执行）
+            sink.MapPost("/api/v1/host-restart", (Delegate)AdminService.HandleHostRestartPost);
+
             // [段6] 外观配置池——全局池管理面（A244）
             sink.MapGet("/api/v1/appearance-apis", (Delegate)AdminService.HandleAppearanceApisGet);
             sink.MapPost("/api/v1/appearance-apis", (Delegate)AdminService.HandleAppearanceApisPost);
