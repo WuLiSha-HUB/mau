@@ -131,6 +131,21 @@ namespace SetUp
                 // sync-html —— 外观层静态资源镜像同步（源区 → 产物区 + 运行区；G 方案 2026-09-23）
                 exitCode = SyncHtml(repoRoot, args);
             }
+            else if (mode == "diag-holders")
+            {
+                // diag-holders —— 目录持有者诊断（文件句柄 + 进程工作目录两条证据面；运维与验证入口）
+                if (args.Length < 2)
+                {
+                    Console.WriteLine("[SetUp] diag-holders 需要目标目录参数：SetUp.exe diag-holders <目录>");
+                    exitCode = 1;
+                }
+                else
+                {
+                    Console.WriteLine("[SetUp] 目录持有者诊断: " + args[1]);
+                    Console.Write(DiagnoseDirectoryHolders(args[1]));
+                    exitCode = 0;
+                }
+            }
             else if (mode == "relaunch")
             {
                 // relaunch —— 宿主自更新接力（等旧宿主退出 → prepare → 原子切换 → 自启；参数零容忍校验在 Relaunch 内）
@@ -174,6 +189,8 @@ namespace SetUp
             Console.WriteLine("  SetUp.exe deploy <目录>  部署正式运行实例到目标目录（原子切换——现行更名 _old 留作回退源）");
             Console.WriteLine("  SetUp.exe sync-html [--target <运行区目录>] [--no-run] [--report <路径>]");
             Console.WriteLine("                           外观层静态资源镜像同步：源区 html → 产物区 + 运行区（--target 缺省从运行中宿主反推）");
+            Console.WriteLine("  SetUp.exe diag-holders <目录>");
+            Console.WriteLine("                           目录持有者诊断：逐个文件独占打开探测 + 进程工作目录扫描（回答「谁锁着运行区」）");
             Console.WriteLine("  SetUp.exe relaunch [--mode <full|incr|host>] --wait-pid <pid> --target <目录> [--majordomopush <串>] [--report <路径>]");
             Console.WriteLine("                           宿主自更新接力（--mode 缺省 full）：等旧宿主退出 → 全链 prepare / 纯搬运 / 原地 → 原子切换 → 自启新宿主（回执注入）");
             Console.WriteLine("前置：.NET 10 Runtime + SDK + WindowsDesktop；本 exe 须位于 Mau 仓库根（含 Mau.sln）。");

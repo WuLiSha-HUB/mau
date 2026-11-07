@@ -32,7 +32,7 @@ if (!Number.isNaN(HOST_PID) && HOST_PID > 0) {
         process.exit(0);
       }
     }
-  }, 5000);
+  }, 2000);
   // 不阻止进程自然退出（listen 句柄仍保持——退出路径唯一是宿主死）
   if (typeof watchdog.unref === 'function') {
     watchdog.unref();

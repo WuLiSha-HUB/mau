@@ -39,6 +39,72 @@ namespace CH4
                 dir = parent;
             }
         }
+        /// <summary>
+        /// 前端测试目录解析——源码区优先（node_modules 与源码同处；部署区发布面排除 node_modules）。
+        /// 四级锚定：① CH4_REPO_ROOT 环境变量 ② BaseDirectory 向上找 Mau.sln（开发区原位运行）
+        /// ③ 运行区同级的仓库目录（部署区与仓库并列的本支布局）④ 部署区 html/tests 兜底（纯净部署机需现装依赖）。
+        /// 判例 2026-11-07：运行区不在仓库树内，② 永远命中不了 —— 旧实现每次回落部署区、每次部署后在运行区重装
+        /// node_modules，安装进程的 cwd 持有运行区，下一次部署的原子切换改名必失败。
+        /// </summary>
+        /// <returns>测试目录（含 server.js）；空串 = 无可用目录</returns>
+        private static string ResolveFrontendTestDir()
+        {
+            // [段1] 显式覆盖——CH4_REPO_ROOT（多实例 / 非标准布局逃逸口）
+            string fromEnv = SourceTestsDir(Environment.GetEnvironmentVariable("CH4_REPO_ROOT"));
+            if (fromEnv.Length > 0)
+            {
+                return fromEnv;
+            }
+            // [段2] 仓库树内原位运行——BaseDirectory 向上找 Mau.sln
+            string fromTree = SourceTestsDir(FindRepoRoot(AppContext.BaseDirectory));
+            if (fromTree.Length > 0)
+            {
+                return fromTree;
+            }
+            // [段3] 部署区与仓库并列——运行区上一级目录下的仓库目录（如 D:\Mau\MauOut 与 D:\Mau\Mau）
+            try
+            {
+                string baseDir = new DirectoryInfo(AppContext.BaseDirectory).FullName.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                DirectoryInfo parentInfo = Directory.GetParent(baseDir);
+                if (parentInfo != null)
+                {
+                    foreach (string candidate in Directory.EnumerateDirectories(parentInfo.FullName))
+                    {
+                        string dir = SourceTestsDir(candidate);
+                        if (dir.Length > 0)
+                        {
+                            return dir;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // 枚举失败（无权限 / 路径异常）不阻断——回落部署区，但留痕（失败可见）
+                LogStore.Add("CatHome4", 1, "运行区同级仓库探测失败: " + ex.Message, "CONFIG");
+            }
+            // [段4] 回退部署区（server.js 随 publish 复制；node_modules 不在发布面内）
+            string deploy = Path.Combine(AppContext.BaseDirectory, "html", "tests");
+            if (File.Exists(Path.Combine(deploy, "server.js")))
+            {
+                return deploy;
+            }
+            return "";
+        }
+        /// <summary>
+        /// 仓库根下的前端测试目录——含 server.js 才算命中。
+        /// </summary>
+        /// <param name="repoRoot">候选仓库根</param>
+        /// <returns>测试目录；空串 = 未命中</returns>
+        private static string SourceTestsDir(string repoRoot)
+        {
+            if (repoRoot == null || repoRoot.Trim().Length == 0)
+            {
+                return "";
+            }
+            string src = Path.Combine(repoRoot, "CatHome4", "html", "tests");
+            return File.Exists(Path.Combine(src, "server.js")) ? src : "";
+        }
 
         /// <summary>
         /// 数据根解析——三级锚定（design-ch4-release.md §三）：

@@ -228,8 +228,8 @@ namespace SetUp
                 Console.WriteLine("[SetUp] 暂存目录已清理：" + targetNew);
             }
         }
-        /// <summary>切换类目录操作的退避重试次数（A135 引入；A139 由 10 提升至 20——实测 3 s 窗口不够，持有者可能是稳定持有而非正在退出）</summary>
-        private const int SwitchRetryAttempts = 20;
+        /// <summary>切换类目录操作的退避重试次数（A135 引入；A139 由 10 提升至 20；2026-11-07 提升至 30——覆盖前端测试服务 node 守望宿主退出的 2 s 轮询 + 句柄回收余量）</summary>
+        private const int SwitchRetryAttempts = 30;
         /// <summary>切换类目录操作的退避间隔毫秒（20 × 300 ms = 6 s 上限）</summary>
         private const int SwitchRetryDelayMs = 300;
         /// <summary>

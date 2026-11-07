@@ -193,6 +193,8 @@ namespace CH4
             }
             finally
             {
+                // 前端测试服务子进程收尾——退出即释放（孤儿 node / npm 会占端口并持有测试目录句柄；在观测收尾前做，失败仍可记日志）
+                KillFrontendChildren();
                 // O4 优雅收尾——统一观测四文件 flush 落盘（0 字节判例根因修复：--run 模式直接 return 丢缓冲）
                 LogStore.CloseWriters();
                 FrameStore.Close();
@@ -603,68 +605,18 @@ namespace CH4
                         return;
                     }
                 }
-                // 定位测试目录——优先源码区（仓库根/CatHome4/html/tests——开发流程；纯净仓库 node_modules 缺失时自动部署）
-                string testDir = "";
-                string repoRoot = FindRepoRoot(AppContext.BaseDirectory);
-                if (repoRoot.Length > 0)
-                {
-                    string src = System.IO.Path.Combine(repoRoot, "CatHome4", "html", "tests");
-                    if (System.IO.File.Exists(System.IO.Path.Combine(src, "server.js")))
-                    {
-                        testDir = src;
-                    }
-                }
-                // 回退部署区（html/tests——server.js 随 publish 复制）
-                if (testDir.Length == 0)
-                {
-                    string deploy = System.IO.Path.Combine(AppContext.BaseDirectory, "html", "tests");
-                    if (System.IO.File.Exists(System.IO.Path.Combine(deploy, "server.js")))
-                    {
-                        testDir = deploy;
-                    }
-                }
+                string testDir = ResolveFrontendTestDir();
                 if (testDir.Length == 0)
                 {
                     return;
                 }
-                // node_modules 缺失 → 自动部署（npm install + playwright chromium + 启动 server.js——后台链；纯净仓库跟随 Mau 自动部署）
-                if (!System.IO.Directory.Exists(System.IO.Path.Combine(testDir, "node_modules")))
+                // 依赖齐备 → 直接起服务；缺失 → 后台装依赖，装好再起（源码区通常已备，部署区兜底才走安装）
+                if (System.IO.Directory.Exists(System.IO.Path.Combine(testDir, "node_modules")))
                 {
-                    // 部署中保护——.fe-deploying 标记存在 = 上次自动部署进行中（跳过，避免重复部署冲突）
-                    string deployMark = System.IO.Path.Combine(testDir, ".fe-deploying");
-                    if (System.IO.File.Exists(deployMark))
-                    {
-                        return;
-                    }
-                    System.IO.File.WriteAllText(deployMark, "auto-deploy");
-                    System.Diagnostics.ProcessStartInfo deployPsi = new System.Diagnostics.ProcessStartInfo
-                    {
-                        FileName = "cmd.exe",
-                        Arguments = "/c npm install && node server.js",
-                        WorkingDirectory = testDir,
-                        CreateNoWindow = true,
-                        UseShellExecute = false
-                    };
-                    // D9 修复——注入宿主 PID，server.js 守望宿主（宿主退出 → node 自退 → 目录解锁）
-                    deployPsi.EnvironmentVariables["FE_TEST_PORT"] = _portBand.FrontendTestPort.ToString();
-                    deployPsi.EnvironmentVariables["FE_HOST_PID"] = System.Diagnostics.Process.GetCurrentProcess().Id.ToString();
-                    System.Diagnostics.Process.Start(deployPsi);
-                    LogStore.Add("CatHome4", 1, "前端测试服务依赖缺失，自动部署中（npm install）：" + testDir, "CONFIG");
+                    StartFrontendNode(testDir);
                     return;
                 }
-                System.Diagnostics.ProcessStartInfo nodePsi = new System.Diagnostics.ProcessStartInfo
-                {
-                    FileName = "node",
-                    Arguments = "server.js",
-                    WorkingDirectory = testDir,
-                    CreateNoWindow = true,
-                    UseShellExecute = false
-                };
-                // D9 修复——注入宿主 PID，server.js 守望宿主（宿主退出 → node 自退 → 目录解锁）
-                nodePsi.EnvironmentVariables["FE_TEST_PORT"] = _portBand.FrontendTestPort.ToString();
-                nodePsi.EnvironmentVariables["FE_HOST_PID"] = System.Diagnostics.Process.GetCurrentProcess().Id.ToString();
-                System.Diagnostics.Process.Start(nodePsi);
-                LogStore.Add("CatHome4", 1, "前端测试服务已启动：" + testDir, "CONFIG");
+                EnsureFrontendTestDependencies(testDir);
             }
             catch (Exception ex)
             {
@@ -673,6 +625,149 @@ namespace CH4
                 StartupDegradation.Report("FE_TEST_SERVICE_FAILED", StartupDegradation.KindEnv, "前端测试服务",
                     StartupDegradation.StateUnavailable, "前端测试服务拉起失败：" + ex.Message,
                     "开发期手动执行 node server.js（html/tests 目录）后重启", "S7");
+            }
+        }
+        /// <summary>
+        /// 前端测试服务进程启动——工作目录固定系统临时目录（cwd 中立化）。
+        /// 判例 2026-11-07：node 以测试目录为 cwd 时长期持有该目录句柄，运行区的原子切换改名必失败；
+        /// 脚本走绝对路径（server.js 全程只用 __dirname，不依赖 cwd）。
+        /// </summary>
+        /// <param name="testDir">测试目录（含 server.js）</param>
+        private static void StartFrontendNode(string testDir)
+        {
+            System.Diagnostics.ProcessStartInfo nodePsi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "node",
+                WorkingDirectory = System.IO.Path.GetTempPath(),
+                CreateNoWindow = true,
+                UseShellExecute = false
+            };
+            nodePsi.ArgumentList.Add(System.IO.Path.Combine(testDir, "server.js"));
+            // D9 修复——注入宿主 PID，server.js 守望宿主（宿主退出 → node 自退 → 目录解锁）
+            nodePsi.EnvironmentVariables["FE_TEST_PORT"] = _portBand.FrontendTestPort.ToString();
+            nodePsi.EnvironmentVariables["FE_HOST_PID"] = System.Diagnostics.Process.GetCurrentProcess().Id.ToString();
+            System.Diagnostics.Process proc = System.Diagnostics.Process.Start(nodePsi);
+            TrackFrontendChild(proc);
+            LogStore.Add("CatHome4", 1, "前端测试服务已启动：" + testDir + "（cwd=" + System.IO.Path.GetTempPath() + "）", "CONFIG");
+        }
+        /// <summary>
+        /// 前端测试依赖安装——npm install 的 cwd 同样固定临时目录（安装期间不得持有运行区句柄），
+        /// 装完回调 StartFrontendNode；安装失败清 .fe-deploying 标记，留给下次启动重试。
+        /// </summary>
+        /// <param name="testDir">测试目录（含 package.json）</param>
+        private static void EnsureFrontendTestDependencies(string testDir)
+        {
+            // 部署中保护——.fe-deploying 标记存在 = 上次自动部署进行中（跳过，避免重复部署冲突）
+            string deployMark = System.IO.Path.Combine(testDir, ".fe-deploying");
+            if (System.IO.File.Exists(deployMark))
+            {
+                return;
+            }
+            System.IO.File.WriteAllText(deployMark, "auto-deploy");
+            System.Diagnostics.ProcessStartInfo deployPsi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = "cmd.exe",
+                Arguments = "/c npm install --prefix \"" + testDir + "\"",
+                WorkingDirectory = System.IO.Path.GetTempPath(),
+                CreateNoWindow = true,
+                UseShellExecute = false
+            };
+            deployPsi.EnvironmentVariables["FE_TEST_PORT"] = _portBand.FrontendTestPort.ToString();
+            deployPsi.EnvironmentVariables["FE_HOST_PID"] = System.Diagnostics.Process.GetCurrentProcess().Id.ToString();
+            System.Diagnostics.Process proc = System.Diagnostics.Process.Start(deployPsi);
+            TrackFrontendChild(proc);
+            LogStore.Add("CatHome4", 1, "前端测试服务依赖缺失，自动部署中（npm install --prefix）：" + testDir, "CONFIG");
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                int exitCode = -1;
+                try
+                {
+                    proc.WaitForExit();
+                    exitCode = proc.ExitCode;
+                }
+                catch (Exception ex)
+                {
+                    LogStore.Add("CatHome4", 2, "前端测试依赖安装进程异常: " + ex.Message, "CONFIG");
+                }
+                // 宿主已进入退出路径——不再拉起服务（子进程已由 KillFrontendChildren 结束）
+                if (_frontendShutdown)
+                {
+                    return;
+                }
+                if (exitCode == 0)
+                {
+                    try
+                    {
+                        StartFrontendNode(testDir);
+                    }
+                    catch (Exception ex)
+                    {
+                        LogStore.Add("CatHome4", 2, "前端测试服务启动失败: " + ex.Message, "CONFIG");
+                    }
+                    return;
+                }
+                try
+                {
+                    System.IO.File.Delete(deployMark);
+                }
+                catch (Exception ex)
+                {
+                    // 标记删除失败不阻断——下次启动仍按「安装中」跳过一轮（出声，不静默吞）
+                    LogStore.Add("CatHome4", 2, "前端测试依赖标记清理失败: " + ex.Message, "CONFIG");
+                }
+            });
+        }
+        /// <summary>前端测试服务派生的子进程列表（宿主退出时统一结束，避免孤儿进程占端口）</summary>
+        private static readonly System.Collections.Generic.List<System.Diagnostics.Process> _frontendChildren = new System.Collections.Generic.List<System.Diagnostics.Process>();
+        /// <summary>宿主退出标志——置位后安装完成回调不再拉起服务</summary>
+        private static volatile bool _frontendShutdown;
+        /// <summary>
+        /// 登记前端测试子进程——宿主退出路径据此结束它们。
+        /// </summary>
+        /// <param name="proc">已启动进程</param>
+        private static void TrackFrontendChild(System.Diagnostics.Process proc)
+        {
+            if (proc == null)
+            {
+                return;
+            }
+            lock (_frontendChildren)
+            {
+                _frontendChildren.Add(proc);
+            }
+        }
+        /// <summary>
+        /// 结束前端测试服务派生的子进程——宿主退出（含重启收尾）时调用。
+        /// 与 server.js 的 FE_HOST_PID 守望互补：守望管「宿主被强杀」的兜底，本方法管「退出即释放」。
+        /// </summary>
+        internal static void KillFrontendChildren()
+        {
+            _frontendShutdown = true;
+            System.Collections.Generic.List<System.Diagnostics.Process> snapshot;
+            lock (_frontendChildren)
+            {
+                snapshot = new System.Collections.Generic.List<System.Diagnostics.Process>(_frontendChildren);
+                _frontendChildren.Clear();
+            }
+            foreach (System.Diagnostics.Process proc in snapshot)
+            {
+                try
+                {
+                    if (!proc.HasExited)
+                    {
+                        proc.Kill(true);
+                        proc.WaitForExit(1500);
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // 进程已退出 / 无权限——不阻断退出路径，但留痕（失败可见）
+                    LogStore.Add("CatHome4", 2, "前端测试子进程结束失败: " + ex.Message, "CONFIG");
+                }
+                finally
+                {
+                    proc.Dispose();
+                }
             }
         }
         /// <summary>

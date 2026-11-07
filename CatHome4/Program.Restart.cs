@@ -708,6 +708,8 @@ namespace CH4
             // A206——SSE 收尾：先推最后一帧，再等各连接队列排空（视图帧「入队 ≠ 写出」——
             // Environment.Exit 直接终止进程会丢弃在途帧，前端停在半句；判例 2026-10-06 重启现场）
             CatHostService.FlushAllHosts(800);
+            // 前端测试服务子进程收尾——退出即释放（孤儿进程会占端口、且曾被误认为运行区占用者）
+            KillFrontendChildren();
             // 观测收尾——四文件 flush（与 Main finally 同一路径）
             LogStore.CloseWriters();
             FrameStore.Close();

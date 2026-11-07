@@ -75,7 +75,10 @@ namespace SetUp
             // [段1] 等旧宿主退出——宿主必须先退（宿主程序集 dll 被 ALC 持锁，运行中不可覆盖）
             long waitMs = Environment.TickCount64;
             bool exited = WaitProcessExit(waitPid, RelaunchWaitPidMs);
-            _steps.Add(new StepReport() { Step = 11, Name = "等待旧宿主退出 (pid " + waitPid.ToString() + ")", Ok = exited, Ms = Environment.TickCount64 - waitMs });
+            // 段1b——同目录残留实例清扫：只有发起方 pid 会自退，历次失败自启 / 手动启动的实例仍在运行区内持锁
+            int killedHosts = exited ? KillHostsInDirectory(targetFull) : 0;
+            string waitDetail = killedHosts > 0 ? ("另结束 " + killedHosts.ToString() + " 个同目录残留宿主实例") : "";
+            _steps.Add(new StepReport() { Step = 11, Name = "等待旧宿主退出 (pid " + waitPid.ToString() + ")", Ok = exited, Ms = Environment.TickCount64 - waitMs, Detail = waitDetail });
             if (!exited)
             {
                 return Fail("旧宿主未在 " + RelaunchWaitPidMs.ToString() + " ms 内退出——中止，不触碰运行区。");
@@ -295,6 +298,92 @@ namespace SetUp
                 Console.WriteLine("[SetUp] 警告：等待进程异常——" + ex.Message);
                 return false;
             }
+        }
+        /// <summary>
+        /// 结束目标运行区内的宿主实例——只针对可执行路径落在该目录下的 CatHome4.exe。
+        /// 判例 2026-11-07：同一运行区并存多个宿主（历次部署失败自启 + 手动启动），发起方 pid 自退后其余实例
+        /// 仍持有 dll 与目录 cwd → 原子切换改名必失败；它们都是待替换运行区里的旧实例，属部署链自身的清理面。
+        /// 先请求正常关闭（2 s），仍在则强制结束（3 s）。
+        /// </summary>
+        /// <param name="targetDir">运行区目录</param>
+        /// <returns>强制结束的实例数</returns>
+        private static int KillHostsInDirectory(string targetDir)
+        {
+            string full;
+            try
+            {
+                full = Path.GetFullPath(targetDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+            Process[] processes;
+            try
+            {
+                processes = Process.GetProcessesByName("CatHome4");
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+            List<int> victims = new List<int>();
+            foreach (Process proc in processes)
+            {
+                string exePath = "";
+                try
+                {
+                    exePath = proc.MainModule == null ? "" : proc.MainModule.FileName;
+                }
+                catch (Exception)
+                {
+                    exePath = "";
+                }
+                if (exePath.Length == 0)
+                {
+                    continue;
+                }
+                if (!exePath.StartsWith(full + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                victims.Add(proc.Id);
+            }
+            int killed = 0;
+            foreach (int pid in victims)
+            {
+                try
+                {
+                    Process victim = Process.GetProcessById(pid);
+                    bool closed = false;
+                    try
+                    {
+                        closed = victim.CloseMainWindow();
+                    }
+                    catch (Exception)
+                    {
+                        closed = false;
+                    }
+                    if (closed && victim.WaitForExit(2000))
+                    {
+                        Console.WriteLine("[SetUp] 残留宿主已正常退出：pid " + pid.ToString());
+                        continue;
+                    }
+                    victim.Kill();
+                    victim.WaitForExit(3000);
+                    killed = killed + 1;
+                    Console.WriteLine("[SetUp] 残留宿主已强制结束：pid " + pid.ToString());
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[SetUp] 警告：结束残留宿主失败（pid " + pid.ToString() + "）：" + ex.Message);
+                }
+            }
+            if (killed > 0)
+            {
+                Thread.Sleep(1000);
+            }
+            return killed;
         }
         /// <summary>
         /// 拼回执注入串（三类重启）——模式 + 结论 + 版本 + 产物时间戳 + 报告路径 + 附加说明（由 SetUp 生成，非 LLM 自述）。
@@ -786,6 +875,18 @@ namespace SetUp
                     sb.Append("  （顶层 exe/dll 均可独占打开——持有者可能在子目录或为目录级句柄；子目录 " + subDirs.Length.ToString() + " 个）");
                     sb.Append(Environment.NewLine);
                 }
+                // 进程 cwd 扫描——Restart Manager 只认文件句柄，目录级句柄（进程工作目录）是它的盲区；
+                // 判例 2026-11-07：宿主拉起的 npm/node 以运行区子目录为 cwd，改名失败却查不到「谁占着」
+                string cwdHolders = QueryCwdHolders(dir);
+                if (cwdHolders.Length > 0)
+                {
+                    if (cwdHolders.Contains("cwd 持有者"))
+                    {
+                        sb.Append("  进程工作目录指向该目录（目录级句柄——改名必失败）：");
+                        sb.Append(Environment.NewLine);
+                    }
+                    sb.Append(cwdHolders);
+                }
             }
             catch (Exception ex)
             {
@@ -794,6 +895,170 @@ namespace SetUp
             }
             return sb.ToString();
         }
+        /// <summary>
+        /// 工作目录持有者扫描——Restart Manager 只认文件句柄，不认「进程 cwd」这种目录级句柄；
+        /// 本方法遍历进程读 PEB 的 CurrentDirectory，命中目标目录（自身或子目录）即列为持有者。
+        /// 诊断自身失败不外抛（诊断不是主流程）。
+        /// </summary>
+        /// <param name="dir">目标目录</param>
+        /// <returns>逐行诊断文本；无命中返回空串</returns>
+        private static string QueryCwdHolders(string dir)
+        {
+            string target;
+            try
+            {
+                target = Path.GetFullPath(dir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+            StringBuilder sb = new StringBuilder();
+            int hits = 0;
+            int readable = 0;
+            Process[] processes;
+            try
+            {
+                processes = Process.GetProcesses();
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+            foreach (Process proc in processes)
+            {
+                if (hits >= 10)
+                {
+                    break;
+                }
+                string cwd = ReadProcessCwd(proc.Id);
+                if (cwd.Length == 0)
+                {
+                    continue;
+                }
+                readable = readable + 1;
+                string normalized = cwd.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                bool inside = normalized.Equals(target, StringComparison.OrdinalIgnoreCase)
+                    || normalized.StartsWith(target + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+                if (!inside)
+                {
+                    continue;
+                }
+                hits = hits + 1;
+                sb.Append("  · cwd 持有者: " + proc.ProcessName + " (pid " + proc.Id.ToString() + ") → " + cwd);
+                sb.Append(Environment.NewLine);
+            }
+            if (hits >= 10)
+            {
+                sb.Append("  · （cwd 持有者已达 10 条上限——其余省略）");
+                sb.Append(Environment.NewLine);
+            }
+            if (readable == 0)
+            {
+                sb.Append("  · 诊断提示: cwd 扫描未读到任何进程工作目录——该诊断面不可用，请以文件句柄结论为准");
+                sb.Append(Environment.NewLine);
+            }
+            return sb.ToString();
+        }
+        /// <summary>
+        /// 读取进程工作目录（PEB → RTL_USER_PROCESS_PARAMETERS.CurrentDirectory）。
+        /// 读不到（无权限 / 进程已退出 / 结构不符）返回空串——诊断只报读得到的，不猜。
+        /// </summary>
+        /// <param name="pid">进程 id</param>
+        /// <returns>工作目录；空串 = 未取到</returns>
+        private static string ReadProcessCwd(int pid)
+        {
+            const int QueryInformation = 0x0400;
+            const int VmRead = 0x0010;
+            IntPtr handle = OpenProcess(QueryInformation | VmRead, false, pid);
+            if (handle == IntPtr.Zero)
+            {
+                return "";
+            }
+            try
+            {
+                byte[] basic = new byte[IntPtr.Size == 8 ? 48 : 24];
+                int written;
+                if (NtQueryInformationProcess(handle, 0, basic, basic.Length, out written) != 0)
+                {
+                    return "";
+                }
+                IntPtr peb = IntPtr.Size == 8 ? (IntPtr)BitConverter.ToInt64(basic, 8) : (IntPtr)BitConverter.ToInt32(basic, 4);
+                if (peb == IntPtr.Zero)
+                {
+                    return "";
+                }
+                bool wow64;
+                bool is32 = IsWow64Process(handle, out wow64) && wow64;
+                int ptrSize = is32 ? 4 : 8;
+                long paramsOffset = is32 ? 0x10 : 0x20;
+                byte[] ptrBuf = new byte[ptrSize];
+                if (!ReadProcessMemory(handle, PtrAdd(peb, paramsOffset), ptrBuf, ptrBuf.Length, out written))
+                {
+                    return "";
+                }
+                IntPtr parameters = is32 ? (IntPtr)BitConverter.ToInt32(ptrBuf, 0) : (IntPtr)BitConverter.ToInt64(ptrBuf, 0);
+                if (parameters == IntPtr.Zero)
+                {
+                    return "";
+                }
+                long curOffset = is32 ? 0x24 : 0x38;
+                byte[] cur = new byte[is32 ? 8 : 16];
+                if (!ReadProcessMemory(handle, PtrAdd(parameters, curOffset), cur, cur.Length, out written))
+                {
+                    return "";
+                }
+                int length = BitConverter.ToUInt16(cur, 0);
+                if (length <= 0 || length > 4096)
+                {
+                    return "";
+                }
+                IntPtr buffer = is32 ? (IntPtr)BitConverter.ToInt32(cur, 4) : (IntPtr)BitConverter.ToInt64(cur, 8);
+                if (buffer == IntPtr.Zero)
+                {
+                    return "";
+                }
+                byte[] raw = new byte[length];
+                if (!ReadProcessMemory(handle, buffer, raw, length, out written))
+                {
+                    return "";
+                }
+                return Encoding.Unicode.GetString(raw, 0, length);
+            }
+            catch (Exception)
+            {
+                return "";
+            }
+            finally
+            {
+                CloseHandle(handle);
+            }
+        }
+        /// <summary>
+        /// 指针偏移——按宿主进程位宽换算地址。
+        /// </summary>
+        /// <param name="basePtr">基址</param>
+        /// <param name="offset">偏移</param>
+        /// <returns>新地址</returns>
+        private static IntPtr PtrAdd(IntPtr basePtr, long offset)
+        {
+            return IntPtr.Size == 8 ? (IntPtr)(basePtr.ToInt64() + offset) : (IntPtr)(basePtr.ToInt32() + (int)offset);
+        }
+        /// <summary>打开进程——读 PEB 用（查询信息 + 读虚拟内存）。</summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern IntPtr OpenProcess(int access, bool inherit, int pid);
+        /// <summary>读目标进程内存。</summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr baseAddress, byte[] buffer, int size, out int bytesRead);
+        /// <summary>关闭句柄。</summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool CloseHandle(IntPtr handle);
+        /// <summary>是否 WOW64（32 位进程跑在 64 位系统）——决定 PEB 结构偏移。</summary>
+        [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool IsWow64Process(IntPtr hProcess, out bool wow64);
+        /// <summary>查询进程基本信息（ProcessBasicInformation = 0）——取 PEB 地址。</summary>
+        [System.Runtime.InteropServices.DllImport("ntdll.dll")]
+        private static extern int NtQueryInformationProcess(IntPtr hProcess, int infoClass, byte[] info, int infoLength, out int returnLength);
         /// <summary>
         /// 独占打开探测——能独占打开 = 无持有者；失败 = 被别的进程持有。
         /// 用只读打开（FileAccess.Read）：ReadWrite 会对只读文件 / 权限受限文件直接抛 UnauthorizedAccessException，被误判成「被占」。
