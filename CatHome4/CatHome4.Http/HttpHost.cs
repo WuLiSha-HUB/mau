@@ -79,6 +79,12 @@ namespace CatHome4.Http
         /// <summary>思考强度写入回调（可空=不注册该端点）——POST /api/v1/effort（参数=新值，空串=清空覆盖跟随全局）</summary>
         public Func<string, string> EffortSetter { get; set; }
 
+        /// <summary>项目挂载清单回调（可空=不注册该端点）——GET /api/v1/inject/projects（注入报告块「选择项目」）</summary>
+        public Func<string> InjectProjectsBuilder { get; set; }
+
+        /// <summary>项目挂载写入回调（可空=不注册该端点）——POST /api/v1/inject/project（项目名空=取消挂载）</summary>
+        public Func<string, string, string> InjectProjectSetter { get; set; }
+
         /// <summary>视图全量帧构建回调（可空=连接建立不推视图）——v2 契约：连接建立取一次（连接私有首帧）</summary>
         public Func<string> ViewFullBuilder { get; set; }
 
@@ -142,6 +148,12 @@ namespace CatHome4.Http
 
         /// <summary>思考强度写入回调——POST /api/v1/effort（可空=不注册）</summary>
         private Func<string, string> _effortSetter;
+
+        /// <summary>项目挂载清单回调——GET /api/v1/inject/projects（可空=不注册；对话端口注入）</summary>
+        private Func<string> _injectProjectsBuilder;
+
+        /// <summary>项目挂载写入回调——POST /api/v1/inject/project（可空=不注册）</summary>
+        private Func<string, string, string> _injectProjectSetter;
 
         /// <summary>视图全量构建回调——对话端口注入（Session.BuildViewFullJson；可空=连接建立不推视图）</summary>
         private Func<string> _viewFullBuilder;
@@ -264,6 +276,8 @@ namespace CatHome4.Http
             host._apiModelSetter = options.ApiModelSetter;
             host._effortBuilder = options.EffortBuilder;
             host._effortSetter = options.EffortSetter;
+            host._injectProjectsBuilder = options.InjectProjectsBuilder;
+            host._injectProjectSetter = options.InjectProjectSetter;
             host._viewFullBuilder = options.ViewFullBuilder;
             host._viewFrameBuilder = options.ViewFrameBuilder;
             host._serveChatPage = options.ServeChatPage;
@@ -437,6 +451,48 @@ namespace CatHome4.Http
                         return Results.Text("{\"ok\":false,\"error\":\"body 非 JSON 或缺少 value 字段\"}", "application/json");
                     }
                     return Results.Text(_effortSetter(value), "application/json");
+                });
+            }
+            // 项目挂载面——注入报告块「选择项目 / 取消 Project 挂载」（可空=不注册——管理端口不注入）
+            if (_injectProjectsBuilder != null)
+            {
+                _app.MapGet("/api/v1/inject/projects", (HttpContext ctx) =>
+                {
+                    return Results.Text(_injectProjectsBuilder(), "application/json");
+                });
+            }
+            if (_injectProjectSetter != null)
+            {
+                _app.MapPost("/api/v1/inject/project", async (HttpContext ctx) =>
+                {
+                    // body {"cat":"会话 id","project":"项目名；空=取消"}——入口面零容忍：非法 body 拒绝
+                    string body = "";
+                    using (System.IO.StreamReader reader = new System.IO.StreamReader(ctx.Request.Body))
+                    {
+                        body = await reader.ReadToEndAsync();
+                    }
+                    string cat = "";
+                    string project = "";
+                    try
+                    {
+                        using (JsonDocument doc = JsonUtil.ParseStrict(body))
+                        {
+                            JsonElement el;
+                            if (doc.RootElement.TryGetProperty("cat", out el) && el.ValueKind == JsonValueKind.String)
+                            {
+                                cat = el.GetString() ?? "";
+                            }
+                            if (doc.RootElement.TryGetProperty("project", out el) && el.ValueKind == JsonValueKind.String)
+                            {
+                                project = el.GetString() ?? "";
+                            }
+                        }
+                    }
+                    catch (Exception)
+                    {
+                        return Results.Text("{\"ok\":false,\"reason\":\"body 非 JSON\"}", "application/json");
+                    }
+                    return Results.Text(_injectProjectSetter(cat, project), "application/json");
                 });
             }
             // 前文条目面——对话页状态栏「前文 n 条 / n tokens」点击弹层数据源（可空=不注册——管理端口不注入）

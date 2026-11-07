@@ -24,6 +24,9 @@ namespace CH4
         /// <summary>默认猫注入清单——空=不注入（M2d）</summary>
         private string[] _defaultInjectList = new string[0];
 
+        /// <summary>默认猫项目挂载——当前挂载的项目名（空=未挂载）</summary>
+        private string _defaultProjectMount = "";
+
         /// <summary>默认猫工具声明面——Bootstrap 按 toolNames 裁剪（M2c；session.new 重注入复用）</summary>
         private ToolSpec[] _defaultToolSpecs;
 
@@ -69,6 +72,13 @@ namespace CH4
         {
             get { return _defaultInjectList; }
             set { _defaultInjectList = value; }
+        }
+
+        /// <summary>默认猫项目挂载——当前挂载的项目名（空=未挂载；跟猫走，注入报告与解挂消费）</summary>
+        public string DefaultProjectMount
+        {
+            get { return _defaultProjectMount; }
+            set { _defaultProjectMount = value; }
         }
 
         /// <summary>默认猫工具声明面——按 toolNames 裁剪（M2c）</summary>
@@ -213,7 +223,8 @@ namespace CH4
         /// <param name="persona">角色段（空=仅基础角色）</param>
         /// <param name="injectList">注入清单（空=不注入）</param>
         /// <param name="specs">该会话工具声明面（裁剪后）</param>
-        public void HandleSessionNew(ChatSession session, string persona, string[] injectList, ToolSpec[] specs)
+        /// <param name="projectMount">当前挂载的项目名（空=未挂载；注入报告 mount 字段单点来源）</param>
+        public void HandleSessionNew(ChatSession session, string persona, string[] injectList, ToolSpec[] specs, string projectMount = "")
         {
             WorkspaceConfig ws = null;
             DataBox.TryResolve<WorkspaceConfig>(out ws);
@@ -238,7 +249,7 @@ namespace CH4
             // F4 视图——session.new 清前文 → 视图随生命周期清空
             session.ClearView();
             // 注入报告——逐文件结果持久化进视图（视图层普通块：ts=0 居首，前端首块渲染）
-            session.SetInjectReport(BuildInjectReportJson(injectResult.Files, injectList, specs));
+            session.SetInjectReport(BuildInjectReportJson(injectResult.Files, injectList, specs, projectMount));
             // 问题一修复——会话重置显式事件（前端收到后清空气泡再拉 history——消除清空竞态）
             session.PushSessionReset();
             // 运行态盒——按会话键 + 旧全局键兼容（design-ch4-llm §2.1 会话态独立持有）
@@ -259,8 +270,9 @@ namespace CH4
         /// <param name="files">逐文件结果（委托产物）</param>
         /// <param name="injectList">注入清单（null=空）</param>
         /// <param name="specs">该会话工具声明面（裁剪后——Q5 工具组气泡数据源）</param>
+        /// <param name="projectMount">当前挂载的项目名（空=未挂载；cat.cfg.projectMount 单点来源）</param>
         /// <returns>注入报告 JSON 字符串</returns>
-        private static string BuildInjectReportJson(List<InjectFileResult> files, string[] injectList, ToolSpec[] specs)
+        private static string BuildInjectReportJson(List<InjectFileResult> files, string[] injectList, ToolSpec[] specs, string projectMount)
         {
             List<string> fileItems = new List<string>();
             int total = 0;
@@ -280,7 +292,8 @@ namespace CH4
                         ("file", f.File),
                         ("status", status),
                         ("message", f.Message ?? ""),
-                        ("chars", f.Chars)));
+                        ("chars", f.Chars),
+                        ("bytes", f.Bytes)));
                     total = total + 1;
                 }
             }
@@ -321,6 +334,8 @@ namespace CH4
             {
                 injectCount = injectList.Length;
             }
+            // 项目挂载态——cat.cfg.projectMount 单点来源（跟猫走，不从清单反推）
+            string mount = projectMount == null ? "" : projectMount;
             return JsonUtil.Object(
                 ("files", JsonUtil.RawArray(fileItems.ToArray())),
                 ("total", total),
@@ -328,6 +343,7 @@ namespace CH4
                 ("missing", missing),
                 ("failed", failed),
                 ("injectCount", injectCount),
+                ("mount", mount),
                 ("toolGroups", JsonUtil.RawArray(groupItems.ToArray())));
         }
 
@@ -644,4 +660,6 @@ internal sealed class InjectFileResult
 
     /// <summary>成功时字符数——注入内容长度（0=失败）</summary>
     public int Chars;
+    /// <summary>文件字节数——token 估算口径（与 PromptPlanBuilder.TokensPerByte 同基准；0=未取到）</summary>
+    public long Bytes;
 }

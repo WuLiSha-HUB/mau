@@ -71,6 +71,10 @@ namespace CatHome4.Admin
             sink.MapPost("/api/v1/db/libs", (Delegate)AdminService.HandleDbLibsPost);
             sink.MapGet("/api/v1/db/libs/{lib}/entries", (Delegate)AdminService.HandleDbEntriesGet);
             sink.MapGet("/api/v1/db/libs/{lib}/entries/{entryId}", (Delegate)AdminService.HandleDbEntryGet);
+
+            // [段12] 项目挂载——前文注入清单的项目段增删（点击选择器时才扫盘取最新改动时间）
+            sink.MapGet("/api/v1/inject/projects", (Delegate)AdminService.HandleInjectProjectsGet);
+            sink.MapPost("/api/v1/inject/project", (Delegate)AdminService.HandleInjectProjectPost);
         }
     }
 }

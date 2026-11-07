@@ -132,6 +132,7 @@ namespace CH4
                             sb.Append(content);
                             fr.Status = "ok";
                             fr.Chars = content.Length;
+                            try { fr.Bytes = new System.IO.FileInfo(targets[t]).Length; } catch { fr.Bytes = 0; }
                             fileResults.Add(fr);
                         }
                     }

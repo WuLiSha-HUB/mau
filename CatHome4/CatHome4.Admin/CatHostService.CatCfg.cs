@@ -62,6 +62,9 @@ namespace CatHome4.Admin
             /// <summary>前文注入清单——cat.cfg 持久化（M2d；空=不注入）</summary>
             public string[] InjectList;
 
+            /// <summary>项目挂载——cat.cfg 持久化（当前挂载的项目名；空=未挂载。跟猫走，不再是清单反推）</summary>
+            public string ProjectMount;
+
             /// <summary>加载包挂载清单——cat.cfg 持久化（R4；空=未挂载任何包）</summary>
             public string[] Packs;
 
@@ -113,6 +116,9 @@ namespace CatHome4.Admin
 
             /// <summary>前文注入清单——文件寻址数组（id:相对路径；空=不注入）</summary>
             public string[] InjectList { get; set; }
+
+            /// <summary>项目挂载——当前挂载的项目名（空=未挂载；跟猫走，供 inject_report 与解挂用）</summary>
+            public string ProjectMount { get; set; }
 
             /// <summary>人工输入空闲注入开关——缺省 false（=现状：人工输入可轮内插入）</summary>
             public bool UserInjectIdleOnly { get; set; }
@@ -291,6 +297,7 @@ namespace CatHome4.Admin
                     data.Persona = GetStringProp(root, "persona");
                     data.ToolNames = GetStringProp(root, "toolNames");
                     data.InjectList = GetStringArrayProp(root, "injectList");
+                    data.ProjectMount = GetStringProp(root, "projectMount");
                     data.EnabledRoots = GetStringArrayProp(root, "enabledRoots");
                     data.Packs = GetStringArrayProp(root, "packs");
                     data.DbLibs = GetStringArrayProp(root, "dbLibs");
@@ -311,7 +318,7 @@ namespace CatHome4.Admin
         /// cat.cfg 原子写——用户配置落盘（运行态 running/port 不落此文件；见 AdminService.CatRuntime.cs）。
         /// </summary>
         /// <param name="cat">猫实体</param>
-        private static void SaveCatCfg(CatEntry cat)
+        internal static void SaveCatCfg(CatEntry cat)
         {
             CatCfgData data = new CatCfgData();
             data.Id = cat.Id;
@@ -321,6 +328,7 @@ namespace CatHome4.Admin
             data.Persona = cat.Persona;
             data.ToolNames = cat.ToolNames;
             data.InjectList = cat.InjectList;
+            data.ProjectMount = cat.ProjectMount;
             data.Packs = cat.Packs;
             data.UserInjectIdleOnly = cat.UserInjectIdleOnly;
             data.ReasoningEffort = cat.ReasoningEffort;
@@ -481,6 +489,7 @@ namespace CatHome4.Admin
                 // M2c 写时校验——序列化前比对内置清单过滤非法名（外部损坏防御：持久化面只落合法名）
                 toolNames = ValidateToolNames(data.ToolNames),
                 injectList = data.InjectList,
+                projectMount = data.ProjectMount,
                 enabledRoots = data.EnabledRoots,
                 packs = data.Packs,
                 dbLibs = data.DbLibs,
@@ -534,6 +543,7 @@ namespace CatHome4.Admin
                 // 默认猫——静态面更新（session.new 重注入消费）
                 _chatBridge.DefaultPersona = persona;
                 _chatBridge.DefaultInjectList = injectList;
+                _chatBridge.DefaultProjectMount = cfg.ProjectMount == null ? "" : cfg.ProjectMount;
                 _chatBridge.DefaultToolSpecs = specs;
                 // 授权面原始串——实时解析输入（改配置即改内存；design-ch4-tools §三·十一）
                 _chatBridge.DefaultToolNames = toolNames;
@@ -573,6 +583,7 @@ namespace CatHome4.Admin
             }
             cat.Type = cfg.Type == null ? "" : cfg.Type;
             cat.InjectList = injectList;
+            cat.ProjectMount = cfg.ProjectMount == null ? "" : cfg.ProjectMount;
             cat.ToolNames = toolNames;
             cat.ToolSpecs = specs;
             cat.UserInjectIdleOnly = cfg.UserInjectIdleOnly;

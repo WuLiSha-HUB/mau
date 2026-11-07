@@ -962,6 +962,7 @@ namespace CatHome4.Admin
                 cfgData.Persona = srcCat.Persona;
                 cfgData.ToolNames = srcCat.ToolNames;
                 cfgData.InjectList = srcCat.InjectList;
+                cfgData.ProjectMount = srcCat.ProjectMount;
                 cfgData.Type = srcCat.Type;
                 // EnabledRoots CatEntry 不持有——从源磁盘 cfg 补读
                 CatCfgData srcDisk = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", srcCat.Id, "cat.cfg"));
@@ -1424,6 +1425,10 @@ namespace CatHome4.Admin
                 cat.Type = type;
                 cat.ToolNames = toolNames;
                 cat.InjectList = injectList;
+                // 项目挂载跟猫走——从 cat.cfg 补读（构造参数面不含该项）
+                cat.ProjectMount = "";
+                CatCfgData mountCfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", id, "cat.cfg"));
+                if (mountCfg != null && mountCfg.ProjectMount != null) { cat.ProjectMount = mountCfg.ProjectMount; }
                 cat.Packs = packs;
                 cat.UserInjectIdleOnly = userInjectIdleOnly;
                 cat.ReasoningEffort = reasoningEffort;
@@ -1725,6 +1730,8 @@ namespace CatHome4.Admin
                 ApiModelSetter = (string model) => SetApiModelJson(cat.Session, model),
                 EffortBuilder = () => BuildEffortJson(cat.Session.Id),
                 EffortSetter = (string value) => SetEffortJson(cat.Session.Id, value),
+                InjectProjectsBuilder = () => BuildInjectProjectsJson(),
+                InjectProjectSetter = (string c, string p) => ApplyInjectProject(c, p),
                 ViewFullBuilder = () => cat.Session.BuildViewFullJson(),
                 ViewFrameBuilder = () => cat.Session.TakeViewFrameJson(),
                 ServeChatPage = true,
@@ -1779,6 +1786,8 @@ namespace CatHome4.Admin
                     ApiModelSetter = (string model) => SetApiModelJson(_chatBridge.DefaultSession, model),
                     EffortBuilder = () => BuildEffortJson(_chatBridge.DefaultSession.Id),
                     EffortSetter = (string value) => SetEffortJson(_chatBridge.DefaultSession.Id, value),
+                    InjectProjectsBuilder = () => BuildInjectProjectsJson(),
+                    InjectProjectSetter = (string c, string p) => ApplyInjectProject(c, p),
                     ViewFullBuilder = () => _chatBridge.DefaultSession.BuildViewFullJson(),
                     ViewFrameBuilder = () => _chatBridge.DefaultSession.TakeViewFrameJson(),
                     ServeChatPage = true,

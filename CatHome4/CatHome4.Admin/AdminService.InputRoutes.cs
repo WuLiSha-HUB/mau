@@ -443,7 +443,21 @@ namespace CatHome4.Admin
         /// <returns>true=已受理</returns>
         private static bool RouteSessionNew(InputTarget target, string line)
         {
-            _chatBridge.HandleSessionNew(target.Session, target.Persona, target.InjectList, target.ToolSpecs);
+            // 项目挂载跟猫走——每猫取 CatEntry.ProjectMount，主 / 默认端口取 ChatBridge.DefaultProjectMount
+            string mount = "";
+            if (target.Tag == "main" || target.Tag == "major")
+            {
+                mount = _chatBridge.DefaultProjectMount == null ? "" : _chatBridge.DefaultProjectMount;
+            }
+            else if (target.Tag != null && target.Tag.Length > 0)
+            {
+                CatEntry cat = FindCat(target.Tag);
+                if (cat != null)
+                {
+                    mount = cat.ProjectMount == null ? "" : cat.ProjectMount;
+                }
+            }
+            _chatBridge.HandleSessionNew(target.Session, target.Persona, target.InjectList, target.ToolSpecs, mount);
             return true;
         }
 

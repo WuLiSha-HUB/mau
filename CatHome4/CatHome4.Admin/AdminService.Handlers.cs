@@ -516,6 +516,7 @@ namespace CatHome4.Admin
                 persona = cfg.Persona,
                 toolNames = cfg.ToolNames,
                 injectList = cfg.InjectList,
+                projectMount = cfg.ProjectMount,
                 packs = cfg.Packs,
                 dbLibs = cfg.DbLibs,
                 allLibs = allDbLibs,

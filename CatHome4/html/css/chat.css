@@ -407,14 +407,37 @@ body { font-family: var(--ch-font-ui); background: var(--ch-bg-page); color: var
 #chatMsgs .chat-bubble.retry.resolved { color: var(--ch-chat-sys-ok); }
 /* A94——重试耗尽终态：原文保留 + 「⚠ 重试失败」（文本色同错误面） */
 #chatMsgs .chat-bubble.retry.failed { color: var(--ch-chat-error-fg); }
-/* 注入报告（朴素件）——新会话前文加载明细（📚 汇总头 + 逐文件三态）
-   2026-10-03 形态改判：去气泡壳——浅底与描边全撤 */
+/* 注入报告（朴素件）——新会话前文加载明细
+   2026-11-07 形态重做：两栏并排 + 连续同父收纳 + 只显示 token(k)；项目可选挂载 */
 #chatMsgs .chat-bubble.inject { color: var(--ch-inject-fg); }
 .inject-report .ir-head { color: var(--ch-ok-weak); font-weight: bold; margin-bottom: 4px; }
-.inject-report .ir-list { display: flex; flex-direction: column; gap: 2px; }
-.inject-report .ir-item { word-break: break-all; white-space: pre-wrap; }
-.inject-report .ir-item.missing { color: var(--ch-inject-miss); }
-.inject-report .ir-item.error { color: var(--ch-chat-error-fg); }
+.inject-report .ir-cols { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1fr); gap: 0 22px; align-items: start; }
+.inject-report .ir-col { min-width: 0; }
+.inject-report .ir-row { display: grid; grid-template-columns: minmax(0,1fr) 52px; gap: 12px; align-items: baseline; padding: 2px 0; }
+/* 悬挂缩进——装不下折行时续行缩进 14px，与下一条目区分 */
+.inject-report .ir-row > span:first-child { padding-left: 14px; text-indent: -14px; }
+.inject-report .ir-dir { color: var(--ch-fg-strong); overflow-wrap: anywhere; }
+.inject-report .ir-n { color: var(--ch-inject-miss); font-size: 12px; margin-left: 1px; white-space: nowrap; }
+.inject-report .ir-mem { color: var(--ch-fg-muted); margin-left: 6px; overflow-wrap: anywhere; line-height: 1.85; }
+.inject-report .ir-tk { color: var(--ch-number); font-size: 12px; text-align: right; white-space: nowrap; }
+.inject-report .ir-row.missing .ir-dir { color: var(--ch-inject-miss); }
+.inject-report .ir-row.error .ir-dir { color: var(--ch-chat-error-fg); }
+/* 项目挂载——按钮 + 四列项目选择（点击时才向宿主取清单与最后改动时间） */
+.inject-report .ir-actions { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--ch-inject-line);
+    display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.inject-report .ir-btn { background: var(--ch-bg-raised); color: var(--ch-fg); border: 1px solid var(--ch-line-strong);
+    border-radius: 5px; padding: 3px 12px; font: inherit; font-size: 12px; cursor: pointer; }
+.inject-report .ir-btn:hover { border-color: var(--ch-info); color: var(--ch-info); }
+.inject-report .ir-btn.on { background: #12283a; border-color: var(--ch-info); color: var(--ch-info); }
+.inject-report .ir-hint { color: var(--ch-fg-weak); font-size: 12px; }
+.inject-report .ir-picker { margin-top: 8px; max-height: 230px; overflow: auto; background: var(--ch-bg-panel);
+    border: 1px solid var(--ch-line); border-radius: 6px; padding: 6px;
+    display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 1px 10px; }
+.inject-report .ir-pick { display: flex; gap: 6px; align-items: baseline; padding: 3px 6px;
+    border-radius: 4px; cursor: pointer; font-size: 13px; min-width: 0; }
+.inject-report .ir-pick:hover { background: var(--ch-bg-hover); }
+.inject-report .ir-pick .pn { color: var(--ch-fg-strong); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inject-report .ir-pick .pt { color: var(--ch-fg-weak); font-size: 11px; margin-left: auto; white-space: nowrap; }
 /* Q5 注入工具组——独立段（🛠️ 头 + 每行组名 —— 工具名列表） */
 .inject-report .ir-tools { margin-top: 6px; border-top: 1px dashed var(--ch-inject-line); padding-top: 5px; }
 .inject-report .ir-tools-head { color: var(--ch-ok); font-weight: bold; margin-bottom: 3px; }
