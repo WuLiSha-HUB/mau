@@ -40,6 +40,9 @@ namespace CH4
         /// <summary>实际删除的前文条数</summary>
         public int N;
 
+        /// <summary>域内人工输入保留条数（2026-11-07——用户在这个域里发的消息不随域销毁；未删故不入被删正文）</summary>
+        public int KeptUsers;
+
         /// <summary>回收时已知前文长度（请求级真实 usage 值，零估算）</summary>
         public long Tokens;
 
@@ -450,6 +453,7 @@ namespace CH4
             obj["backAt"] = record.BackAt;
             obj["seconds"] = record.Seconds;
             obj["n"] = record.N;
+            obj["kept"] = record.KeptUsers;
             obj["tokens"] = record.Tokens;
             obj["grew"] = record.Grew;
             obj["released"] = record.Released;

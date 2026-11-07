@@ -287,6 +287,65 @@ namespace CatHome4.Core.Tests
             Assert.Equal(LlmRole.Assistant, all[all.Length - 1].Role);
             Assert.False(session.TimebackActive);
         }
+        /// <summary>
+        /// 域内人工输入保留（2026-11-07 定）——用户在这个域里发的消息不随域销毁，回卷后仍在前文且落在 back 声明之前；
+        /// 系统注入（域规范卡 [systemauto]）仍随域删除；释放预算扣掉保留条数，回执与实际删除同源。
+        /// </summary>
+        [Fact]
+        public void Back_KeepsHumanMessagesInsideScope()
+        {
+            MockLlm llm = new MockLlm();
+            CH4.ChatSession session = CreateSession(llm);
+            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-start", "t1", "{\"type\":\"text_search\",\"purpose\":\"域内插话\"}"));
+            llm.ToolCallsQueue.Enqueue(BuildToolCalls("info", "f1", "{}"));
+            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-back", "t2", "{\"findings\":\"结论：已回收\"}"));
+            session.PostUserMessage("开始取证");
+            // 泵到开锚生效——此后注入人工消息（真实链路：PostUserMessage 入队 → 轮边界注入前文）
+            for (int i = 0; i < 300; i = i + 1)
+            {
+                session.Pump();
+                Thread.Sleep(5);
+                if (session.TimebackActive)
+                {
+                    break;
+                }
+            }
+            Assert.True(session.TimebackActive, "作用域未建立");
+            session.PostUserMessage("域内插话：只看 A");
+            PumpUntilIdle(session);
+            Assert.True(session.IsIdle, "msgCount=" + session.Context.GetMessageCount().ToString() + " phase=" + session.Phase.ToString());
+            // 人工消息保留
+            Assert.True(HasMessage(session, LlmRole.User, "域内插话"), "域内人工消息未保留");
+            // 保留位置——落在 back 声明之前（按时序回到域内原位之后）
+            LlmMessage[] all = session.Context.GetMessages();
+            int userIndex = -1;
+            int backIndex = -1;
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                string content = all[i].Content == null ? "" : all[i].Content;
+                string tcJson = all[i].ToolCallsJson == null ? "" : all[i].ToolCallsJson;
+                if (all[i].Role == LlmRole.User && content.Contains("域内插话", StringComparison.Ordinal))
+                {
+                    userIndex = i;
+                }
+                if (all[i].Role == LlmRole.Assistant && tcJson.Contains("timeback-back", StringComparison.Ordinal))
+                {
+                    backIndex = i;
+                }
+            }
+            Assert.True(userIndex > 0, "人工消息不在前文");
+            Assert.True(backIndex > userIndex, "人工消息应保留在 back 声明之前（user=" + userIndex.ToString() + " back=" + backIndex.ToString() + "）");
+            // 系统注入仍随域删除
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                string content = all[i].Content == null ? "" : all[i].Content;
+                Assert.DoesNotContain("[systemauto]", content);
+            }
+            // 释放预算 = 区间条数 − 保留条数（区间 4：卡 + 人工消息 + info 声明 + 结果 → 预算 3）
+            string backResult = ToolResultText(session, 1);
+            Assert.Contains("\"items\":3", backResult);
+            Assert.False(session.TimebackActive);
+        }
 
         /// <summary>
         /// back 声明思考净化（莎 2026-10-09 定）——回收后 back 声明的 ReasoningContent 换占位句；

@@ -10,8 +10,10 @@ namespace CH4
     /// 宿主会话实体——timeback 上下文作用域分部（design-ch4-timeback §2 / §三 · 2026-09-28 语义重设 · 2026-10-09 拆两名）。
     /// 工具面：timeback-start（开锚）· timeback-back（回卷回收）——原单工具 timeback（action=start|back）拆分，功能不变。
     /// 语义（莎定）：**锚点 = start 的 tool_calls 声明本身；回收 = back 的返回值**。
-    ///   前文形态：[start 声明][start 结果] [查证过程…] [back 声明][back 结果 = findings]
-    ///   回收动作：删除「start 结果之后、back 声明之前」的全部消息——两次调用对与结论原样保留。
+    ///   前文形态：[start 声明][start 结果] [查证过程…] [域内人工输入…] [back 声明][back 结果 = findings]
+    ///   回收动作：删除「start 结果之后、back 声明之前」的全部消息——两次调用对与结论原样保留；
+    ///   **域内人工输入保留**（2026-11-07 定）：用户在这个域里发的消息不随域销毁，按原序落回锚定结果之后、back 声明之前；
+    ///   系统注入（`SysInjectPrefix` 行头——域规范卡 / 状态自述 / 图片注入）不在保留面，仍随域删除。
     /// 由此收益：历史里不新增注入消息（无连续 user）、无绕点搜索、无轮末特判、无「劈开工具对」风险；
     /// 回卷后序列天然合法，本轮照常续跑（LLM 直接从 back 的工具返回继续）。
     /// 用途（2026-10-03 莎裁）：仅两个域限定工具解锁——主干识图（image-inject）· 浏览网页（browser-*）；域内不做工作、不写计划。
@@ -327,7 +329,32 @@ namespace CH4
             {
                 to = all.Length - 1;
             }
-            return to - from + 1;
+            // 域内人工输入不随域销毁（与 ApplyTimebackBack 同源判定）——预算与批后实际删除数因此仍同源可对账
+            int keptUsers = 0;
+            for (int i = from; i <= to && i < all.Length; i = i + 1)
+            {
+                if (IsHumanUserMessage(all[i]))
+                {
+                    keptUsers = keptUsers + 1;
+                }
+            }
+            return to - from + 1 - keptUsers;
+        }
+        /// <summary>
+        /// 域内人工输入判定——回卷时唯一保留的域内消息类型（其余一律销毁）。
+        /// 判据：role=user 且正文不带系统注入行头（`SysInjectPrefix`）——系统注入与图片注入一律经
+        /// <see cref="BuildSysInjectText"/> 单点套前缀，故该前缀即「非人工」的前文判据（LlmMessage 无 source 字段）。
+        /// </summary>
+        /// <param name="message">前文消息</param>
+        /// <returns>true=人工输入（回卷保留）</returns>
+        private bool IsHumanUserMessage(LlmMessage message)
+        {
+            if (message.Role != LlmRole.User)
+            {
+                return false;
+            }
+            string content = message.Content == null ? "" : message.Content;
+            return !content.StartsWith(SysInjectPrefix, StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -354,6 +381,7 @@ namespace CH4
             int from = keepEnd + 1;
             int to = scope.BackDeclIndex - 1;
             int removed = 0;
+            int keptUsers = 0;
             List<LlmMessage> removedMessages = new List<LlmMessage>();
             // [段0] 现场采集——info 快照取删除之前（归档第二行记录回收动作发生时的状态）
             string infoJson = CollectTimebackInfo();
@@ -380,6 +408,17 @@ namespace CH4
                 {
                     keep.Add(all[i]);
                 }
+                // 域内人工输入保留（2026-11-07 定）——区间只销毁过程，用户在这个域里说的话必须回到前文：
+                // 按原序插在锚定结果之后、back 声明之前（时序与它在域内的位置一致）；系统注入（[systemauto] 行头）不在此列，随域删除。
+                for (int i = from; i <= to && i < all.Length; i = i + 1)
+                {
+                    if (!IsHumanUserMessage(all[i]))
+                    {
+                        continue;
+                    }
+                    keep.Add(all[i]);
+                    keptUsers = keptUsers + 1;
+                }
                 for (int i = secondStart; i < all.Length; i = i + 1)
                 {
                     // back 声明——思考净化（莎 2026-10-09 定）：该思考是对域内工作的断言，不是工具事实；
@@ -391,9 +430,13 @@ namespace CH4
                     }
                     keep.Add(all[i]);
                 }
-                // 被删前文快照——归档文件的正文（删除前按原序取值）
+                // 被删前文快照——归档文件的正文（删除前按原序取值；保留下来的用户消息仍在会话里，不入被删档）
                 for (int i = from; i <= to && i < all.Length; i = i + 1)
                 {
+                    if (IsHumanUserMessage(all[i]))
+                    {
+                        continue;
+                    }
                     removedMessages.Add(all[i]);
                 }
                 removed = all.Length - keep.Count;
@@ -424,7 +467,7 @@ namespace CH4
             }
             // [段3] 视图层——不动（A165 v2 契约：持久即持久，移出 / 废弃面退役；回收只作用于送入 LLM 的前文）
             // [段4] 归档——一次回收一个文件（A104）：首行 meta + 该猫 info 快照 + 被删前文消息
-            bool archived = WriteTimebackArchiveFile(scope, removed, removedMessages, infoJson, nowMs, seconds);
+            bool archived = WriteTimebackArchiveFile(scope, removed, keptUsers, removedMessages, infoJson, nowMs, seconds);
             // [段5] 释放条数对账——back 返回值给出的预算 vs 批后实际删除数（归档记实际；不一致必须出声）
             if (removed != scope.PendingReleased)
             {
@@ -432,7 +475,8 @@ namespace CH4
             }
             // [段6] 作用域关闭——活跃期结束（TimebackActive 回 false；Note / sleep / timer 解锁）
             _timebackScope = null;
-            LogStore.Add("CatHome4", 1, "timeback #" + scope.Id.ToString() + " 已回收 " + removed.ToString() + " 条（" + seconds.ToString() + " 秒 / 锚点 " + scope.StartDeclIndex.ToString() + "）", "TIMEBACK");
+            string keptNote = keptUsers > 0 ? " · 保留人工输入 " + keptUsers.ToString() + " 条" : "";
+            LogStore.Add("CatHome4", 1, "timeback #" + scope.Id.ToString() + " 已回收 " + removed.ToString() + " 条" + keptNote + "（" + seconds.ToString() + " 秒 / 锚点 " + scope.StartDeclIndex.ToString() + "）", "TIMEBACK");
             if (!archived)
             {
                 LogStore.Add("CatHome4", 2, "timeback #" + scope.Id.ToString() + " 归档落档失败（运行不受影响）", "TIMEBACK");
@@ -481,7 +525,7 @@ namespace CH4
         /// <param name="nowMs">回收时刻——Unix 毫秒</param>
         /// <param name="seconds">存活时长（秒）</param>
         /// <returns>true=已落盘</returns>
-        private bool WriteTimebackArchiveFile(TimebackScope scope, int removed, List<LlmMessage> removedMessages, string infoJson, long nowMs, long seconds)
+        private bool WriteTimebackArchiveFile(TimebackScope scope, int removed, int keptUsers, List<LlmMessage> removedMessages, string infoJson, long nowMs, long seconds)
         {
             TimebackArchive archive = ResolveTimebackArchive();
             if (archive == null)
@@ -498,6 +542,7 @@ namespace CH4
             record.BackAt = nowMs;
             record.Seconds = seconds;
             record.N = removed;
+            record.KeptUsers = keptUsers;
             record.Tokens = ContextTokensKnown;
             record.Grew = ContextTokensKnown - scope.TokensAtOpen;
             record.Released = scope.PendingReleased;
