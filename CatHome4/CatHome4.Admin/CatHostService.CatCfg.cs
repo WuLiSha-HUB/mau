@@ -333,6 +333,14 @@ namespace CatHome4.Admin
             data.UserInjectIdleOnly = cat.UserInjectIdleOnly;
             data.ReasoningEffort = cat.ReasoningEffort;
             data.AppearanceId = cat.AppearanceId.ToString("D");
+            // 注册表实体不持根白名单与库白名单（CatEntry 无此字段）——读盘合并保留，
+            // 否则 cat.new / 项目挂载等写面会把 enabledRoots 与 dbLibs 清成 null（宿主重启后根权限丢失）
+            CatCfgData disk = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", cat.Id, "cat.cfg"));
+            if (disk != null)
+            {
+                data.EnabledRoots = disk.EnabledRoots;
+                data.DbLibs = disk.DbLibs;
+            }
             SaveCatCfgData(cat.Id, data);
         }
 

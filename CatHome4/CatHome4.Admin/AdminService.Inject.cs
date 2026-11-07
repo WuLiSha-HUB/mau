@@ -123,22 +123,26 @@ namespace CatHome4.Admin
         internal static string ApplyInjectProject(string catKey, string project)
         {
             string proj = project == null ? "" : project.Trim();
+            // 主干猫不在多猫注册表（_cats 不含 majordomo，FindCat 不覆盖）——走默认猫专用分支
+            if (string.Equals(catKey, "majordomo", StringComparison.Ordinal))
+            {
+                return ApplyInjectProjectDefault(proj);
+            }
             CatEntry cat = FindCat(catKey);
             if (cat == null)
             {
+                LogStore.Add("CatHome4", 2, "项目挂载失败：未找到猫 " + (catKey ?? ""), "INJECT");
                 return JsonUtil.Object(("ok", false), ("reason", "未找到猫：" + (catKey ?? "")));
             }
             if (cat.Session == null)
             {
+                LogStore.Add("CatHome4", 2, "项目挂载失败：猫已停机 " + cat.DisplayName, "INJECT");
                 return JsonUtil.Object(("ok", false), ("reason", "猫已停机（无会话）：" + cat.DisplayName));
             }
-            if (proj.Length > 0)
+            if (proj.Length > 0 && !ProjectDirExists(proj))
             {
-                string dir = ResolveCcbpPath(ProjectSpecPrefix + proj);
-                if (dir.Length == 0 || !Directory.Exists(dir))
-                {
-                    return JsonUtil.Object(("ok", false), ("reason", "项目不存在：" + proj));
-                }
+                LogStore.Add("CatHome4", 2, "项目挂载失败：项目不存在 " + proj + "（cat=" + cat.DisplayName + "）", "INJECT");
+                return JsonUtil.Object(("ok", false), ("reason", "项目不存在：" + proj));
             }
 
             string[] next = BuildInjectListWithMount(cat.InjectList, proj, cat.ProjectMount);
@@ -167,6 +171,71 @@ namespace CatHome4.Admin
                 ("ok", true),
                 ("msg", msg),
                 ("injectList", JsonUtil.Array(next)));
+        }
+        /// <summary>
+        /// 默认猫（majordomo）项目挂载执行体——cat.cfg 合并写 + 静态面同步 + 主干 session.new。
+        /// 主干不在多猫注册表（_cats 不含 majordomo），前文重建走 ChatBridge.DefaultInjectList /
+        /// DefaultProjectMount 静态面（RouteSessionNew 的 main/major 分支），故落盘与静态面必须同步。
+        /// </summary>
+        /// <param name="project">项目名（空=取消挂载）</param>
+        /// <returns>回执 JSON 字符串</returns>
+        private static string ApplyInjectProjectDefault(string project)
+        {
+            string path = Path.Combine(_dataRoot, "Data", "sessions", "majordomo", "cat.cfg");
+            CatHostService.CatCfgData cfg = LoadCatCfg(path);
+            if (cfg == null)
+            {
+                LogStore.Add("CatHome4", 2, "项目挂载失败：majordomo cat.cfg 不可读（" + path + "）", "INJECT");
+                return JsonUtil.Object(("ok", false), ("reason", "cat.cfg 不存在：majordomo"));
+            }
+            if (project.Length > 0 && !ProjectDirExists(project))
+            {
+                LogStore.Add("CatHome4", 2, "项目挂载失败：项目不存在 " + project + "（cat=majordomo）", "INJECT");
+                return JsonUtil.Object(("ok", false), ("reason", "项目不存在：" + project));
+            }
+            string oldMount = cfg.ProjectMount == null ? "" : cfg.ProjectMount;
+            string[] next = BuildInjectListWithMount(cfg.InjectList, project, oldMount);
+            cfg.InjectList = next;
+            cfg.ProjectMount = project;
+            SaveCatCfgData("majordomo", cfg);
+            // 静态面同步——主干 session.new 由 RouteSessionNew 的 main/major 分支消费这两个值
+            _chatBridge.DefaultInjectList = next;
+            _chatBridge.DefaultProjectMount = project;
+            int msgCount = _chatBridge.DefaultSession == null ? 0 : _chatBridge.DefaultSession.Context.GetMessages().Length;
+            bool fresh = msgCount <= 1;
+            if (fresh)
+            {
+                DispatchInput(MainInputTarget(), "session.new");
+            }
+            string msg;
+            if (project.Length == 0)
+            {
+                msg = fresh ? "已取消 Project 挂载——会话重建中" : "已取消 Project 挂载——新会话生效";
+            }
+            else
+            {
+                msg = fresh ? ("已挂载 " + project + "——会话重建中") : ("已挂载 " + project + "——新会话生效");
+            }
+            LogStore.Add("CatHome4", 1, "项目挂载：cat=majordomo project=" + (project.Length == 0 ? "(空)" : project)
+                + " injectList=" + next.Length.ToString(), "INJECT");
+            return JsonUtil.Object(
+                ("ok", true),
+                ("msg", msg),
+                ("injectList", JsonUtil.Array(next)));
+        }
+        /// <summary>
+        /// 项目目录存在性判定——ccbp:Project/&lt;项目名&gt; 可解析且目录存在。
+        /// </summary>
+        /// <param name="project">项目名</param>
+        /// <returns>true=存在</returns>
+        private static bool ProjectDirExists(string project)
+        {
+            if (project == null || project.Length == 0)
+            {
+                return false;
+            }
+            string dir = ResolveCcbpPath(ProjectSpecPrefix + project);
+            return dir.Length > 0 && Directory.Exists(dir);
         }
 
         /// <summary>
