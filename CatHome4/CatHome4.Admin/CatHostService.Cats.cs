@@ -484,10 +484,26 @@ namespace CatHome4.Admin
         /// <returns>清单文本</returns>
         private static string FormatCatCfg(string id, CatCfgData cfg)
         {
+            string typeText = cfg.Type;
+            if (typeText.Length == 0)
+            {
+                typeText = "（空）";
+            }
+            string idleText = "false";
+            if (cfg.UserInjectIdleOnly)
+            {
+                idleText = "true";
+            }
+            string effortText = cfg.ReasoningEffort;
+            if (effortText.Length == 0)
+            {
+                effortText = "（跟随全局）";
+            }
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
             sb.AppendLine("cat.cfg | " + id);
             sb.AppendLine("  id=" + cfg.Id);
             sb.AppendLine("  displayName=" + cfg.DisplayName);
+            sb.AppendLine("  type=" + typeText);
             sb.AppendLine("  apiConfigId=" + cfg.ApiConfigId);
             sb.AppendLine("  persona=" + cfg.Persona);
             sb.AppendLine("  toolNames=" + cfg.ToolNames);
@@ -495,6 +511,9 @@ namespace CatHome4.Admin
             sb.AppendLine("  packs=" + JoinArray(cfg.Packs));
             sb.AppendLine("  enabledRoots=" + JoinArray(cfg.EnabledRoots));
             sb.AppendLine("  dbLibs=" + JoinArray(cfg.DbLibs));
+            sb.AppendLine("  userInjectIdleOnly=" + idleText);
+            sb.AppendLine("  appearanceId=" + cfg.AppearanceId);
+            sb.AppendLine("  reasoningEffort=" + effortText);
             sb.Append("  themeColor=" + cfg.ThemeColor.ToString());
             return sb.ToString();
         }
@@ -661,13 +680,19 @@ namespace CatHome4.Admin
             else if (field == "toolNames")
             {
                 string[] removedNames;
-                string valid = ValidateToolNames(value, out removedNames);
+                string[] blockedNames;
+                string valid = ValidateToolNames(value, SplitToolNameList(cfg.ToolNames), out removedNames, out blockedNames);
                 cfg.ToolNames = valid;
                 applied = "toolNames=" + valid;
                 // A132 剔除出声——被剔名字随回执带回（调用方可见；明细已记日志，不静默）
                 if (removedNames.Length > 0)
                 {
                     applied = applied + "｜⚠️ 已剔除池外工具名 " + removedNames.Length.ToString() + " 个：" + JoinArray(removedNames);
+                }
+                // 受限名单出声——硬编码名单只拦「新增」，现值已持有的保留
+                if (blockedNames.Length > 0)
+                {
+                    applied = applied + "｜⚠️ 已剔除受限工具名 " + blockedNames.Length.ToString() + " 个：" + JoinArray(blockedNames);
                 }
             }
             else if (field == "injectList")
@@ -1003,6 +1028,73 @@ namespace CatHome4.Admin
             info["count"] = catList.Count;
             info["cats"] = catList;
             return JsonSerializer.Serialize(info, InfoJsonOptions);
+        }
+        /// <summary>
+        /// 单猫运行态统计（组工具面 group-catinfo）——与 cat.info 单条同源（BuildCatInfoEntry），
+        /// 只把「全猫」范围收到「一只」；字段面不复制，避免与 cat.info 双写漂移。
+        /// </summary>
+        /// <param name="key">猫寻址键（majordomo=主干会话；多猫=会话 id / 显示名 / id 前缀唯一）</param>
+        /// <returns>A214 回执（头行 + 摘要行 + 正文行）；失败为 ERR| 前缀</returns>
+        internal static string HandleCatInfoOne(string key)
+        {
+            if (key == null || key.Length == 0)
+            {
+                return "ERR|BAD_ARGS|缺少猫寻址键";
+            }
+            string id = "";
+            string name = "";
+            bool running = false;
+            int port = 0;
+            bool special = false;
+            ChatSession session = null;
+            string type = "";
+            if (string.Equals(key, "majordomo", StringComparison.Ordinal))
+            {
+                id = "majordomo";
+                name = "majordomo";
+                running = _majorHost != null;
+                port = _majorPort;
+                special = true;
+                if (_chatBridge != null)
+                {
+                    session = _chatBridge.DefaultSession;
+                }
+            }
+            else
+            {
+                CatEntry cat = FindCat(key);
+                if (cat == null)
+                {
+                    return "ERR|CAT_NOT_FOUND|未找到猫: " + key;
+                }
+                id = cat.Id;
+                name = cat.DisplayName;
+                running = cat.Running;
+                port = cat.Port;
+                session = cat.Session;
+                type = cat.Type;
+            }
+            // [段1] 头行——运行面字段（会话观测字段随正文条目 JSON 全量给出）
+            Dictionary<string, object> head = new Dictionary<string, object>();
+            head["ok"] = true;
+            head["tool"] = "group-catinfo";
+            head["cat"] = id;
+            head["running"] = running;
+            head["port"] = port;
+            string runningText = "未运行";
+            if (running)
+            {
+                runningText = "运行中";
+            }
+            // [段2] 正文——单猫条目（与 cat.info 的 cats 元素同构）
+            Dictionary<string, object> entry = BuildCatInfoEntry(id, name, running, port, special, session, type);
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.Append(JsonUtil.Serialize(head));
+            sb.Append("\n");
+            sb.Append("运行态：" + name + "（" + id + "）| " + runningText + " | 端口 " + port.ToString());
+            sb.Append("\n");
+            sb.Append(JsonUtil.Serialize(entry));
+            return sb.ToString();
         }
         /// <summary>
         /// 单猫状态条目——运行面（运行态 / 端口 / 主干标记）+ 会话观测字段（与快照 sessions 段 / info tokens 段同源）。

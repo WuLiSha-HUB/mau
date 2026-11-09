@@ -628,5 +628,211 @@ namespace CatHome4.Admin
             }
             return 0;
         }
+        /// <summary>
+        /// group-catinfo——单猫运行态统计（组成员可读任一成员；与 cat.info 单条同源，不另造投影）。
+        /// </summary>
+        /// <param name="argsJson">工具参数 JSON（group / cat 必填；catId 为宿主注入保留键）</param>
+        /// <returns>A214 回执；失败为 ERR| 前缀</returns>
+        public string CatInfo(string argsJson)
+        {
+            string group = "";
+            string catId = "";
+            string err = ReadCommon(argsJson, out group, out catId);
+            if (err.Length > 0)
+            {
+                return err;
+            }
+            string target = "";
+            string targetErr = ReadTarget(argsJson, group, catId, false, false, out target);
+            if (targetErr.Length > 0)
+            {
+                return targetErr;
+            }
+            string text = CatHostService.HandleCatInfoOne(target);
+            if (text.StartsWith("ERR|", StringComparison.Ordinal))
+            {
+                return text;
+            }
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["cat"] = target;
+            List<string> body = new List<string>();
+            body.Add(Flatten(text));
+            return BuildReply("group-catinfo", group, -1, extras, "运行态：" + CatHostService.ResolveCatDisplayName(target) + "（" + target + "）", body);
+        }
+        /// <summary>
+        /// group-catcfg-get——每猫配置读取（组成员可读任一成员；与 cat.cfg.get 同源，不设掩码——cat.cfg 无密钥字段）。
+        /// </summary>
+        /// <param name="argsJson">工具参数 JSON（group / cat 必填；catId 为宿主注入保留键）</param>
+        /// <returns>A214 回执；失败为 ERR| 前缀</returns>
+        public string CatCfgGet(string argsJson)
+        {
+            string group = "";
+            string catId = "";
+            string err = ReadCommon(argsJson, out group, out catId);
+            if (err.Length > 0)
+            {
+                return err;
+            }
+            string target = "";
+            string targetErr = ReadTarget(argsJson, group, catId, false, false, out target);
+            if (targetErr.Length > 0)
+            {
+                return targetErr;
+            }
+            string text = CatHostService.HandleCatCfgGet(target);
+            if (!text.StartsWith("cat.cfg | ", StringComparison.Ordinal))
+            {
+                return "ERR|GROUP_CATCFG_GET_FAIL|" + Flatten(text);
+            }
+            string[] lines = text.Split(new char[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            List<string> body = new List<string>();
+            for (int i = 0; i < lines.Length; i = i + 1)
+            {
+                string line = lines[i].TrimEnd('\r');
+                if (line.Length > 0)
+                {
+                    body.Add(line);
+                }
+            }
+            return BuildReply("group-catcfg-get", group, -1, null, "配置全量：" + target, body);
+        }
+        /// <summary>
+        /// group-catcfg-set——每猫配置写入（仅组管理员；目标不含调用者自己）。
+        /// 字段白名单与校验由 cat.cfg.set 单点承载（13 字段全开，等价默认会话权利）；受限工具名单在公共层拦。
+        /// </summary>
+        /// <param name="argsJson">工具参数 JSON（group / cat / field / value 必填；catId 为宿主注入保留键）</param>
+        /// <returns>A214 回执；失败为 ERR| 前缀</returns>
+        public string CatCfgSet(string argsJson)
+        {
+            string group = "";
+            string catId = "";
+            string err = ReadCommon(argsJson, out group, out catId);
+            if (err.Length > 0)
+            {
+                return err;
+            }
+            string target = "";
+            string targetErr = ReadTarget(argsJson, group, catId, true, true, out target);
+            if (targetErr.Length > 0)
+            {
+                return targetErr;
+            }
+            string field = "";
+            string value = "";
+            string parseErr = ReadFieldValue(argsJson, out field, out value);
+            if (parseErr.Length > 0)
+            {
+                return parseErr;
+            }
+            // [段1] 写入——与 cat.cfg.set 单点同源（字段校验 / 全量写回 / catcfg.apply 入队 / 写后读回）
+            string text = CatHostService.HandleCatCfgSet(target + " " + field + " " + value);
+            // [段2] 成败判据——成功路径以「已更新」收尾（HandleCatCfgSet 段3），失败路径不带该词
+            if (text.IndexOf(" 已更新", StringComparison.Ordinal) < 0)
+            {
+                return "ERR|GROUP_CATCFG_SET_FAIL|" + Flatten(text);
+            }
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["cat"] = target;
+            extras["field"] = field;
+            List<string> body = new List<string>();
+            body.Add(Flatten(text));
+            return BuildReply("group-catcfg-set", group, -1, extras, "配置已写入：" + target + " / " + field, body);
+        }
+        /// <summary>
+        /// 目标猫解析——组内成员**精确**匹配（不把组 key 直接喂给 cat.cfg 寻址，防 id 前缀误配）。
+        /// </summary>
+        /// <param name="argsJson">工具参数 JSON（cat 必填）</param>
+        /// <param name="group">组名</param>
+        /// <param name="catId">调用者猫 key</param>
+        /// <param name="requireAdmin">true=须组管理员（写面）</param>
+        /// <param name="denySelf">true=拒绝目标是调用者自己（改自己请由人操作）</param>
+        /// <param name="target">输出目标猫 key</param>
+        /// <returns>错误文本（空 = 通过）</returns>
+        private static string ReadTarget(string argsJson, string group, string catId, bool requireAdmin, bool denySelf, out string target)
+        {
+            target = "";
+            GroupSummary g = GroupStore.GetGroup(group);
+            if (g == null)
+            {
+                return "ERR|GROUP_NOT_FOUND|组不存在: " + group;
+            }
+            if (!IsMember(g, catId))
+            {
+                return "ERR|GROUP_NOT_MEMBER|调用者不是本组成员: " + catId;
+            }
+            if (!g.Running)
+            {
+                return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
+            }
+            if (requireAdmin && !IsAdmin(g, catId))
+            {
+                return "ERR|GROUP_NOT_ADMIN|调用者不是组管理员: " + catId;
+            }
+            string wanted = "";
+            try
+            {
+                using (JsonDocument doc = JsonUtil.ParseStrict(argsJson))
+                {
+                    wanted = JsonString(doc.RootElement, "cat").Trim();
+                }
+            }
+            catch (Exception ex)
+            {
+                return "ERR|BAD_ARGS|参数 JSON 解析失败: " + ex.Message;
+            }
+            if (wanted.Length == 0)
+            {
+                return "ERR|BAD_ARGS|缺少参数 cat";
+            }
+            // [段1] 成员名单即授权边界——精确匹配，不走前缀
+            bool found = false;
+            for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
+            {
+                if (string.Equals(g.MemberKeys[i], wanted, StringComparison.Ordinal))
+                {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found)
+            {
+                return "ERR|GROUP_TARGET_NOT_MEMBER|目标不在组内: " + wanted;
+            }
+            if (denySelf && string.Equals(wanted, catId, StringComparison.Ordinal))
+            {
+                return "ERR|GROUP_TARGET_SELF|不能修改自己的配置——改自己请由人操作";
+            }
+            target = wanted;
+            return "";
+        }
+        /// <summary>
+        /// 字段与值读取——field / value 必填（value 可为空串＝清空该字段，透传给 cat.cfg.set）。
+        /// </summary>
+        /// <param name="argsJson">工具参数 JSON</param>
+        /// <param name="field">输出字段名</param>
+        /// <param name="value">输出新值</param>
+        /// <returns>错误文本（空 = 通过）</returns>
+        private static string ReadFieldValue(string argsJson, out string field, out string value)
+        {
+            field = "";
+            value = "";
+            try
+            {
+                using (JsonDocument doc = JsonUtil.ParseStrict(argsJson))
+                {
+                    field = JsonString(doc.RootElement, "field").Trim();
+                    value = JsonString(doc.RootElement, "value");
+                }
+            }
+            catch (Exception ex)
+            {
+                return "ERR|BAD_ARGS|参数 JSON 解析失败: " + ex.Message;
+            }
+            if (field.Length == 0)
+            {
+                return "ERR|BAD_ARGS|缺少参数 field";
+            }
+            return "";
+        }
     }
 }

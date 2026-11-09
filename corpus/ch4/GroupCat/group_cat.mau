@@ -1,6 +1,7 @@
-﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 五件独立 Flow）
-// 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-post / group-delegate / group-newsession
-// 权限：组成员（info / inbox / post）；派活与重建会话（delegate / newsession）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
+﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 八件独立 Flow）
+// 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-post / group-delegate / group-newsession / group-catinfo / group-catcfg-get / group-catcfg-set
+// 权限：读面（info / inbox / post / catinfo / catcfg-get）须组成员，可查组内任一成员；写面（delegate / newsession / catcfg-set）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
+// 受限工具名单（硬编码，莎 2026-11-09）：group-catcfg-set / group-newsession 不可经任何工具写入 toolNames（公共层 ValidateToolNames 拦，只拦新增）
 // 命名（2026-11-05 莎裁 β）：group-post 只写组流不唤醒、无 @ 目标参数；group-delegate 才派活并唤醒目标猫（积木名 group.say / group.send 为内部实现名，不改）
 // 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 5 线认领执行 → complete_str 回执
 // 载荷协议：officeName = 工具名（连字符分隔）；载荷 key "args" = 整包工具参数 JSON（含宿主注入保留键 catId）
@@ -13,6 +14,9 @@
 § 'S_Post' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_Delegate' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_New' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_CatInfo' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_CfgGet' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_CfgSet' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 
 // ── 主动传感器壳——5 线各自探测（纯只读判断积木 → bool 落盒）──
 § 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-info"] > @giOpen
@@ -20,6 +24,9 @@
 § 'P_PostOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-post"] > @gsOpen
 § 'P_DelegateOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-delegate"] > @gdOpen
 § 'P_NewOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-newsession"] > @gnOpen
+§ 'P_CatInfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-catinfo"] > @ciOpen
+§ 'P_CfgGetOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-catcfg-get"] > @cgOpen
+§ 'P_CfgSetOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-catcfg-set"] > @cwOpen
 
 // ══════════════ group-info 线 ══════════════
 § 'T_InfoClaim' : @giOpen & 'S_Info' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-info"] > @giOffice | 'S_Info' = 'Claimed' | 'S_Info' = 'Idle'
@@ -55,3 +62,24 @@
 § 'T_NewExec' : 'S_New' = 'Ready' → 'group.new_session'[@gnArgs] > @gnRes | 'S_New' = 'Done' | 'S_New' = 'Failed'
 § 'T_NewReply' : 'S_New' = 'Done' → 'oa.complete_str'[@gnOffice, @gnRes] | 'self.desc'["空闲待命", "", ""] | 'S_New' = 'Idle' | 'S_New' = 'Idle'
 § 'T_NewAbort' : 'S_New' = 'Failed' → 'oa.complete_str'[@gnOffice, @gnRes] | 'S_New' = 'Idle' | 'S_New' = 'Idle'
+
+// ══════════════ group-catinfo 线（单猫运行态统计：组成员可读任一成员）══════════════
+§ 'T_CatInfoClaim' : @ciOpen & 'S_CatInfo' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-catinfo"] > @ciOffice | 'S_CatInfo' = 'Claimed' | 'S_CatInfo' = 'Idle'
+§ 'T_CatInfoArgs' : 'S_CatInfo' = 'Claimed' → 'oa.get_str'[@ciOffice, "args"] > @ciArgs | 'self.desc'["group-catinfo 执行中", "", ""] | 'S_CatInfo' = 'Ready' | 'S_CatInfo' = 'Failed'
+§ 'T_CatInfoExec' : 'S_CatInfo' = 'Ready' → 'group.catinfo'[@ciArgs] > @ciRes | 'S_CatInfo' = 'Done' | 'S_CatInfo' = 'Failed'
+§ 'T_CatInfoReply' : 'S_CatInfo' = 'Done' → 'oa.complete_str'[@ciOffice, @ciRes] | 'self.desc'["空闲待命", "", ""] | 'S_CatInfo' = 'Idle' | 'S_CatInfo' = 'Idle'
+§ 'T_CatInfoAbort' : 'S_CatInfo' = 'Failed' → 'oa.complete_str'[@ciOffice, @ciRes] | 'S_CatInfo' = 'Idle' | 'S_CatInfo' = 'Idle'
+
+// ══════════════ group-catcfg-get 线（每猫配置读取：组成员可读任一成员）══════════════
+§ 'T_CfgGetClaim' : @cgOpen & 'S_CfgGet' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-catcfg-get"] > @cgOffice | 'S_CfgGet' = 'Claimed' | 'S_CfgGet' = 'Idle'
+§ 'T_CfgGetArgs' : 'S_CfgGet' = 'Claimed' → 'oa.get_str'[@cgOffice, "args"] > @cgArgs | 'self.desc'["group-catcfg-get 执行中", "", ""] | 'S_CfgGet' = 'Ready' | 'S_CfgGet' = 'Failed'
+§ 'T_CfgGetExec' : 'S_CfgGet' = 'Ready' → 'group.catcfg_get'[@cgArgs] > @cgRes | 'S_CfgGet' = 'Done' | 'S_CfgGet' = 'Failed'
+§ 'T_CfgGetReply' : 'S_CfgGet' = 'Done' → 'oa.complete_str'[@cgOffice, @cgRes] | 'self.desc'["空闲待命", "", ""] | 'S_CfgGet' = 'Idle' | 'S_CfgGet' = 'Idle'
+§ 'T_CfgGetAbort' : 'S_CfgGet' = 'Failed' → 'oa.complete_str'[@cgOffice, @cgRes] | 'S_CfgGet' = 'Idle' | 'S_CfgGet' = 'Idle'
+
+// ══════════════ group-catcfg-set 线（每猫配置写入：仅组管理员 + 拒改自己）══════════════
+§ 'T_CfgSetClaim' : @cwOpen & 'S_CfgSet' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-catcfg-set"] > @cwOffice | 'S_CfgSet' = 'Claimed' | 'S_CfgSet' = 'Idle'
+§ 'T_CfgSetArgs' : 'S_CfgSet' = 'Claimed' → 'oa.get_str'[@cwOffice, "args"] > @cwArgs | 'self.desc'["group-catcfg-set 执行中", "", ""] | 'S_CfgSet' = 'Ready' | 'S_CfgSet' = 'Failed'
+§ 'T_CfgSetExec' : 'S_CfgSet' = 'Ready' → 'group.catcfg_set'[@cwArgs] > @cwRes | 'S_CfgSet' = 'Done' | 'S_CfgSet' = 'Failed'
+§ 'T_CfgSetReply' : 'S_CfgSet' = 'Done' → 'oa.complete_str'[@cwOffice, @cwRes] | 'self.desc'["空闲待命", "", ""] | 'S_CfgSet' = 'Idle' | 'S_CfgSet' = 'Idle'
+§ 'T_CfgSetAbort' : 'S_CfgSet' = 'Failed' → 'oa.complete_str'[@cwOffice, @cwRes] | 'S_CfgSet' = 'Idle' | 'S_CfgSet' = 'Idle'

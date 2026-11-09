@@ -32,5 +32,20 @@
         /// <param name="argsJson">工具参数 JSON（group / to / reason 必填；firstMessage 可选）</param>
         /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
         string NewSession(string argsJson);
+
+        /// <summary>单猫运行态统计（group-catinfo）——与 cat.info 单条同源（运行面 + 会话观测字段），范围限本组成员。</summary>
+        /// <param name="argsJson">工具参数 JSON（group / cat 必填；catId 为宿主注入保留键）</param>
+        /// <returns>结构化回执文本；失败为 ERR| 前缀</returns>
+        string CatInfo(string argsJson);
+
+        /// <summary>每猫配置读取（group-catcfg-get）——cat.cfg 全量字段，范围限本组成员。</summary>
+        /// <param name="argsJson">工具参数 JSON（group / cat 必填；catId 为宿主注入保留键）</param>
+        /// <returns>字段清单文本；失败为 ERR| 前缀</returns>
+        string CatCfgGet(string argsJson);
+
+        /// <summary>每猫配置写入（group-catcfg-set）——字段级合并写，仅组管理员发起且目标不含调用者自己。</summary>
+        /// <param name="argsJson">工具参数 JSON（group / cat / field / value 必填；catId 为宿主注入保留键）</param>
+        /// <returns>落盘实况文本；失败为 ERR| 前缀</returns>
+        string CatCfgSet(string argsJson);
     }
 }

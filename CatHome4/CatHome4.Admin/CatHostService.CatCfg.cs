@@ -496,6 +496,9 @@ namespace CatHome4.Admin
         {
             string dir = Path.Combine(_dataRoot, "Data", "sessions", id);
             string path = Path.Combine(dir, "cat.cfg");
+            // 落盘闸——只做池外过滤（外部损坏防御）；受限名单在人面端点放行、在工具面入口拦（见 cat.cfg.set / group-catcfg-set）
+            string[] removedToolNames;
+            string validToolNames = ValidateToolNames(data.ToolNames, out removedToolNames);
             var payload = new
             {
                 id = data.Id,
@@ -504,7 +507,7 @@ namespace CatHome4.Admin
                 apiConfigId = data.ApiConfigId,
                 persona = data.Persona,
                 // M2c 写时校验——序列化前比对内置清单过滤非法名（外部损坏防御：持久化面只落合法名）
-                toolNames = ValidateToolNames(data.ToolNames),
+                toolNames = validToolNames,
                 injectList = data.InjectList,
                 enabledRoots = data.EnabledRoots,
                 packs = data.Packs,

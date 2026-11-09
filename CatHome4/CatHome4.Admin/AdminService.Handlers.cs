@@ -643,9 +643,6 @@ namespace CatHome4.Admin
             {
                 return Results.Json(new { ok = false, error = "猫不存在: " + catKey });
             }
-            // M2c 写时校验——池外工具名过滤（持久化面只落合法名）；A132 被剔名字随响应带回（调用方可见，不静默）
-            string[] removedToolNames;
-            string validToolNames = ValidateToolNames(toolNames, out removedToolNames);
             // A261 启用根剔除出声——池外根 id 随响应带回（与工具名单同源，不静默）
             string[] removedEnabledRoots = new string[0];
             bool rootsPoolUnavailable = false;
@@ -655,6 +652,9 @@ namespace CatHome4.Admin
             {
                 return Results.Json(new { ok = false, error = "cat.cfg 不存在: " + catKey });
             }
+            // M2c 写时校验——池外工具名过滤（人面端点：受限名单不在此拦——前端配置页是人的通道；工具面见 cat.cfg.set / group-catcfg-set）；A132 被剔名字随响应带回
+            string[] removedToolNames;
+            string validToolNames = ValidateToolNames(toolNames, out removedToolNames);
             // A41-3——显式清空（空串/全零）回默认端点；显式非法值拒绝；字段缺省保留旧值
             if (apiConfigIdPresent)
             {

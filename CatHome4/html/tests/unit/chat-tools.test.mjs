@@ -3,7 +3,7 @@
 //
 // 覆盖：
 //   ① 声明面 ↔ 落位面不漂移——`TOOL_DECL`（各件自注册）与 `TOOL_SKELETONS`（落位表）键集必须一致，
-//      且同为运行态工具池 86 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
+//      且同为运行态工具池 94 件（基准 = 宿主 `ToolOrderTable` 全量登记表）
 //   ② 骨架分派——登记工具走对应骨架；未登记工具走形态探测回落（禁止空白）
 //   ③ 专属骨架——`info`（分类摊平）/ `catinfo`（每猫一行）
 //   ④ 折叠行四级——前缀（图标 / 批次 / 失败）· 声明层 headline · 骨架兜底 · 规模后缀
@@ -48,8 +48,9 @@ const POOL = [
     'dbAdmin-libs', 'dbAdmin-create', 'dbAdmin-drop',
     // TsCat 5（A294——TS 编码工具面）
     'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
-    // GroupCat 5（A306 / A309——群聊 / 派单回执 / 会话重建）
+    // GroupCat 8（A306 / A309 / A322——群聊 / 派单回执 / 会话重建 / 组内配置面）
     'group-info', 'group-inbox', 'group-post', 'group-delegate', 'group-newsession',
+    'group-catinfo', 'group-catcfg-get', 'group-catcfg-set',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -73,9 +74,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 91 件', () => {
+    it('落位表 = 工具池 94 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(91);
+        expect(POOL.length).toBe(94);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -294,6 +295,39 @@ describe('流式工具计时（A263）', () => {
         const timed = window.buildToolBlock(card('text-read', { path: 'x' }, 'OK|done', { durMs: 1200 }), 'toolcard');
         expect(timed.querySelector('.chat-dur')).not.toBeNull();
         expect(timed.querySelector('.chat-dur-live')).toBeNull();
+    });
+});
+
+describe('组内配置面（A322）', () => {
+    it('group-catinfo——折叠行读运行态，正文摊平条目键值', () => {
+        const head = '{"ok":true,"tool":"group-catinfo","cat":"cat2","running":true,"port":8083}';
+        const entry = '{"id":"cat2","name":"猫二","running":true,"port":8083,"context":1234,"round":2}';
+        const res = head + '\n运行态：猫二（cat2）| 运行中 | 端口 8083\n' + entry;
+        const node = window.buildToolBlock(card('group-catinfo', { group: 'g1', cat: 'cat2' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('查看运行态 cat2 @ g1');
+        expect(text).toContain('运行态 cat2 · 运行中 :8083');
+        expect(text).toContain('运行态：猫二（cat2）');
+        expect(text).toContain('context = 1234');
+    });
+
+    it('group-catcfg-get——折叠行数字段，正文逐字段行（跳过摘要行）', () => {
+        const head = '{"ok":true,"tool":"group-catcfg-get","target":"g1"}';
+        const body = 'cat.cfg | cat2\n  id=cat2\n  displayName=猫二\n  themeColor=3';
+        const node = window.buildToolBlock(card('group-catcfg-get', { group: 'g1', cat: 'cat2' }, head + '\n' + body), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('读取配置 cat2 @ g1');
+        expect(text).toContain('配置 cat2 · 3 字段');
+        expect(text).toContain('displayName=猫二');
+    });
+
+    it('group-catcfg-set——输入意图行带值预览，折叠行标已写入', () => {
+        const head = '{"ok":true,"tool":"group-catcfg-set","cat":"cat2","field":"themeColor"}';
+        const res = head + '\n配置已写入：cat2 / themeColor\ncat.cfg.set | cat2 | themeColor=3 已更新';
+        const node = window.buildToolBlock(card('group-catcfg-set', { group: 'g1', cat: 'cat2', field: 'themeColor', value: '3' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('写入配置 cat2 · themeColor = 3');
+        expect(text).toContain('配置 cat2 · themeColor 已写入');
     });
 });
 

@@ -229,11 +229,11 @@ namespace CatHome4.Admin
         /// <returns>可配置工具名数组（保底去特权）</returns>
         internal static string[] ResolveConfigurableNames(string raw)
         {
-            string[] all = GetConfigurableToolNames();
             if (raw == null || raw.Trim().Length == 0)
             {
-                return all;
+                return FallbackConfigurableNames();
             }
+            string[] all = GetConfigurableToolNames();
             string[] parts = raw.Split(new char[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
             List<string> names = new List<string>();
             for (int i = 0; i < parts.Length; i = i + 1)
@@ -241,7 +241,7 @@ namespace CatHome4.Admin
                 string name = parts[i].Trim();
                 if (name == "*")
                 {
-                    return all;
+                    return FallbackConfigurableNames();
                 }
                 if (ContainsToolName(all, name))
                 {
@@ -250,7 +250,7 @@ namespace CatHome4.Admin
             }
             if (names.Count == 0)
             {
-                return all;
+                return FallbackConfigurableNames();
             }
             return names.ToArray();
         }
@@ -299,10 +299,10 @@ namespace CatHome4.Admin
                 return "";
             }
             string[] all = GetConfigurableToolNames();
-            string[] parts = raw.Split(new char[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+            string[] parts = SplitToolNameList(raw);
             List<string> names = new List<string>();
             List<string> dropped = new List<string>();
-            for (int i = 0; i < parts.Length; i++)
+            for (int i = 0; i < parts.Length; i = i + 1)
             {
                 string name = parts[i].Trim();
                 if (name == "*" || ContainsToolName(all, name))

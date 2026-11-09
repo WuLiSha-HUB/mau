@@ -663,5 +663,114 @@ namespace CatHome4.Admin
                 LogStore.Add("CatHome4", 2, "组回执通知未受理 → 已转待重投: " + group + " | " + targetKey + " | " + addResult, "GROUP");
             }
         }
+        /// <summary>
+        /// 受限工具名单（硬编码，非配置）——任何写入路径都不得把这些工具「赋予」目标猫。
+        /// 第一批（莎 2026-11-09）：group-catcfg-set（组内配置写）/ group-newsession（会话销毁）。
+        /// 语义边界：只拦「新增」——现值已持有的保留（否则一次无关字段保存就会静默夺权）。
+        /// </summary>
+        internal static readonly string[] BlockedToolNames = new string[] { "group-catcfg-set", "group-newsession" };
+        /// <summary>
+        /// 受限工具名判定。
+        /// </summary>
+        /// <param name="name">工具名</param>
+        /// <returns>true=在受限名单内</returns>
+        internal static bool IsBlockedToolName(string name)
+        {
+            return ContainsToolName(BlockedToolNames, name);
+        }
+        /// <summary>
+        /// 工具名单串拆分——逗号 / 空白分隔去空项（写面与「现值持有」判定同一口径）。
+        /// </summary>
+        /// <param name="raw">名单原始串</param>
+        /// <returns>工具名数组（空串 → 空数组）</returns>
+        internal static string[] SplitToolNameList(string raw)
+        {
+            if (raw == null || raw.Trim().Length == 0)
+            {
+                return new string[0];
+            }
+            return raw.Split(new char[] { ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries);
+        }
+        /// <summary>
+        /// 全量保底面——受限名单工具不参与「全量」授予（只可经显式持有保留）。
+        /// 消费面：ResolveConfigurableNames 的三处全量保底（raw 空 / "*" / 过滤后全空）。
+        /// </summary>
+        /// <returns>可配置工具名数组（已剔除受限名）</returns>
+        internal static string[] FallbackConfigurableNames()
+        {
+            string[] all = GetConfigurableToolNames();
+            List<string> list = new List<string>();
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                if (!IsBlockedToolName(all[i]))
+                {
+                    list.Add(all[i]);
+                }
+            }
+            return list.ToArray();
+        }
+        /// <summary>
+        /// 工具名单写时校验（含受限名单）——池外剔除（removed）+ 受限工具剔除（blocked，限「现值未持有」）。
+        /// A132 剔除出声——两类被剔名单随身带回，调用方在回执面报告，同时记日志（失败必须可见）。
+        /// </summary>
+        /// <param name="raw">待写入工具名单原始串</param>
+        /// <param name="existingNames">该猫现值工具名（null=严格模式——受限工具一律剔除）</param>
+        /// <param name="removed">池外被剔名字（输出）</param>
+        /// <param name="blocked">受限被剔名字（输出）</param>
+        /// <returns>过滤后逗号清单（空串=全量语义）</returns>
+        internal static string ValidateToolNames(string raw, string[] existingNames, out string[] removed, out string[] blocked)
+        {
+            removed = new string[0];
+            blocked = new string[0];
+            if (raw == null || raw.Trim().Length == 0)
+            {
+                return "";
+            }
+            string[] all = GetConfigurableToolNames();
+            string[] parts = SplitToolNameList(raw);
+            List<string> names = new List<string>();
+            List<string> dropped = new List<string>();
+            List<string> denied = new List<string>();
+            for (int i = 0; i < parts.Length; i = i + 1)
+            {
+                string name = parts[i].Trim();
+                if (name == "*")
+                {
+                    // 通配 = 全量授予——受限工具不参与（与全量保底同口径）
+                    string[] wide = FallbackConfigurableNames();
+                    names.Clear();
+                    for (int j = 0; j < wide.Length; j = j + 1)
+                    {
+                        names.Add(wide[j]);
+                    }
+                    continue;
+                }
+                if (!ContainsToolName(all, name))
+                {
+                    dropped.Add(name);
+                    continue;
+                }
+                if (IsBlockedToolName(name) && (existingNames == null || !ContainsToolName(existingNames, name)))
+                {
+                    denied.Add(name);
+                    continue;
+                }
+                if (!ContainsToolName(names.ToArray(), name))
+                {
+                    names.Add(name);
+                }
+            }
+            if (dropped.Count > 0)
+            {
+                removed = dropped.ToArray();
+                LogStore.Add("CatHome4", 2, "工具名单写时剔除 " + dropped.Count.ToString() + " 个池外工具名：" + string.Join(",", dropped.ToArray()) + "（工具池中不存在——名单以池为准）", "CONFIG");
+            }
+            if (denied.Count > 0)
+            {
+                blocked = denied.ToArray();
+                LogStore.Add("CatHome4", 2, "工具名单写时剔除 " + denied.Count.ToString() + " 个受限工具名：" + string.Join(",", denied.ToArray()) + "（受限名单硬编码——不可经工具赋予）", "CONFIG");
+            }
+            return string.Join(",", names.ToArray());
+        }
     }
 }

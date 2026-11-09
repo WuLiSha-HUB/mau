@@ -1,6 +1,6 @@
 ﻿# Mau 积木索引 — INDEX
 
-> 版本：v3.3 | 更新：2026-11-05（mau bricks index --update 源码驱动重建）
+> 版本：v3.3 | 更新：2026-11-09（mau bricks index --update 源码驱动重建）
 > 全量积木登记——一行一条。ID 永不重用。
 
 ## 全部积木
@@ -36,6 +36,9 @@
 | BRIK-GROUP-003 | group.say | GROUP | GROUP/BRIK-GROUP-003_group.say.cs | 无 | active |  |
 | BRIK-GROUP-004 | group.send | GROUP | GROUP/BRIK-GROUP-004_group.send.cs | 无 | active |  |
 | BRIK-GROUP-005 | group.new_session | GROUP | GROUP/BRIK-GROUP-005_group.new_session.cs | 无 | active |  |
+| BRIK-GROUP-006 | group.catinfo | GROUP | GROUP/BRIK-GROUP-006_group.catinfo.cs | 无 | active |  |
+| BRIK-GROUP-007 | group.catcfg_get | GROUP | GROUP/BRIK-GROUP-007_group.catcfg_get.cs | 无 | active |  |
+| BRIK-GROUP-008 | group.catcfg_set | GROUP | GROUP/BRIK-GROUP-008_group.catcfg_set.cs | 无 | active |  |
 | BRIK-HOST-001 | host.restart | HOST | HOST/BRIK-HOST-001_host.restart.cs | 无 | active |  |
 | BRIK-HOST-002 | host.command | HOST | HOST/BRIK-HOST-002_host.command.cs | 无 | active |  |
 | BRIK-HOST-003 | host.catinfo | HOST | HOST/BRIK-HOST-003_host.catinfo.cs | 无 | active |  |
@@ -114,4 +117,4 @@
 
 ---
 
-_版本：v3.3 | 2026-11-05 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_
+_版本：v3.3 | 2026-11-09 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_
