@@ -139,7 +139,7 @@ namespace CatHome4.Admin
         /// </summary>
         /// <param name="rootsIn">提交条目（Id 须已归一为小写）</param>
         /// <param name="existingPaths">现存根 path 映射（id → path；与提交值等值的存量根跳过存在性校验——目录离线/搬迁不构成改根死锁）</param>
-        /// <param name="dataRoot">数据根——路径锁定根（data / db）的系统值以此为基；空 = 不校验路径</param>
+        /// <param name="dataRoot">数据根——路径锁定根（data）的系统值以此为基；空 = 不校验路径</param>
         /// <returns>错误文案（空 = 通过）</returns>
         internal static string ValidateRootsInput(List<WorkspaceRootInput> rootsIn, Dictionary<string, string> existingPaths, string dataRoot)
         {
@@ -201,7 +201,7 @@ namespace CatHome4.Admin
                     // 固定列系统权威——note / writable 取定义值（不以提交值为准）；存量配置缺 note、直调 API 传错值一律归一，不构成保存死锁
                     input.Note = def.Note;
                     input.Writable = def.Writable;
-                    // A273 路径锁定——data / db 的 path 由系统计算，提交值不同即拒绝（不做静默覆盖：改了要让人知道改不成）
+                    // A273 / A321——仅 data 的 path 由系统计算，提交值不同即拒绝（不做静默覆盖：改了要让人知道改不成）；db 自 A321 起不锁 path，提交值即权威
                     string lockedPath = ResolveFixedRootPath(def.Id, dataRoot);
                     if (lockedPath.Length > 0)
                     {
@@ -234,8 +234,8 @@ namespace CatHome4.Admin
 
         // [段3] db 根自愈与落盘出口
         /// <summary>
-        /// db 受控根自愈（A266）——配置缺 db 根或目录不可达时补建，内存与 workspace.json 一并就位。
-        /// 语义：幂等——已就位返回空串；库根固定为 &lt;数据根&gt;/Data/db（只读，仅供库工具寻路）。
+        /// db 受控根自愈（A266 / A321）——缺 db 根时按默认值补建（内存与 workspace.json 一并就位）；已有条目一律尊重现值，不改写路径。
+        /// 语义：幂等——已就位返回空串；A321 起 path 可配置（莎 2026-11-09 定），默认 &lt;数据根&gt;/db（与 data 根并列、不进 Data 目录，只读，仅供库工具寻路）。
         /// 🔴 失败具名返回（不静默）：目录建不出来整个动作中止；落盘失败时内存已就位，返回值说明分叉。
         /// </summary>
         /// <param name="workspace">已加载的受控根配置（就地更新 Roots 数组）</param>
@@ -252,16 +252,11 @@ namespace CatHome4.Admin
             {
                 return "db 根自愈跳过：固定根表未登记 db（实现缺陷）";
             }
-            string dbPath = Path.Combine(dataRoot, "Data", "db");
-            try
+            if (dataRoot == null || dataRoot.Length == 0)
             {
-                Directory.CreateDirectory(dbPath);
+                return "db 根自愈跳过：数据根缺失";
             }
-            catch (Exception ex)
-            {
-                return "db 根目录创建失败：" + dbPath + " | " + ex.Message;
-            }
-            string dbNorm = WorkspaceConfig.NormalizeRoot(dbPath);
+            // [段1] 既有条目带路径——尊重现值（A321：path 可配置，自愈只保目录可达，不改写路径）
             int existing = -1;
             for (int i = 0; i < workspace.Roots.Length; i = i + 1)
             {
@@ -273,21 +268,52 @@ namespace CatHome4.Admin
             }
             if (existing >= 0)
             {
-                string oldNorm = "";
-                try
+                string currentPath = workspace.Roots[existing].Path;
+                if (currentPath != null && currentPath.Length > 0)
                 {
-                    oldNorm = WorkspaceConfig.NormalizeRoot(workspace.Roots[existing].Path);
-                }
-                catch (Exception)
-                {
-                    oldNorm = "";
-                }
-                if (string.Equals(oldNorm, dbNorm, StringComparison.OrdinalIgnoreCase))
-                {
+                    string curNorm = "";
+                    try
+                    {
+                        curNorm = WorkspaceConfig.NormalizeRoot(currentPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        return "db 根路径非法（归一失败，拒绝覆盖）: " + currentPath + " | " + ex.Message;
+                    }
+                    try
+                    {
+                        Directory.CreateDirectory(curNorm);
+                    }
+                    catch (Exception ex)
+                    {
+                        return "db 根目录创建失败：" + curNorm + " | " + ex.Message;
+                    }
                     return "";
                 }
             }
-            // 内存面先就位——工具寻路不因落盘失败而不可用（分叉在返回值里出声）
+            // [段2] 补默认值前先查磁盘原文——已配置但加载期被跳过（不可达）时不覆盖用户配置
+            string wsPath = Path.Combine(dataRoot, "Data", "config", "workspace.json");
+            string diskErr = "";
+            string diskPath = ReadDbRootPathOnDisk(wsPath, out diskErr);
+            if (diskErr.Length > 0)
+            {
+                return "db 根自愈中止：" + diskErr;
+            }
+            if (diskPath.Length > 0)
+            {
+                return "db 根路径不可达（保留磁盘配置，不覆盖）: " + diskPath + "——请修正路径后重启";
+            }
+            // [段3] 条目缺失或路径为空——按默认值 <数据根>/db 补建并入落盘（与 data 根并列，不进 Data 目录）
+            string dbPath = Path.Combine(dataRoot, "db");
+            try
+            {
+                Directory.CreateDirectory(dbPath);
+            }
+            catch (Exception ex)
+            {
+                return "db 根目录创建失败：" + dbPath + " | " + ex.Message;
+            }
+            string dbNorm = WorkspaceConfig.NormalizeRoot(dbPath);
             List<WorkspaceConfig.RootEntry> entries = new List<WorkspaceConfig.RootEntry>();
             for (int i = 0; i < workspace.Roots.Length; i = i + 1)
             {
@@ -305,7 +331,6 @@ namespace CatHome4.Admin
             entries.Add(dbEntry);
             workspace.Roots = entries.ToArray();
             // 落盘面——以磁盘原文为基并入 db（加载会跳过不可达根，全量回写会静默丢根）
-            string wsPath = Path.Combine(dataRoot, "Data", "config", "workspace.json");
             string writeErr = MergeFixedRootIntoWorkspace(wsPath, dbEntry, "db");
             if (writeErr.Length > 0)
             {
@@ -313,6 +338,63 @@ namespace CatHome4.Admin
             }
             return "db 根已补建：" + dbNorm + "（只读）";
         }
+        /// <summary>
+        /// 磁盘 workspace.json 中已登记的 db 根路径（A321）——区分「从未配置」与「已配置但加载期被跳过（不可达）」。
+        /// 用途：路径可配后，内存 roots 缺失不再等价于「未配置」——不可达根会在加载期被过滤，据内存补默认值会覆盖用户配置。
+        /// </summary>
+        /// <param name="wsPath">workspace.json 绝对路径</param>
+        /// <param name="error">错误文案（非空 = 读取失败，调用方不得覆盖磁盘）</param>
+        /// <returns>磁盘上的 db 路径（空串 = 未配置或条目无 path）</returns>
+        private static string ReadDbRootPathOnDisk(string wsPath, out string error)
+        {
+            error = "";
+            if (!File.Exists(wsPath))
+            {
+                return "";
+            }
+            string found = "";
+            try
+            {
+                using (JsonDocument doc = JsonUtil.ParseStrict(File.ReadAllText(wsPath)))
+                {
+                    JsonElement rootsEl;
+                    if (doc.RootElement.TryGetProperty("roots", out rootsEl) && rootsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        for (int i = 0; i < rootsEl.GetArrayLength(); i = i + 1)
+                        {
+                            JsonElement item = rootsEl[i];
+                            string id = "";
+                            JsonElement idEl;
+                            if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("id", out idEl) && idEl.ValueKind == JsonValueKind.String)
+                            {
+                                id = idEl.GetString();
+                            }
+                            if (!string.Equals(NormalizeRootId(id), "db", StringComparison.OrdinalIgnoreCase))
+                            {
+                                continue;
+                            }
+                            JsonElement pathEl;
+                            if (item.ValueKind == JsonValueKind.Object && item.TryGetProperty("path", out pathEl) && pathEl.ValueKind == JsonValueKind.String)
+                            {
+                                found = pathEl.GetString();
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                error = "workspace.json 读取失败（拒绝覆盖）: " + ex.Message;
+                return "";
+            }
+            if (found == null)
+            {
+                return "";
+            }
+            return found;
+        }
+
         /// <summary>
         /// 把固定根并入 workspace.json 磁盘原文——其余根条目与 inject 段原样保留，原子写。
         /// 不以加载后的内存 roots 为基：加载会跳过不可达根，全量回写会静默丢根。
@@ -375,9 +457,11 @@ namespace CatHome4.Admin
             return "";
         }
 
-        // [段3b] 路径锁定的固定根（A273）——data / db 的 path 由系统计算，配置、前端、API 均不可改（莎 2026-10-20 定）
+        // [段3b] 路径锁定根（A273 / A321 收窄）——仅 data 的 path 由系统计算，配置、前端、API 均不可改（莎 2026-10-20 定）；
+        // db 自 A321 起 path 可配置（莎 2026-11-09 定）——默认 <数据根>/db，已配置值自愈不覆盖
         /// <summary>
-        /// 固定根系统路径——data = 数据根下的 Data 目录；db = 数据根下的 Data/db；其余根返回空串（不锁路径）。
+        /// 路径锁定根的系统值——仅 data = 数据根下的 Data 目录；其余根（含 db）返回空串（不锁路径）。
+        /// db 自 A321 起 path 可配置（莎 2026-11-09 定），默认值由 EnsureDbRoot 提供。
         /// </summary>
         /// <param name="id">根标识（任意大小写）</param>
         /// <param name="dataRoot">数据根绝对路径</param>
@@ -393,15 +477,11 @@ namespace CatHome4.Admin
             {
                 return Path.Combine(dataRoot, "Data");
             }
-            if (string.Equals(norm, "db", StringComparison.Ordinal))
-            {
-                return Path.Combine(dataRoot, "Data", "db");
-            }
             return "";
         }
 
         /// <summary>
-        /// 路径锁定根全量校准（A273）——data 与 db 两条路径逐条归到系统值：缺则补、偏差则校准，内存与磁盘一并就位。
+        /// 固定根全量校准（A273 / A321）——data 归到系统值（缺则补、偏差则校准）；db 缺则按默认值补建、已有则尊重现值（不改写路径）；内存与磁盘一并就位。
         /// 失败具名返回（不静默）；多条动作以「；」分隔。
         /// </summary>
         /// <param name="workspace">已加载的受控根配置（就地更新 Roots 数组）</param>

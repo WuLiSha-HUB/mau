@@ -491,7 +491,7 @@ function renderRootChecks(allRoots, enabledRoots) {
                 label.style.color = 'var(--ch-warn)';
                 label.title = '系统根——必选不可取消';
             } else if (isFixed) {
-                // 固定命名根（mau / mauout / data）——呈现区分，不加权限
+                // 固定命名根（mau / mauout / data / db）——呈现区分，不加权限
                 label.style.borderColor = 'var(--ch-warn)';
                 label.title = '系统根（固定命名）——' + (root.note || '');
             }
@@ -739,14 +739,10 @@ function renderRoots() {
             editBtn.textContent = '编辑';
             editBtn.className = 'btn-mini tight info';
             var lockedRootId = (rootsList[idx].id || '').toLowerCase();
-            if (lockedRootId === 'db' || lockedRootId === 'data') {
-                // 路径锁定根（A273）——data = 应用数据根 / db = 数据根/Data/db：路径由系统计算，后端同校验拒绝
+            if (lockedRootId === 'data') {
+                // 路径锁定根（A273）——data = 应用数据根：路径由系统计算，后端同校验拒绝；db 自 A321 起可编辑
                 editBtn.disabled = true;
-                if (lockedRootId === 'db') {
-                    editBtn.title = '数据库根固定为 数据根/Data/db——不可修改';
-                } else {
-                    editBtn.title = '数据根固定为应用数据目录——不可修改';
-                }
+                editBtn.title = '数据根固定为应用数据目录——不可修改';
             } else {
                 editBtn.onclick = function () {
                     enterEditRoot(idx);
@@ -801,9 +797,9 @@ function enterEditRoot(idx) {
                 pathIn.value = rootsList[rowIdx].path;
                 pathIn.className = 'input-mini';
                 pathIn.style.width = '96%';
-                var isLockedRow = isFixedRow && ((rootsList[rowIdx].id || '').toLowerCase() === 'db' || (rootsList[rowIdx].id || '').toLowerCase() === 'data');
+                var isLockedRow = isFixedRow && (rootsList[rowIdx].id || '').toLowerCase() === 'data';
                 if (isLockedRow) {
-                    // 路径锁定根（data / db）——只读展示，确定时忽略路径改动
+                    // 路径锁定根（data）——只读展示，确定时忽略路径改动；db 自 A321 起 path 可配置
                     pathIn.disabled = true;
                     pathIn.title = '路径由系统固定——不可修改';
                 }

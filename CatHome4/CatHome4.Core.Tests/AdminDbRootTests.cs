@@ -28,7 +28,7 @@ namespace CatHome4.Core.Tests
                 WorkspaceConfig.RootEntry db = FindRoot(ws, "db");
                 Assert.NotNull(db);
                 Assert.False(db.Writable);
-                Assert.Equal(WorkspaceConfig.NormalizeRoot(Path.Combine(tempRoot, "Data", "db")), db.Path);
+                Assert.Equal(WorkspaceConfig.NormalizeRoot(Path.Combine(tempRoot, "db")), db.Path);
                 Assert.True(Directory.Exists(db.Path));
                 string wsPath = Path.Combine(tempRoot, "Data", "config", "workspace.json");
                 Assert.True(File.Exists(wsPath));
@@ -52,7 +52,7 @@ namespace CatHome4.Core.Tests
             string tempRoot = NewTempRoot();
             try
             {
-                Directory.CreateDirectory(Path.Combine(tempRoot, "Data", "db"));
+                Directory.CreateDirectory(Path.Combine(tempRoot, "db"));
                 WorkspaceConfig ws = new WorkspaceConfig();
                 ws.Roots = new WorkspaceConfig.RootEntry[] { MakeRoot("workspace", tempRoot) };
                 Assert.NotEqual("", AdminService.EnsureDbRoot(ws, tempRoot));
@@ -161,16 +161,23 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 写面校验（A273）——data / db 的 path 提交系统值以外一律拒绝（不静默覆盖）。
+        /// 写面校验（A273）——data 的 path 提交系统值以外一律拒绝（不静默覆盖）。
         /// </summary>
         [Fact]
-        public void ValidateRootsInput_LockedRootPathDiffers_Rejected()
+        public void ValidateRootsInput_LockedDataPathDiffers_Rejected()
         {
             string tempRoot = NewTempRoot();
             try
             {
-                List<AdminService.WorkspaceRootInput> roots = MakeFixedRoots(tempRoot, Path.Combine(tempRoot, "other_db"));
-                Directory.CreateDirectory(Path.Combine(tempRoot, "other_db"));
+                List<AdminService.WorkspaceRootInput> roots = MakeFixedRoots(tempRoot, Path.Combine(tempRoot, "db"));
+                Directory.CreateDirectory(Path.Combine(tempRoot, "other_data"));
+                for (int i = 0; i < roots.Count; i = i + 1)
+                {
+                    if (string.Equals(roots[i].Id, "data", StringComparison.OrdinalIgnoreCase))
+                    {
+                        roots[i].Path = Path.Combine(tempRoot, "other_data");
+                    }
+                }
                 string err = AdminService.ValidateRootsInput(roots, null, tempRoot);
                 Assert.Contains("不可修改", err);
             }
@@ -181,7 +188,81 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 写面校验（A273）——data / db 提交系统值时通过（正常保存不被锁死）。
+        /// 写面校验（A321）——db 的 path 可配置：提交自定义路径通过（不再锁定，提交值即权威）。
+        /// </summary>
+        [Fact]
+        public void ValidateRootsInput_DbPathCustom_Passes()
+        {
+            string tempRoot = NewTempRoot();
+            try
+            {
+                string customDb = Path.Combine(tempRoot, "custom_db");
+                Directory.CreateDirectory(customDb);
+                List<AdminService.WorkspaceRootInput> roots = MakeFixedRoots(tempRoot, customDb);
+                string err = AdminService.ValidateRootsInput(roots, null, tempRoot);
+                Assert.Equal("", err);
+            }
+            finally
+            {
+                SafeDelete(tempRoot);
+            }
+        }
+
+        /// <summary>
+        /// 自愈（A321）——已配置自定义 db 路径时尊重现值：不改写路径、不创建默认目录，只保证现值目录可达。
+        /// </summary>
+        [Fact]
+        public void EnsureDbRoot_CustomPathKept()
+        {
+            string tempRoot = NewTempRoot();
+            try
+            {
+                string customDb = Path.Combine(tempRoot, "custom_db");
+                WorkspaceConfig ws = new WorkspaceConfig();
+                ws.Roots = new WorkspaceConfig.RootEntry[] { MakeRoot("workspace", tempRoot), MakeRoot("db", customDb) };
+                Assert.Equal("", AdminService.EnsureDbRoot(ws, tempRoot));
+                WorkspaceConfig.RootEntry db = FindRoot(ws, "db");
+                Assert.NotNull(db);
+                Assert.Equal(WorkspaceConfig.NormalizeRoot(customDb), db.Path);
+                Assert.True(Directory.Exists(customDb));
+                Assert.False(Directory.Exists(Path.Combine(tempRoot, "db")));
+            }
+            finally
+            {
+                SafeDelete(tempRoot);
+            }
+        }
+
+        /// <summary>
+        /// 自愈（A321）——磁盘已配置 db 路径但加载期被跳过（路径不可达）时不覆盖用户配置：保留磁盘值、不建默认目录。
+        /// </summary>
+        [Fact]
+        public void EnsureDbRoot_UnreachableConfiguredPath_NotOverwritten()
+        {
+            string tempRoot = NewTempRoot();
+            try
+            {
+                string wsPath = Path.Combine(tempRoot, "Data", "config", "workspace.json");
+                Directory.CreateDirectory(Path.Combine(tempRoot, "Data", "config"));
+                string customDb = Path.Combine(tempRoot, "custom_db").Replace('\\', '/');
+                string originalJson = "{\"roots\":[{\"id\":\"workspace\",\"path\":\"" + tempRoot.Replace('\\', '/') + "\",\"writable\":true},{\"id\":\"db\",\"path\":\"" + customDb + "\",\"writable\":false,\"note\":\"库根\"}],\"inject\":[]}";
+                File.WriteAllText(wsPath, originalJson);
+                WorkspaceConfig ws = new WorkspaceConfig();
+                ws.Roots = new WorkspaceConfig.RootEntry[] { MakeRoot("workspace", tempRoot) };
+                string note = AdminService.EnsureDbRoot(ws, tempRoot);
+                Assert.NotEqual("", note);
+                Assert.Contains("保留磁盘配置", note);
+                Assert.Contains(customDb, File.ReadAllText(wsPath));
+                Assert.False(Directory.Exists(Path.Combine(tempRoot, "db")));
+            }
+            finally
+            {
+                SafeDelete(tempRoot);
+            }
+        }
+
+        /// <summary>
+        /// 写面校验（A273）——data 提交系统值时通过（正常保存不被锁死）。
         /// </summary>
         [Fact]
         public void ValidateRootsInput_LockedRootPathSame_Passes()
@@ -189,7 +270,7 @@ namespace CatHome4.Core.Tests
             string tempRoot = NewTempRoot();
             try
             {
-                string dbPath = Path.Combine(tempRoot, "Data", "db");
+                string dbPath = Path.Combine(tempRoot, "db");
                 Directory.CreateDirectory(dbPath);
                 List<AdminService.WorkspaceRootInput> roots = MakeFixedRoots(tempRoot, dbPath);
                 string err = AdminService.ValidateRootsInput(roots, null, tempRoot);
