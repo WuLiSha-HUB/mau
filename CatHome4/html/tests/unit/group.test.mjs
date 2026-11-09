@@ -246,3 +246,54 @@ test('使用者署名——info 晚于消息首屏到达时回填既有行（同
   expect(document.querySelector('.chat-row.user .msg-meta .mm-who')).toBe(who);
   expect(who.textContent).toBe('莎');
 });
+
+// A319 球列——管理员在前（同级保持名单原序）；管理员球挂 👑
+test('A319 球列——管理员排前，非管理员在后（同序），皇冠只挂管理员', () => {
+  const el = document.getElementById('groupCats');
+  el.textContent = '';
+  window.gCatNodes = {};
+  window.gRenderCats([
+    { key: 'c1', displayName: '丙', admin: false, running: false, themeColor: 0, runState: 'idle', context: 0 },
+    { key: 'a1', displayName: '甲', admin: true, running: true, themeColor: 1, runState: 'run', context: 1200 },
+    { key: 'b1', displayName: '乙', admin: false, running: true, themeColor: 2, runState: 'idle', context: 500 },
+    { key: 'a2', displayName: '丁', admin: true, running: true, themeColor: 3, runState: 'think', context: 3480 }
+  ]);
+  const names = Array.prototype.map.call(el.children, (n) => n.querySelector('.gc-name').textContent);
+  expect(names).toEqual(['甲', '丁', '丙', '乙']);
+  // 皇冠：管理员 block / 非管理员 none
+  expect(el.children[0].querySelector('.gc-crown').style.display).toBe('block');
+  expect(el.children[1].querySelector('.gc-crown').style.display).toBe('block');
+  expect(el.children[2].querySelector('.gc-crown').style.display).toBe('none');
+  // 前文折 K + 未运行显示破折号
+  expect(el.children[0].querySelector('.gc-tok').textContent).toBe('1.2K');
+  expect(el.children[2].querySelector('.gc-tok').textContent).toBe('—');
+});
+
+// A319 球列——重复刷新不重建节点（同一成员保持同一 DOM 节点）
+test('A319 球列——重复渲染复用节点，不重建', () => {
+  const el = document.getElementById('groupCats');
+  const first = el.children[0];
+  window.gRenderCats([
+    { key: 'c1', displayName: '丙', admin: false, running: false, themeColor: 0, runState: 'idle', context: 0 },
+    { key: 'a1', displayName: '甲', admin: true, running: true, themeColor: 1, runState: 'reply', context: 900 },
+    { key: 'b1', displayName: '乙', admin: false, running: true, themeColor: 2, runState: 'idle', context: 500 },
+    { key: 'a2', displayName: '丁', admin: true, running: true, themeColor: 3, runState: 'think', context: 3480 }
+  ]);
+  expect(el.children[0]).toBe(first);
+  // 运行态刷新落点——灯点跟着改
+  expect(first.querySelector('.gc-dot').className).toContain('reply');
+  expect(first.querySelector('.gc-tok').textContent).toBe('900');
+});
+
+// A320 气泡着色——只写描边变量（不染底色）；刻度取主题色靠 scroll.js 复制 --gc-color
+test('A320 气泡着色——只写行内 --gc-color，不再挂底色标记', () => {
+  const row = window.gBuildRow({ seq: 3, from: 'a1', displayName: '甲', type: 'note', ts: 0, text: 'x' });
+  window.gThemeIdx = { a1: 3 };
+  window.gApplyCatTheme(row, 'a1');
+  expect(row.style.getPropertyValue('--gc-color')).toBe('#c586c0');
+  expect(row.getAttribute('data-cat-theme')).toBeNull();
+  // 未在映射内的来源——回落 0 号白
+  const other = window.gBuildRow({ seq: 4, from: 'zz', displayName: '乙', type: 'note', ts: 0, text: 'y' });
+  window.gApplyCatTheme(other, 'zz');
+  expect(other.style.getPropertyValue('--gc-color')).toBe('#ffffff');
+});

@@ -32,6 +32,7 @@ function openCatCfg(catId, name) {
             renderAppearanceOptions(d.appearanceOptions || [], d.appearanceId || '');
             document.getElementById('catCfgIdleOnly').checked = !!d.userInjectIdleOnly;
             renderEffortOptions(d.reasoningEffort || '', d.defaultReasoningEffort || '');
+            renderThemeColorOptions(d.themeColor || 0);
             document.getElementById('catCfgName').value = d.displayName || '';
             document.getElementById('catCfgType').value = d.type || '';
             document.getElementById('catCfgPersona').value = d.persona || '';
@@ -348,7 +349,37 @@ enableDragSort('catCfgInject', function (from, to) {
     renderInjectList(catCfgInjectList);
 });
 
+// A320 主题色下拉——色板取 ui-common.js 的 CAT_THEME_COLORS（与群聊气泡 / 成员球同一份定义）；选项前色点 + 旁侧色块预览
+function renderThemeColorOptions(current) {
+    var sel = document.getElementById('catCfgTheme');
+    var swatch = document.getElementById('catCfgThemeSwatch');
+    var idx = parseInt(current, 10);
+    if (isNaN(idx) || idx < 0 || idx >= CAT_THEME_COLORS.length) {
+        idx = 0;
+    }
+    sel.innerHTML = '';
+    for (var i = 0; i < CAT_THEME_COLORS.length; i = i + 1) {
+        var c = CAT_THEME_COLORS[i];
+        var opt = document.createElement('option');
+        opt.value = String(c.idx);
+        opt.textContent = '● ' + c.name;
+        opt.style.color = c.value;
+        sel.appendChild(opt);
+    }
+    sel.value = String(idx);
+    if (swatch) {
+        swatch.style.background = catThemeColorValue(idx);
+    }
+    sel.onchange = function () {
+        if (swatch) {
+            swatch.style.background = catThemeColorValue(sel.value);
+        }
+    };
+}
+
 function saveCatCfg() {
+    var themeRaw = parseInt(document.getElementById('catCfgTheme').value, 10);
+    var themeColor = isNaN(themeRaw) || themeRaw < 0 ? 0 : themeRaw;
     var toolNames = collectChecked('catCfgTools');
     var payload = {
         cat: catCfgTarget,
@@ -362,6 +393,7 @@ function saveCatCfg() {
         userInjectIdleOnly: document.getElementById('catCfgIdleOnly').checked,
         appearanceId: document.getElementById('catCfgAppearance').value,
         reasoningEffort: document.getElementById('catCfgEffort').value,
+        themeColor: themeColor,
         enabledRoots: collectRootChecks()
     };
     // A275——库清单不可取时不提交 dbLibs（字段级合并：缺省保留磁盘现值，避免静默清空）

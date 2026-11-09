@@ -407,6 +407,7 @@ namespace CatHome4.Admin
                 userInjectIdleOnly = cfg.UserInjectIdleOnly,
                 reasoningEffort = cfg.ReasoningEffort,
                 appearanceId = cfg.AppearanceId,
+                themeColor = cfg.ThemeColor,
                 roundSummary = ResolveEffectiveRoundSummary(catKey),
                 defaultReasoningEffort = ResolveGlobalReasoningEffort(),
                 enabledRoots = cfg.EnabledRoots,
@@ -478,6 +479,7 @@ namespace CatHome4.Admin
             bool userInjectIdleOnlyPresent = false;
             bool reasoningEffortPresent = false;
             bool appearanceIdPresent = false;
+            bool themeColorPresent = false;
             string displayName = "";
             string persona = "";
             string typeValue = "";
@@ -485,6 +487,8 @@ namespace CatHome4.Admin
             string reasoningEffort = "";
             bool userInjectIdleOnly = false;
             string appearanceIdValue = "";
+            int themeColorValue = 0;
+            bool themeColorFormError = false;
             List<string> injectList = new List<string>();
             List<string> enabledRoots = new List<string>();
             List<string> packs = new List<string>();
@@ -505,6 +509,7 @@ namespace CatHome4.Admin
                     userInjectIdleOnlyPresent = root.TryGetProperty("userInjectIdleOnly", out probeEl);
                     reasoningEffortPresent = root.TryGetProperty("reasoningEffort", out probeEl);
                     appearanceIdPresent = root.TryGetProperty("appearanceId", out probeEl);
+                    themeColorPresent = root.TryGetProperty("themeColor", out probeEl);
                     packsPresent = root.TryGetProperty("packs", out probeEl);
                     dbLibsPresent = root.TryGetProperty("dbLibs", out probeEl);
                     injectListPresent = root.TryGetProperty("injectList", out probeEl);
@@ -526,6 +531,20 @@ namespace CatHome4.Admin
                     userInjectIdleOnly = GetBoolProp(root, "userInjectIdleOnly");
                     reasoningEffort = GetJsonString(root, "reasoningEffort");
                     appearanceIdValue = GetJsonString(root, "appearanceId");
+                    JsonElement themeColorEl;
+                    if (root.TryGetProperty("themeColor", out themeColorEl))
+                    {
+                        // A320——主题色索引：非负整数；形态非法出声（不静默回落默认色）
+                        int parsedThemeColor;
+                        if (themeColorEl.ValueKind == JsonValueKind.Number && themeColorEl.TryGetInt32(out parsedThemeColor) && parsedThemeColor >= 0)
+                        {
+                            themeColorValue = parsedThemeColor;
+                        }
+                        else
+                        {
+                            themeColorFormError = true;
+                        }
+                    }
                     JsonElement rootsEl;
                     if (root.TryGetProperty("enabledRoots", out rootsEl) && rootsEl.ValueKind == JsonValueKind.Array)
                     {
@@ -606,6 +625,10 @@ namespace CatHome4.Admin
             catch (Exception)
             {
                 return Results.Json(new { ok = false, error = "body 非 JSON" });
+            }
+            if (themeColorFormError)
+            {
+                return Results.Json(new { ok = false, error = "themeColor 非法（非负整数）" });
             }
             if (catKey.Length == 0)
             {
@@ -699,6 +722,10 @@ namespace CatHome4.Admin
                     }
                     cfg.AppearanceId = parsedAppearance.ToString("D");
                 }
+            }
+            if (themeColorPresent && !themeColorFormError)
+            {
+                cfg.ThemeColor = themeColorValue;
             }
             if (personaPresent)
             {

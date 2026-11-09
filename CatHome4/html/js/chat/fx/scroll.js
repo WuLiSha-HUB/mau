@@ -374,6 +374,15 @@ function bandRebuild() {
             // 失败（红）/ timeback 域内（粉）——段级标记（段内任一条即标）；红由 CSS 事后覆盖（不盖红）
             if (seg.err) { cls = cls + ' err'; }
             if (seg.scope) { cls = cls + ' tb-scope'; }
+            // 行级主题色（A320）——段首行带 --gc-color 时整段刻度取该色并挂 gc-tint（无该变量的页面照旧走块型色）
+            var tint = '';
+            if (seg.row && seg.row.style) {
+                tint = seg.row.style.getPropertyValue('--gc-color');
+            }
+            if (tint && tint.length > 0) {
+                cls = cls + ' gc-tint';
+                d.style.setProperty('--gc-color', tint);
+            }
             d.className = cls;
             d.setAttribute('data-type', seg.type || '');
             bandTicks.appendChild(d);

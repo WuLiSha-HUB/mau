@@ -111,3 +111,30 @@ function kokoroVoiceLabel(id) {
     }
     return key;
 }
+
+/**
+ * A320 Cat 主题色预设色板——索引 0 = 默认白，>0 = 预设色（VSCode Dark+ 语系，与界面语义色同宗）
+ * 消费面：配置弹层色块（panel-catcfg.js）· 群聊气泡与成员球（group.js）——单一定义，禁各处另抄色值
+ */
+var CAT_THEME_COLORS = [
+    { idx: 0, name: '默认白', value: '#ffffff' },
+    { idx: 1, name: '蓝', value: '#569cd6' },
+    { idx: 2, name: '青', value: '#4ec9b0' },
+    { idx: 3, name: '紫', value: '#c586c0' },
+    { idx: 4, name: '黄', value: '#dcdcaa' },
+    { idx: 5, name: '橙', value: '#ce9178' },
+    { idx: 6, name: '绿', value: '#6a9955' },
+    { idx: 7, name: '红', value: '#f48771' },
+    { idx: 8, name: '浅蓝', value: '#9cdcfe' }
+];
+
+/**
+ * 主题色索引 → 色值（越界 / 非法一律回落 0 号色——渲染面不因脏值报错）
+ * @param {number} idx 色板索引
+ * @returns {string} 十六进制色值
+ */
+function catThemeColorValue(idx) {
+    var n = parseInt(idx, 10);
+    if (isNaN(n) || n < 0 || n >= CAT_THEME_COLORS.length) { return CAT_THEME_COLORS[0].value; }
+    return CAT_THEME_COLORS[n].value;
+}

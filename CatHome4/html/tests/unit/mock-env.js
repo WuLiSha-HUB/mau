@@ -17,6 +17,11 @@ export function installDom(html, url) {
   globalThis.Node = dom.window.Node;
   globalThis.Event = dom.window.Event;
   globalThis.HTMLElement = dom.window.HTMLElement;
+  // window 事件面——window 别名指向 globalThis（Node 全局无该 API）；页面脚本挂 resize 等监听需可调用
+  if (typeof globalThis.addEventListener !== 'function') {
+    globalThis.addEventListener = function () {};
+    globalThis.removeEventListener = function () {};
+  }
   return dom;
 }
 

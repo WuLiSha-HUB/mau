@@ -71,6 +71,9 @@ namespace CatHome4.Admin
             /// <summary>外观配置身份——cat.cfg 持久化（A244；Guid.Empty=跟随默认外观）</summary>
             public Guid AppearanceId;
 
+            /// <summary>主题色索引——cat.cfg 持久化（A320；0=默认白，&gt;0=预设色板序号）</summary>
+            public int ThemeColor;
+
             /// <summary>轮末总结生效值——经外观配置解析（A244 迁入池；不落 cat.cfg，此处只作解析结果缓存）</summary>
             public bool RoundSummary;
 
@@ -119,6 +122,9 @@ namespace CatHome4.Admin
 
             /// <summary>外观配置身份——缺省空串（跟随默认外观）</summary>
             public string AppearanceId { get; set; }
+
+            /// <summary>主题色索引——cat.cfg 持久化（A320；0=默认白，&gt;0=预设色板序号；群聊气泡与成员球消费）</summary>
+            public int ThemeColor { get; set; }
 
             /// <summary>启用根 id 清单——全局根池子集（null/空=全量；workspace 强制必选不可取消）</summary>
             public string[] EnabledRoots { get; set; }
@@ -289,6 +295,7 @@ namespace CatHome4.Admin
                     data.UserInjectIdleOnly = GetBoolProp(root, "userInjectIdleOnly");
                     data.ReasoningEffort = GetStringProp(root, "reasoningEffort");
                     data.AppearanceId = GetStringProp(root, "appearanceId");
+                    data.ThemeColor = GetIntProp(root, "themeColor");
                     return data;
                 }
             }
@@ -317,6 +324,7 @@ namespace CatHome4.Admin
             data.UserInjectIdleOnly = cat.UserInjectIdleOnly;
             data.ReasoningEffort = cat.ReasoningEffort;
             data.AppearanceId = cat.AppearanceId.ToString("D");
+            data.ThemeColor = cat.ThemeColor;
             SaveCatCfgData(cat.Id, data);
         }
 
@@ -362,6 +370,31 @@ namespace CatHome4.Admin
                 return "";
             }
             return cfg.DisplayName;
+        }
+        /// <summary>猫主题色现值——cat.cfg 的 themeColor（A320：群聊成员球与气泡取色）。</summary>
+        /// <param name="catKey">猫 key</param>
+        /// <returns>色板索引（猫 key 空 / 配置缺失 / 负值 = 0 默认白）</returns>
+        public static int ResolveCatThemeColor(string catKey)
+        {
+            string id = "";
+            if (catKey != null)
+            {
+                id = catKey;
+            }
+            if (id.Length == 0)
+            {
+                return 0;
+            }
+            CatCfgData cfg = LoadCatCfg(Path.Combine(_dataRoot, "Data", "sessions", id, "cat.cfg"));
+            if (cfg == null)
+            {
+                return 0;
+            }
+            if (cfg.ThemeColor < 0)
+            {
+                return 0;
+            }
+            return cfg.ThemeColor;
         }
 
         /// <summary>
@@ -478,7 +511,8 @@ namespace CatHome4.Admin
                 dbLibs = data.DbLibs,
                 userInjectIdleOnly = data.UserInjectIdleOnly,
                 appearanceId = data.AppearanceId,
-                reasoningEffort = data.ReasoningEffort
+                reasoningEffort = data.ReasoningEffort,
+                themeColor = data.ThemeColor
             };
             try
             {
@@ -573,6 +607,7 @@ namespace CatHome4.Admin
                 cat.Session.SetUserInjectIdleOnly(cfg.UserInjectIdleOnly);
             }
             cat.AppearanceId = ResolveAppearanceId(cfg);
+            cat.ThemeColor = cfg.ThemeColor;
             cat.RoundSummary = ResolveEffectiveRoundSummary(key);
             if (cat.Session != null)
             {

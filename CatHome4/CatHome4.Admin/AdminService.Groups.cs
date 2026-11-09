@@ -46,16 +46,49 @@ namespace CatHome4.Admin
         private static object BuildGroupRow(GroupSummary g)
         {
             // [段1] 成员解析（catKey → 显示名 + 角色标记——@ 选择器与成员名册共用）
+            // [段1b] 运行态与前文（A319——群聊成员球列数据源，与 console 猫卡同源 BuildStateEntry）
             List<object> members = new List<object>();
             for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
             {
                 string key = g.MemberKeys[i];
+                bool memberRunning = false;
+                string memberRunState = "idle";
+                long memberContext = 0;
+                CatHostService.CatEntry memberCat = CatHostService.FindDeliveryCat(key);
+                if (memberCat != null)
+                {
+                    memberRunning = memberCat.Running;
+                    if (memberCat.Session != null)
+                    {
+                        Dictionary<string, object> memberState = memberCat.Session.BuildStateEntry();
+                        object runStateValue;
+                        if (memberState.TryGetValue("runState", out runStateValue))
+                        {
+                            if (runStateValue is string)
+                            {
+                                memberRunState = (string)runStateValue;
+                            }
+                        }
+                        object contextValue;
+                        if (memberState.TryGetValue("context", out contextValue))
+                        {
+                            if (contextValue is long)
+                            {
+                                memberContext = (long)contextValue;
+                            }
+                        }
+                    }
+                }
                 members.Add(new
                 {
                     key = key,
                     displayName = CatHostService.ResolveCatDisplayName(key),
                     admin = ContainsKey(g.AdminKeys, key),
-                    subscriber = ContainsKey(g.SubscriberKeys, key)
+                    subscriber = ContainsKey(g.SubscriberKeys, key),
+                    themeColor = CatHostService.ResolveCatThemeColor(key),
+                    running = memberRunning,
+                    runState = memberRunState,
+                    context = memberContext
                 });
             }
             // [段2] 行装配

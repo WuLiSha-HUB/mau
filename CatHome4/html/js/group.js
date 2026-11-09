@@ -14,6 +14,8 @@ var gPolling = false;   // 防重入——上一次增量拉取未回不叠发
 var gBurstLeft = 0;     // 新消息后的快速跟拉余量（最多 2 次，间隔 800ms）
 var gHasMore = false;    // 首屏尾部读取——更早还有未加载条目（仅提示，不翻页）
 var gUserName = '默认用户';  // 使用者显示名——全局设置 ui.user_name 的组端口投影（info 每次加载刷新）
+var gThemeIdx = {};      // catKey -> 主题色索引（A320；组信息每次加载刷新）
+var gCatNodes = {};      // catKey -> 球列节点（A319；增量复用，不整块重建）
 
 var gTitleEl = document.getElementById('chatTitle');
 var gInfoEl = document.getElementById('chatInfo');
@@ -24,6 +26,7 @@ var gInputEl = document.getElementById('chatSendInput');
 var gSendBtn = document.getElementById('chatSendBtn');
 var gClearConfirm = document.getElementById('chatClearConfirm');
 var gClearBtn = document.getElementById('chatClear');
+var gCatsEl = document.getElementById('groupCats');
 
 // [段0] 滚动带依赖桩
 // scroll.js 按行 data-type 查块声明表取刻度角色（registry.js 的 tickRole）；
@@ -87,7 +90,8 @@ function gApplyUserName() {
 // [段2] 组信息与消息流
 
 // 拉本组信息——端口即组身份；页头左段 = 组名 + 现状简介
-function gLoadInfo() {
+// skipTargets = true 时不重建 @ 目标下拉（A319 轮询静默刷新球列与统计用，避免打断打开中的选择器）
+function gLoadInfo(skipTargets) {
     fetch('/api/v1/group/info', { cache: 'no-store' })
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -115,14 +119,181 @@ function gLoadInfo() {
                 parts.push('项目 ' + g.project);
             }
             gInfoEl.textContent = parts.join(' · ');
-            gInfoEl.title = gMemberRoster(g.members || []);
-            gFillTargets(g.members || []);
+            var members = g.members || [];
+            gInfoEl.title = gMemberRoster(members);
+            // A319/A320——主题色映射 + 球列（状态 / 前文）+ 已渲染气泡回填
+            gRefreshThemeMap(members);
+            gRenderCats(members);
+            gPlaceCats();
+            gApplyThemeColors();
+            if (skipTargets !== true) {
+                gFillTargets(members);
+            }
             document.title = 'CH4 群聊 · ' + g.name;
         })
         .catch(function () {
             gTitleEl.textContent = '组不可用';
             gInfoEl.textContent = '读取失败——宿主未运行？';
         });
+}
+
+// [段2b] 成员球列（A319）——主题色球 + 状态灯点 + 前文 token
+
+// 前文 token 文本——千以上折成 xxx.xK（用户口径）
+function gTokText(n) {
+    var v = Number(n) || 0;
+    if (v >= 1000) {
+        return (v / 1000).toFixed(1) + 'K';
+    }
+    return String(v);
+}
+
+// 球内首字——显示名首字符（无显示名回落 key 首字符）
+function gCatInitial(name, key) {
+    var base = (name && name.length > 0) ? name : (key || '?');
+    return base.slice(0, 1);
+}
+
+// 单个球节点——只建一次，后续按 key 复用更新（避免每 2s 重建导致 hover 与滚动位置丢失）
+function gCreateCatNode(key) {
+    var item = document.createElement('div');
+    item.className = 'gc-item';
+    var crown = document.createElement('span');
+    crown.className = 'gc-crown';
+    crown.textContent = '👑';
+    crown.style.display = 'none';
+    var ball = document.createElement('div');
+    ball.className = 'gc-ball';
+    var initial = document.createElement('span');
+    ball.appendChild(initial);
+    var dot = document.createElement('span');
+    dot.className = 'gc-dot';
+    ball.appendChild(dot);
+    var name = document.createElement('div');
+    name.className = 'gc-name';
+    var tok = document.createElement('div');
+    tok.className = 'gc-tok';
+    item.appendChild(crown);
+    item.appendChild(ball);
+    item.appendChild(name);
+    item.appendChild(tok);
+    var node = { item: item, crown: crown, ball: ball, initial: initial, dot: dot, name: name, tok: tok };
+    gCatNodes[key] = node;
+    return node;
+}
+
+// 球列定位——与对话页「全部/精简」开关同一条竖轴（左缘 / 宽由 CSS 取 --ch-col-left 与 --ch-send-w），
+// 纵向由本函数按对话区矩形写入：顶部对齐对话区上缘 + 8，高度不越过对话区（fixed，不随对话滚动）
+function gPlaceCats() {
+    if (!gCatsEl || !gMsgsEl) {
+        return;
+    }
+    var rect = gMsgsEl.getBoundingClientRect();
+    gCatsEl.style.top = Math.round(rect.top + 8) + 'px';
+    var h = Math.round(rect.height - 16);
+    gCatsEl.style.maxHeight = (h > 120 ? h : 120) + 'px';
+}
+
+// 球列渲染——管理员在前（同级按成员名单原序），离组成员节点移除
+function gRenderCats(members) {
+    if (!gCatsEl) {
+        return;
+    }
+    // [段1] 顺序——管理员优先；Array.sort 自 ES2019 起稳定，同级保持名单原序
+    var ordered = [];
+    for (var n = 0; n < members.length; n = n + 1) {
+        var m0 = members[n];
+        if (m0 && m0.key) {
+            ordered.push(m0);
+        }
+    }
+    ordered.sort(function (a, b) {
+        var av = a.admin === true ? 0 : 1;
+        var bv = b.admin === true ? 0 : 1;
+        return av - bv;
+    });
+    // [段2] 逐球更新（节点复用，不重建）
+    var alive = {};
+    for (var i = 0; i < ordered.length; i = i + 1) {
+        var m = ordered[i];
+        alive[m.key] = true;
+        var node = gCatNodes[m.key];
+        if (!node) {
+            node = gCreateCatNode(m.key);
+            gCatsEl.appendChild(node.item);
+        }
+        var label = (m.displayName && m.displayName.length > 0) ? m.displayName : m.key;
+        var idx = Number(m.themeColor) || 0;
+        node.item.style.setProperty('--gc-color', catThemeColorValue(idx));
+        node.initial.textContent = gCatInitial(m.displayName, m.key);
+        node.name.textContent = label;
+        node.name.title = label + '（' + m.key + '）';
+        node.crown.style.display = m.admin === true ? 'block' : 'none';
+        var running = m.running === true;
+        var rs = m.runState || 'idle';
+        node.item.classList.toggle('off', !running);
+        node.dot.className = running ? ('gc-dot ' + rs) : 'gc-dot';
+        node.item.classList.toggle('busy', running && rs !== 'idle');
+        if (running) {
+            node.tok.textContent = gTokText(m.context);
+            node.tok.title = '前文 ' + String(Number(m.context) || 0) + ' token';
+        } else {
+            node.tok.textContent = '—';
+            node.tok.title = '猫未运行';
+        }
+    }
+    // [段3] 顺序校正——只在错位时移动（insertBefore 会整段改写 DOM 序，逐帧调用会引起重排抖动）
+    var ref = gCatsEl.firstElementChild;
+    for (var k = 0; k < ordered.length; k = k + 1) {
+        var want = gCatNodes[ordered[k].key].item;
+        if (ref === want) {
+            ref = want.nextElementSibling;
+        } else {
+            gCatsEl.insertBefore(want, ref);
+        }
+    }
+    var keys = Object.keys(gCatNodes);
+    for (var j = 0; j < keys.length; j = j + 1) {
+        if (alive[keys[j]] !== true) {
+            var dead = gCatNodes[keys[j]];
+            if (dead.item.parentNode) {
+                dead.item.parentNode.removeChild(dead.item);
+            }
+            delete gCatNodes[keys[j]];
+        }
+    }
+}
+
+// 主题色映射——成员名单 → catKey:索引（info 到达时刷新）
+function gRefreshThemeMap(members) {
+    gThemeIdx = {};
+    for (var i = 0; i < members.length; i = i + 1) {
+        var m = members[i];
+        if (!m || !m.key) {
+            continue;
+        }
+        gThemeIdx[m.key] = Number(m.themeColor) || 0;
+    }
+}
+
+// 单行着色——主题色写进行内变量（描边取该色；底色不动，保持助手气泡一致）
+function gApplyCatTheme(row, fromKey) {
+    var idx = 0;
+    if (fromKey && Object.prototype.hasOwnProperty.call(gThemeIdx, fromKey)) {
+        idx = gThemeIdx[fromKey];
+    }
+    row.style.setProperty('--gc-color', catThemeColorValue(idx));
+}
+
+// 已渲染行回填——组信息晚于消息首屏到达时按最新主题色重刷（不重建行，滚动位置不动）
+function gApplyThemeColors() {
+    if (!gMsgsEl) {
+        return;
+    }
+    var rows = gMsgsEl.querySelectorAll('.chat-row.assistant[data-from]');
+    for (var i = 0; i < rows.length; i = i + 1) {
+        gApplyCatTheme(rows[i], rows[i].getAttribute('data-from'));
+    }
 }
 
 // 拉消息（最多 200 条，seq 升序）
@@ -150,6 +321,11 @@ function gBuildRow(m) {
     var row = document.createElement('div');
     row.className = isHuman ? 'chat-row user' : 'chat-row assistant';
     row.setAttribute('data-type', isHuman ? 'user' : 'text');
+    if (!isHuman) {
+        // A320 猫主题色——行上挂色变量；组信息晚到时由 gApplyThemeColors 回填
+        row.setAttribute('data-from', m.from);
+        gApplyCatTheme(row, m.from);
+    }
     var bubble = document.createElement('div');
     bubble.className = 'chat-bubble';
     bubble.appendChild(gBuildMeta(m, isHuman));
@@ -319,9 +495,10 @@ function gPollTick() {
             }
             var list = d.messages || [];
             gLastSeq = Math.max(gLastSeq, Number(d.lastSeq) || 0);
+            // A319——球列状态与前文每轮刷新（静默：不重建 @ 目标下拉，避免打断打开中的选择器）
+            gLoadInfo(true);
             if (list.length > 0) {
                 gAppendMessages(list);
-                gLoadInfo();
                 if (gBurstLeft < 2) {
                     gBurstLeft = gBurstLeft + 1;
                     setTimeout(gPollTick, 800);
@@ -470,6 +647,8 @@ loadUiVersion();
 gLoadInfo();
 gLoadMessages();
 chatScrollInit();
+gPlaceCats();
+window.addEventListener('resize', gPlaceCats);
 
 // [段7] 消息操作（A313）——@ 快捷填入 · 单条复制（纯前端，无业务语义）
 

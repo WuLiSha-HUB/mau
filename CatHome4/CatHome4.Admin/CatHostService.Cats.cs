@@ -494,7 +494,8 @@ namespace CatHome4.Admin
             sb.AppendLine("  injectList=" + JoinArray(cfg.InjectList));
             sb.AppendLine("  packs=" + JoinArray(cfg.Packs));
             sb.AppendLine("  enabledRoots=" + JoinArray(cfg.EnabledRoots));
-            sb.Append("  dbLibs=" + JoinArray(cfg.DbLibs));
+            sb.AppendLine("  dbLibs=" + JoinArray(cfg.DbLibs));
+            sb.Append("  themeColor=" + cfg.ThemeColor.ToString());
             return sb.ToString();
         }
         /// <summary>
@@ -744,6 +745,17 @@ namespace CatHome4.Admin
                     applied = "appearanceId=" + parsedAppearance.ToString("D");
                 }
             }
+            else if (field == "themeColor")
+            {
+                // A320——主题色索引（0=默认白；>0=预设色板序号）；只收非负整数
+                int parsedThemeColor;
+                if (!int.TryParse(value.Trim(), out parsedThemeColor) || parsedThemeColor < 0)
+                {
+                    return "cat.cfg.set | themeColor 非法值: " + value + "（非负整数）";
+                }
+                cfg.ThemeColor = parsedThemeColor;
+                applied = "themeColor=" + parsedThemeColor.ToString();
+            }
             else if (field == "enabledRoots")
             {
                 string[] removedRoots;
@@ -763,7 +775,7 @@ namespace CatHome4.Admin
             }
             else
             {
-                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId）";
+                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId/themeColor）";
             }
             // [段2] 全量写回 + 生效入队（与端点同源：写后 catcfg.apply 主线程泵消费）
             SaveCatCfgData(id, cfg);
@@ -1224,6 +1236,7 @@ namespace CatHome4.Admin
                 bool userInjectIdleOnly = false;
                 string reasoningEffort = "";
                 Guid appearanceId = Guid.Empty;
+                int themeColor = 0;
                 bool roundSummary = false;
                 string petKind = "";
                 if (cfgData != null)
@@ -1254,6 +1267,7 @@ namespace CatHome4.Admin
                         reasoningEffort = cfgData.ReasoningEffort;
                     }
                     appearanceId = ResolveAppearanceId(cfgData);
+                    themeColor = cfgData.ThemeColor;
                     // A244——roundSummary 迁入外观池：经猫 key 解析生效值（cat.cfg 不再持该字段）
                     roundSummary = ResolveEffectiveRoundSummary(id);
                     petKind = ResolveEffectivePetKind(id);
@@ -1291,6 +1305,7 @@ namespace CatHome4.Admin
                 meta.UserInjectIdleOnly = userInjectIdleOnly;
                 meta.ReasoningEffort = reasoningEffort;
                 meta.AppearanceId = appearanceId;
+                meta.ThemeColor = themeColor;
                 meta.RoundSummary = roundSummary;
                 meta.ToolSpecs = catSpecs;
                 // §4.3 空值语义可观测——toolNames 空=全量保底（反直觉默认）：解析结果落审计行

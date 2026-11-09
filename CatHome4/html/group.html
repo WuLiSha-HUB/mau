@@ -47,6 +47,31 @@
         #chatClearConfirm { cursor: pointer; }
         #chatClear { background: var(--ch-bg-raised); border: 1px solid var(--ch-line); color: var(--ch-fg-muted); padding: 3px 10px; cursor: pointer; font-family: inherit; font-size: var(--ch-fs-tag); border-radius: 4px; }
         #chatClear:disabled { opacity: 0.45; cursor: not-allowed; }
+        /* ═══ A319 成员球列——左预留带内竖列（与对话页「全部/精简」开关同一条竖轴：左缘 / 宽 = --ch-send-w）═══
+           构成：主题色球（猫名首字 · 管理员球顶挂 👑）+ 右下状态灯点（六态同源色）+ 下方前文 token
+           top / max-height 由 group.js 按对话区矩形写入（fixed，不随对话滚动） */
+        #groupCats { position: fixed; left: calc(var(--ch-col-left) - var(--ch-send-w) - 6px); top: 0; width: var(--ch-send-w); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: center; overflow-y: auto; scrollbar-width: none; z-index: 6; }
+        #groupCats::-webkit-scrollbar { width: 0; height: 0; }
+        .gc-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 auto; }
+        .gc-crown { position: absolute; top: -7px; left: 50%; transform: translateX(-50%); z-index: 2; font-size: 11px; line-height: 1; pointer-events: none; filter: drop-shadow(0 0 2px var(--ch-shadow-strong)); }
+        .gc-ball { position: relative; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; color: var(--ch-bg-page); background: var(--gc-color, var(--ch-fg-inverse)); box-shadow: 0 0 0 1px var(--ch-line); }
+        .gc-item.off .gc-ball { opacity: 0.35; }
+        .gc-dot { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ch-bg-page); background: var(--ch-fg-faint); }
+        .gc-dot.link { background: var(--ch-state-link); }
+        .gc-dot.wait { background: var(--ch-state-wait); }
+        .gc-dot.think { background: var(--ch-state-think); }
+        .gc-dot.tool { background: var(--ch-state-tool); }
+        .gc-dot.run { background: var(--ch-state-run); }
+        .gc-dot.reply { background: var(--ch-state-reply); }
+        .gc-item.busy .gc-dot { animation: chat-phase-pulse 1.8s ease-in-out infinite; }
+        .gc-name { font-size: 11px; color: var(--ch-fg-weak); max-width: 60px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .gc-item.off .gc-name { color: var(--ch-fg-faint); }
+        .gc-name .gc-admin { color: var(--ch-warn); }
+        .gc-tok { font-size: 10px; color: var(--ch-fg-faint); }
+        /* ═══ A320 猫主题色——气泡**只染描边**（底色保持 --ch-chat-ai-bg）；右侧滚动带刻度同取主题色 ═══ */
+        #chatMsgs .chat-row.assistant .chat-bubble { --bubble-line: var(--gc-color, var(--ch-bubble-line-text)); }
+        /* 刻度——scroll.js 在段首行带 --gc-color 时复制该变量并挂 gc-tint（无主题色的页面不受影响；失败红优先） */
+        .sb-tick.gc-tint[data-type]:not(.err) { background: var(--gc-color); }
     </style>
 </head>
 <body>
@@ -62,6 +87,9 @@
         <button id="chatClear" disabled>清空</button>
         <button id="chatRefresh" title="刷新——重新拉取组信息与消息">刷新</button>
     </div>
+
+    <!-- ═══ 成员球列（A319）——左侧竖排：主题色球 + 猫名首字 + 状态灯点 + 前文 token ═══ -->
+    <div id="groupCats" title="组内成员——球色 = 猫主题色；右下点 = 运行态；下方数字 = 前文 token"></div>
 
     <!-- ═══ 消息区——与对话页同一容器 id（列宽 / gap / 原生滚动条隐藏 / 自绘带几何全部同源） ═══ -->
     <div id="chatMsgs"></div>
