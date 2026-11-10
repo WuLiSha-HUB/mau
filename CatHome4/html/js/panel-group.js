@@ -264,6 +264,7 @@ function openGroupCfg(name) {
 }
 
 // 成员勾选渲染——cats 来自 /api/v1/cats；每只猫三列（成员 / 管理员 / 订阅自动转发）
+// 联动判据（A329）：未勾成员的猫，管理员 / 订阅不可勾且不勾——与后端「管理员 / 订阅恒为成员子集」的收敛一致
 function renderGroupMembers(cats, checkedMembers, adminKeys, subscriberKeys) {
     var box = document.getElementById('groupCfgMembers');
     box.textContent = '';
@@ -286,21 +287,41 @@ function renderGroupMembers(cats, checkedMembers, adminKeys, subscriberKeys) {
     }
     for (i = 0; i < cats.length; i = i + 1) {
         var cat = cats[i];
+        var isMember = checked[cat.id] === true;
         var row = document.createElement('div');
         row.style.cssText = 'display:flex;align-items:center;gap:10px;font-size:var(--ch-fs-tag);color:var(--ch-fg-muted)';
         var nameEl = document.createElement('span');
         nameEl.style.cssText = 'min-width:150px';
         nameEl.textContent = (cat.special ? '★ ' : '') + (cat.name || cat.id) + '（' + cat.id + '）';
         row.appendChild(nameEl);
-        row.appendChild(groupMemberFlag('成员', 'group-member-cb', cat.id, checked[cat.id] === true));
-        row.appendChild(groupMemberFlag('管理员', 'group-admin-cb', cat.id, admins[cat.id] === true));
-        row.appendChild(groupMemberFlag('订阅', 'group-sub-cb', cat.id, subs[cat.id] === true));
+        row.appendChild(groupMemberFlag('成员', 'group-member-cb', cat.id, isMember, false));
+        row.appendChild(groupMemberFlag('管理员', 'group-admin-cb', cat.id, isMember && admins[cat.id] === true, !isMember));
+        row.appendChild(groupMemberFlag('订阅', 'group-sub-cb', cat.id, isMember && subs[cat.id] === true, !isMember));
         box.appendChild(row);
     }
+    // 勾选联动——覆盖式赋值（每次渲染重建行，避免监听累积）：成员取消勾选即清空并禁用同行两列
+    box.onchange = function (ev) {
+        var target = ev.target;
+        if (!target || !target.classList || !target.classList.contains('group-member-cb')) {
+            return;
+        }
+        var label = target.parentNode;
+        var rowEl = label ? label.parentNode : null;
+        if (!rowEl || typeof rowEl.querySelectorAll !== 'function') {
+            return;
+        }
+        var rest = rowEl.querySelectorAll('input.group-admin-cb, input.group-sub-cb');
+        for (var k = 0; k < rest.length; k = k + 1) {
+            rest[k].disabled = !target.checked;
+            if (!target.checked) {
+                rest[k].checked = false;
+            }
+        }
+    };
 }
 
-// 单列勾选件——标签文案 + 类名 + cat key + 初始勾选态
-function groupMemberFlag(text, className, catKey, isChecked) {
+// 单列勾选件——标签文案 + 类名 + cat key + 初始勾选态 + 禁用态
+function groupMemberFlag(text, className, catKey, isChecked, isDisabled) {
     var label = document.createElement('label');
     label.style.cssText = 'display:flex;align-items:center;gap:4px;cursor:pointer';
     var cb = document.createElement('input');
@@ -308,6 +329,7 @@ function groupMemberFlag(text, className, catKey, isChecked) {
     cb.className = className;
     cb.value = catKey;
     cb.checked = isChecked;
+    cb.disabled = isDisabled === true;
     label.appendChild(cb);
     var span = document.createElement('span');
     span.textContent = text;

@@ -46,7 +46,7 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
             }
-            // [段1] 成员行——显示名 + key + 角色标记
+            // [段1] 成员行——显示名 + key + 角色标记 + 工作状态（A325）
             List<string> lines = new List<string>();
             for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
             {
@@ -65,6 +65,7 @@ namespace CatHome4.Admin
                 {
                     line = line + " — " + string.Join(" / ", roles.ToArray());
                 }
+                line = line + " · " + MemberWorkState(key);
                 lines.Add(line);
             }
             if (lines.Count == 0)
@@ -452,6 +453,36 @@ namespace CatHome4.Admin
                 sb.Append(bodyLines[i]);
             }
             return sb.ToString();
+        }
+        /// <summary>
+        /// 成员工作状态——会话细粒度态名（idle / wait / link / think / tool / run / reply）；
+        /// 未运行或未建会话为 offline（A325）。与群聊球列 / cat.info 同源（ChatSession.BuildStateEntry 的 runState）。
+        /// </summary>
+        /// <param name="catKey">成员猫 key</param>
+        /// <returns>态名（简短，直接可读）</returns>
+        private static string MemberWorkState(string catKey)
+        {
+            CatHostService.CatEntry entry = CatHostService.FindDeliveryCat(catKey);
+            if (entry == null || entry.Session == null)
+            {
+                return "offline";
+            }
+            Dictionary<string, object> state = entry.Session.BuildStateEntry();
+            object value;
+            if (!state.TryGetValue("runState", out value))
+            {
+                return "offline";
+            }
+            if (!(value is string))
+            {
+                return "offline";
+            }
+            string name = (string)value;
+            if (name.Length == 0)
+            {
+                return "offline";
+            }
+            return name;
         }
         /// <summary>正文单行化——换行压平为空格（正文行式定界不被破坏）。</summary>
         /// <param name="text">原文</param>

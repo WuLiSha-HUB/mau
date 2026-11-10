@@ -117,3 +117,28 @@ test('保存拦截——组名为空 / 未勾成员均不发请求', async () =>
   await new Promise((resolve) => setTimeout(resolve, 0));
   expect(called).toBe(false);
 });
+
+test('勾选联动——未勾成员则管理员 / 订阅不可勾（A329）', () => {
+  window.renderGroupMembers(
+    [{ id: 'majordomo', name: '雾理莎' }, { id: 'coder1', name: 'Coder' }],
+    [{ key: 'coder1' }],
+    [],
+    []
+  );
+  const memberBoxes = document.querySelectorAll('#groupCfgMembers input.group-member-cb');
+  const adminBoxes = document.querySelectorAll('#groupCfgMembers input.group-admin-cb');
+  const subBoxes = document.querySelectorAll('#groupCfgMembers input.group-sub-cb');
+  // 非成员——两列禁用；成员——可勾
+  expect(adminBoxes[0].disabled).toBe(true);
+  expect(subBoxes[0].disabled).toBe(true);
+  expect(adminBoxes[1].disabled).toBe(false);
+  expect(subBoxes[1].disabled).toBe(false);
+  // 成员取消勾选——同行两列清空并禁用
+  adminBoxes[1].checked = true;
+  memberBoxes[1].checked = false;
+  memberBoxes[1].dispatchEvent(new window.Event('change', { bubbles: true }));
+  expect(adminBoxes[1].disabled).toBe(true);
+  expect(subBoxes[1].disabled).toBe(true);
+  expect(adminBoxes[1].checked).toBe(false);
+  expect(window.collectGroupAdmins()).toEqual([]);
+});

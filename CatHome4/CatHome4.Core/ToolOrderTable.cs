@@ -55,10 +55,12 @@ namespace CH4
             "majordomo-catinfo",
             "py-list",
             "db-query", "db-get", "dbAdmin-libs",
-            "host-flows", "info", "time", "random", "pack", "Note"
+            "host-flows", "info", "time", "random", "pack", "Note",
+            "group-info", "group-inbox", "group-catinfo", "group-catcfg-get",
+            "ts-check", "ts-list", "ts-read", "ts-find-ref", "ts-info", "ts-lint"
         };
 
-        /// <summary>写入档清单（1）——改文件 / 改配置 / 改仓库产物</summary>
+        /// <summary>写入档清单（1）——改文件 / 改配置 / 改仓库产物 / 写组消息流（post / delegate）与组内每猫配置</summary>
         private static readonly string[] WriteNames =
         {
             "text-write", "text-append", "text-replace",
@@ -69,17 +71,21 @@ namespace CH4
             "web-fetch", "web-fetch-jobs",
             "audio-play",
             "db-put", "db-update", "db-delete",
-            "dbAdmin-create", "dbAdmin-drop"
+            "dbAdmin-create", "dbAdmin-drop",
+            "group-post", "group-delegate", "group-catcfg-set"
         };
 
         /// <summary>
         /// 独占档清单（2）——cs-* 写操作 / 工程构建 / 浏览器实例动作：预检读全项目、争抢构建产物目录、
         /// 同 profile 进程互斥（open 与 close 必须保序），每次调用各自成批（PlanBatches 单点裁决）。
+        /// 同档另含 ts-patch（改全工程源码，与 ts 诊断面争同一工程）与 group-newsession
+        /// （销毁式重建会话——与前文 / 配置面同批会让同批工具面对「会话已消失」的状态）。
         /// </summary>
         private static readonly string[] ExclusiveNames =
         {
             "cs-patch", "cs-member", "cs-comment", "cs-format", "cs-build", "cs-test",
-            "browser-headful"
+            "browser-headful",
+            "ts-patch", "ts-test", "ts-format", "group-newsession"
         };
 
         /// <summary>构建 / 执行 / 部署档清单（3）——外部通道执行、宿主动作</summary>

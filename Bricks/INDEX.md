@@ -1,6 +1,6 @@
 ﻿# Mau 积木索引 — INDEX
 
-> 版本：v3.3 | 更新：2026-11-09（mau bricks index --update 源码驱动重建）
+> 版本：v3.3 | 更新：2026-11-10（mau bricks index --update 源码驱动重建）
 > 全量积木登记——一行一条。ID 永不重用。
 
 ## 全部积木
@@ -108,6 +108,10 @@
 | BRIK-TS-003 | ts.read | TS | TS/BRIK-TS-003_ts.read.cs | 无 | active |  |
 | BRIK-TS-004 | ts.findRef | TS | TS/BRIK-TS-004_ts.findRef.cs | 无 | active |  |
 | BRIK-TS-005 | ts.patch | TS | TS/BRIK-TS-005_ts.patch.cs | 无 | active |  |
+| BRIK-TS-006 | ts.info | TS | TS/BRIK-TS-006_ts.info.cs | 无 | active |  |
+| BRIK-TS-007 | ts.lint | TS | TS/BRIK-TS-007_ts.lint.cs | 无 | active |  |
+| BRIK-TS-008 | ts.test | TS | TS/BRIK-TS-008_ts.test.cs | 无 | active |  |
+| BRIK-TS-009 | ts.format | TS | TS/BRIK-TS-009_ts.format.cs | 无 | active |  |
 | BRIK-VISION-001 | vision.analyze | VISION | VISION/BRIK-VISION-001_vision.analyze.cs | 无 | active |  |
 | BRIK-VISION-002 | image.inject | VISION | VISION/BRIK-VISION-002_image.inject.cs | 无 | active |  |
 | BRIK-WEB-001 | web.search | WEB | WEB/BRIK-WEB-001_web.search.cs | 无 | active |  |
@@ -117,4 +121,4 @@
 
 ---
 
-_版本：v3.3 | 2026-11-09 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_
+_版本：v3.3 | 2026-11-10 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_

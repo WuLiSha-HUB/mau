@@ -250,6 +250,34 @@ namespace CatHome4.Core.Tests
             Assert.Contains("timeback-start", names);
             Assert.Contains("timeback-back", names);
         }
+        /// <summary>
+        /// 组件与 TS 件档位登记（A324）——读面 -1 / 写面 1 / 独占面 2。
+        /// 未登记时一律回落默认档 0；对账门禁只报「未登记名」，档位错配报不出，故由本用例兜底。
+        /// </summary>
+        [Fact]
+        public void GroupAndTsToolsAreRegistered()
+        {
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("group-info"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("group-inbox"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("group-catinfo"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("group-catcfg-get"));
+            Assert.Equal(1, CH4.ToolOrderTable.Resolve("group-post"));
+            Assert.Equal(1, CH4.ToolOrderTable.Resolve("group-delegate"));
+            Assert.Equal(1, CH4.ToolOrderTable.Resolve("group-catcfg-set"));
+            Assert.Equal(2, CH4.ToolOrderTable.Resolve("group-newsession"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("ts-check"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("ts-list"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("ts-read"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("ts-find-ref"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("ts-info"));
+            Assert.Equal(-1, CH4.ToolOrderTable.Resolve("ts-lint"));
+            Assert.Equal(2, CH4.ToolOrderTable.Resolve("ts-patch"));
+            Assert.Equal(2, CH4.ToolOrderTable.Resolve("ts-test"));
+            Assert.Equal(2, CH4.ToolOrderTable.Resolve("ts-format"));
+            Assert.True(CH4.ToolOrderTable.IsExclusive("group-newsession"));
+            Assert.True(CH4.ToolOrderTable.IsExclusive("ts-patch"));
+            Assert.Empty(CH4.ToolOrderTable.FindUnregistered(CH4.ToolOrderTable.RegisteredNames()));
+        }
 
         /// <summary>
         /// 对账门禁——未登记名被报出，已登记名不误报（名单含 text-read）。

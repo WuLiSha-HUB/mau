@@ -56,3 +56,39 @@
 § 'T_PatchExec' [t=1200, par] : 'S_Patch' = 'Ready' → 'ts.patch'[@ptArgs] > @ptRes | 'S_Patch' = 'Done' | 'S_Patch' = 'Failed'
 § 'T_PatchReply' : 'S_Patch' = 'Done' → 'oa.complete_str'[@ptOffice, @ptRes] | 'self.desc'["空闲待命", "", ""] | 'S_Patch' = 'Idle' | 'S_Patch' = 'Idle'
 § 'T_PatchAbort' : 'S_Patch' = 'Failed' → 'oa.complete_str'[@ptOffice, @ptRes] | 'S_Patch' = 'Idle' | 'S_Patch' = 'Idle'
+
+// ══════════════ ts-info 线（A332）══════════════
+§ 'S_Info' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-info"] > @inOpen
+§ 'T_InfoClaim' : @inOpen & 'S_Info' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-info"] > @inOffice | 'S_Info' = 'Claimed' | 'S_Info' = 'Idle'
+§ 'T_InfoArgs' : 'S_Info' = 'Claimed' → 'oa.get_str'[@inOffice, "args"] > @inArgs | 'self.desc'["ts-info 执行中", "", ""] | 'S_Info' = 'Ready' | 'S_Info' = 'Failed'
+§ 'T_InfoExec' [t=1200, par] : 'S_Info' = 'Ready' → 'ts.info'[@inArgs] > @inRes | 'S_Info' = 'Done' | 'S_Info' = 'Failed'
+§ 'T_InfoReply' : 'S_Info' = 'Done' → 'oa.complete_str'[@inOffice, @inRes] | 'self.desc'["空闲待命", "", ""] | 'S_Info' = 'Idle' | 'S_Info' = 'Idle'
+§ 'T_InfoAbort' : 'S_Info' = 'Failed' → 'oa.complete_str'[@inOffice, @inRes] | 'S_Info' = 'Idle' | 'S_Info' = 'Idle'
+
+// ══════════════ ts-lint 线（A332）══════════════
+§ 'S_Lint' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'P_LintOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-lint"] > @lnOpen
+§ 'T_LintClaim' : @lnOpen & 'S_Lint' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-lint"] > @lnOffice | 'S_Lint' = 'Claimed' | 'S_Lint' = 'Idle'
+§ 'T_LintArgs' : 'S_Lint' = 'Claimed' → 'oa.get_str'[@lnOffice, "args"] > @lnArgs | 'self.desc'["ts-lint 执行中", "", ""] | 'S_Lint' = 'Ready' | 'S_Lint' = 'Failed'
+§ 'T_LintExec' [t=1200, par] : 'S_Lint' = 'Ready' → 'ts.lint'[@lnArgs] > @lnRes | 'S_Lint' = 'Done' | 'S_Lint' = 'Failed'
+§ 'T_LintReply' : 'S_Lint' = 'Done' → 'oa.complete_str'[@lnOffice, @lnRes] | 'self.desc'["空闲待命", "", ""] | 'S_Lint' = 'Idle' | 'S_Lint' = 'Idle'
+§ 'T_LintAbort' : 'S_Lint' = 'Failed' → 'oa.complete_str'[@lnOffice, @lnRes] | 'S_Lint' = 'Idle' | 'S_Lint' = 'Idle'
+
+// ══════════════ ts-test 线（A332 · 同步阻塞跑测，超时口径同 1200 帧）══════════════
+§ 'S_Test' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'P_TestOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-test"] > @teOpen
+§ 'T_TestClaim' : @teOpen & 'S_Test' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-test"] > @teOffice | 'S_Test' = 'Claimed' | 'S_Test' = 'Idle'
+§ 'T_TestArgs' : 'S_Test' = 'Claimed' → 'oa.get_str'[@teOffice, "args"] > @teArgs | 'self.desc'["ts-test 跑测中", "", ""] | 'S_Test' = 'Ready' | 'S_Test' = 'Failed'
+§ 'T_TestExec' [t=1200, par] : 'S_Test' = 'Ready' → 'ts.test'[@teArgs] > @teRes | 'S_Test' = 'Done' | 'S_Test' = 'Failed'
+§ 'T_TestReply' : 'S_Test' = 'Done' → 'oa.complete_str'[@teOffice, @teRes] | 'self.desc'["空闲待命", "", ""] | 'S_Test' = 'Idle' | 'S_Test' = 'Idle'
+§ 'T_TestAbort' : 'S_Test' = 'Failed' → 'oa.complete_str'[@teOffice, @teRes] | 'S_Test' = 'Idle' | 'S_Test' = 'Idle'
+
+// ══════════════ ts-format 线（A332）══════════════
+§ 'S_Format' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'P_FormatOpen' ↻ [1]: 'oa.is_open'["TOOL", "ts-format"] > @fmOpen
+§ 'T_FormatClaim' : @fmOpen & 'S_Format' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ts-format"] > @fmOffice | 'S_Format' = 'Claimed' | 'S_Format' = 'Idle'
+§ 'T_FormatArgs' : 'S_Format' = 'Claimed' → 'oa.get_str'[@fmOffice, "args"] > @fmArgs | 'self.desc'["ts-format 规整中", "", ""] | 'S_Format' = 'Ready' | 'S_Format' = 'Failed'
+§ 'T_FormatExec' [t=1200, par] : 'S_Format' = 'Ready' → 'ts.format'[@fmArgs] > @fmRes | 'S_Format' = 'Done' | 'S_Format' = 'Failed'
+§ 'T_FormatReply' : 'S_Format' = 'Done' → 'oa.complete_str'[@fmOffice, @fmRes] | 'self.desc'["空闲待命", "", ""] | 'S_Format' = 'Idle' | 'S_Format' = 'Idle'
+§ 'T_FormatAbort' : 'S_Format' = 'Failed' → 'oa.complete_str'[@fmOffice, @fmRes] | 'S_Format' = 'Idle' | 'S_Format' = 'Idle'

@@ -146,7 +146,8 @@ function tbScopeMark() {
         }
         var tool = row.getAttribute('data-tool') || '';
         if (tool === 'timeback-start') {
-            open = true;
+            // 仅成功算发起（A330）——失败回执（行级 `.err`）不开启区间，后续块不被染成域内
+            open = row.classList.contains('err') === false;
             row.classList.remove('tb-scope');
             continue;
         }

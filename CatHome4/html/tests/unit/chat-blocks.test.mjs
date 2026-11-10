@@ -261,4 +261,16 @@ describe('行级标记——失败 / timeback 域区间', () => {
         expect(box.children[3].classList.contains('tb-scope')).toBe(false);
         expect(box.children[4].classList.contains('tb-scope')).toBe(false);
     });
+
+    it('timeback 失败回执不算发起——不开区间（A330）', () => {
+        const box = document.getElementById('chatMsgs');
+        box.textContent = '';
+        const mk = (name, res) => window.buildToolBlock({ name: name, arguments: '{}', result: res || 'ok' }, {}, 'toolcard');
+        box.appendChild(mk('timeback-start', 'ERR|TIMEBACK_PROFILE|域类型门禁——域内不放行该工具'));
+        box.appendChild(mk('file-tree'));
+        window.tbScopeMark();
+        expect(box.children[0].classList.contains('err')).toBe(true);
+        expect(box.children[0].classList.contains('tb-scope')).toBe(false);
+        expect(box.children[1].classList.contains('tb-scope')).toBe(false);
+    });
 });
