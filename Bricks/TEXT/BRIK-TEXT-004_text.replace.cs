@@ -2,7 +2,7 @@
 // 积木: text.replace
 // ID:   BRIK-TEXT-004
 // 类别: TEXT
-// 作用: 锚点替换——exact/ignore_case 唯一锚点替换，all/regex 全部匹配替换并原子写回（exact/ignore_case/all/regex；NotFound 带差异字节定位，Ambiguous 带候选行）；new 传删除标记「黑暗剑+22」按空文本落盘（等价删除，四模式通用），空 new 一律拒绝；成功回执附自证四件——原文摘要（行数 + 首行，被吃掉的原文必须在回执里看得见）/ 行数差（净删行 ⚠；多处替换按「每次替换」表述）/ 结构行计数（表行·分隔行·标题·分节线减少即 ⚠，告警不拒）/ 窗口范围（大文件显式说明只显示替换点前后 ≤3 行）——LLM 工具 text-replace 语料执行面
+// 作用: 锚点替换——exact/ignore_case 唯一锚点替换，all/regex 全部匹配替换并原子写回（exact/ignore_case/all/regex；NotFound 带差异事实面（偏移 / 行号 / 已匹配前缀 / 差异字符码点 / 空白段长度），Ambiguous 带候选行）；new 传删除标记「黑暗剑+22」按空文本落盘（等价删除，四模式通用），空 new 一律拒绝；成功回执附自证四件——原文摘要（行数 + 首行，被吃掉的原文必须在回执里看得见）/ 行数差（净删行 ⚠；多处替换按「每次替换」表述）/ 结构行计数（表行·分隔行·标题·分节线减少即 ⚠，告警不拒）/ 窗口范围（大文件显式说明只显示替换点前后 ≤3 行）——LLM 工具 text-replace 语料执行面
 // 依赖: 无
 // 引用: Mau.Runtime（FileSystemService/DataBox/TextAlgorithms）
 // 原理: ReadTextAuto 读 → TextAlgorithms 匹配/替换 → WriteTextAuto 写；锚点三态判定与全部文案在本积木（A227 归位——算法面只给事实）
@@ -28,8 +28,8 @@ namespace Mau.Bricks
         /// <summary>regex 单次匹配跨度出声阈值（字符）</summary>
         private const int SpanWarnChars = 1000;
 
-        /// <summary>差异窗口切片长度（期望 / 实际 各取差异点前后 ≤ N 字符）</summary>
-        private const int DiffWindow = 10;
+        /// <summary>差异窗口单侧字符数（期望 / 实际 各取差异点前后 ≤ N 字符；差异字符单独用 ⟨⟩ 标出）</summary>
+        private const int DiffContextChars = 5;
 
         /// <summary>原文摘要首行截断长度（回执「原文首行」——过长只留前 N 字符）</summary>
         private const int OldScopeChars = 60;
@@ -112,19 +112,8 @@ namespace Mau.Bricks
                 TextMatchSpan[] spans = TextAlgorithms.FindMatches(unified, target, matchMode);
                 if (spans.Length == 0)
                 {
-                    // [未命中] 差异点定位（算法面给事实）+ 文案（本积木）
-                    TextDiffPoint diff = TextAlgorithms.LocateBestMatch(unified, target);
-                    string expected = Slice(target, diff.CommonLength, DiffWindow);
-                    string actual = Slice(unified, diff.ByteIndex, DiffWindow);
-                    result = "ERR|ANCHOR_NOT_FOUND|第 " + diff.ByteIndex.ToString() + " 字节 期望「" + expected + "」实际「" + actual + "」";
-                    if (TextAlgorithms.ContainsAny(target, EntityTokens) || TextAlgorithms.ContainsAny(actual, EntityTokens))
-                    {
-                        result = result + "｜提示：疑似实体写法——锚点直接写裸符号 < > &；若文件本身是实体文本，锚点写双写形态 &amp;lt;";
-                    }
-                    if (HasEscapeChar(target) || HasEscapeChar(actual))
-                    {
-                        result = result + "｜提示：锚点按标准 JSON 语义——字面反斜杠写成两个反斜杠、字面引号写成反斜杠加引号；锚点取 text-read 的原文行，勿把源码里的字符串结束引号当作已转义引号。";
-                    }
+                    // [未命中] 差异事实面（A333）——偏移 / 行号 / 已匹配前缀 / 差异字符码点 / 空白段长度
+                    result = AnchorMissNote(unified, target, "");
                     return false;
                 }
                 if (mode != "regex" && mode != "all" && spans.Length > 1)
@@ -185,19 +174,234 @@ namespace Mau.Bricks
             }
         }
 
-        /// <summary>锚点 / 切片是否含转义字符（反斜杠或双引号——报错引导判据）</summary>
-        /// <param name="text">待检文本</param>
-        /// <returns>true=含转义字符</returns>
-        private static bool HasEscapeChar(string text)
+        /// <summary>
+        /// 锚点未命中回执——差异事实面：偏移 / 行号 / 已匹配前缀长度 / 差异字符码点 / 空白段长度 + 定向提示。
+        /// 动机（A333）：原回执只给差异点后 10 字符，且无行号与前缀长度——空白差异肉眼不可辨，模型只能靠猜重试
+        /// （2026-11-10 #966：三次换锚点全败在「多一个空格」，最后放弃锚点改整文件覆写）。
+        /// </summary>
+        /// <param name="unified">归一化正文</param>
+        /// <param name="target">归一化锚点</param>
+        /// <param name="label">锚点角色标注（空串 = 「锚点」；读取面传「起始锚点」/「结束锚点」）</param>
+        /// <returns>多行错误文本（首行保持 ERR|ANCHOR_NOT_FOUND| 契约）</returns>
+        public static string AnchorMissNote(string unified, string target, string label)
         {
-            for (int i = 0; i < text.Length; i = i + 1)
+            TextDiffPoint diff = TextAlgorithms.LocateBestMatch(unified, target);
+            int common = diff.CommonLength;
+            int index = diff.ByteIndex;
+            if (index < 0)
             {
-                if (text[i] == '\\' || text[i] == '"')
+                index = 0;
+            }
+            if (index > unified.Length)
+            {
+                index = unified.Length;
+            }
+            System.Collections.Generic.List<string> rows = new System.Collections.Generic.List<string>();
+            string head = label.Length > 0 ? label + " · " : "";
+            rows.Add("ERR|ANCHOR_NOT_FOUND|" + head + "差异点 第 " + index.ToString() + " 字符（文件第 " + LineNumberOf(unified, index).ToString() + " 行）· 已匹配前缀 " + common.ToString() + " 字符 · 差异在锚点第 " + (common + 1).ToString() + " 字符");
+            rows.Add("期望：" + BuildDiffWindow(target, common));
+            rows.Add("实际：" + BuildDiffWindow(unified, index));
+            bool blankDiff = false;
+            string verdict = BuildDiffVerdict(unified, target, common, index, out blankDiff);
+            if (verdict.Length > 0)
+            {
+                rows.Add("｜" + verdict);
+            }
+            // 空白差异已有机械结论——不再追加转义提示（两条提示对冲会淹没真因）
+            string hint = "";
+            if (blankDiff == false)
+            {
+                hint = BuildMissHint(unified, target, common, index);
+            }
+            if (hint.Length > 0)
+            {
+                rows.Add("｜" + hint);
+            }
+            return string.Join("\n", rows);
+        }
+
+        /// <summary>差异窗口——差异点前后各 DiffContextChars 字符，差异字符用 ⟨⟩ 标出（不可见字符转标记）</summary>
+        /// <param name="text">待取文本</param>
+        /// <param name="index">差异点索引</param>
+        /// <returns>窗口文本</returns>
+        private static string BuildDiffWindow(string text, int index)
+        {
+            if (index < 0)
+            {
+                index = 0;
+            }
+            if (index > text.Length)
+            {
+                index = text.Length;
+            }
+            int from = index - DiffContextChars;
+            string lead = "…";
+            if (from <= 0)
+            {
+                from = 0;
+                lead = "";
+            }
+            string head = text.Substring(from, index - from);
+            string mark = "⟨∅⟩";
+            if (index < text.Length)
+            {
+                mark = "⟨" + VisibleChar(text.Substring(index, 1)) + "⟩";
+            }
+            string tail = "";
+            int afterStart = index + 1;
+            if (afterStart < text.Length)
+            {
+                int take = Math.Min(DiffContextChars, text.Length - afterStart);
+                tail = text.Substring(afterStart, take);
+                if (afterStart + take < text.Length)
                 {
-                    return true;
+                    tail = tail + "…";
                 }
             }
-            return false;
+            return lead + head + mark + tail;
+        }
+
+        /// <summary>不可见字符转可见标记（空格 / TAB / 换行——回执里必须一眼可辨）</summary>
+        /// <param name="ch">单字符</param>
+        /// <returns>可见形态</returns>
+        private static string VisibleChar(string ch)
+        {
+            if (ch == " ")
+            {
+                return "[空格]";
+            }
+            if (ch == "\t")
+            {
+                return "[TAB]";
+            }
+            if (ch == "\n")
+            {
+                return "[换行]";
+            }
+            return ch;
+        }
+
+        /// <summary>差异定性——空白段长度对比 / 一侧结束 / 具体字符码点（机械判定，不让模型自己数）</summary>
+        /// <param name="unified">归一化正文</param>
+        /// <param name="target">归一化锚点</param>
+        /// <param name="common">已匹配前缀长度</param>
+        /// <param name="index">文件侧差异点索引</param>
+        /// <param name="blankDiff">出参——差异是否落在空白段（消费方据此抑制转义提示）</param>
+        /// <returns>结论句（空串=无结论）</returns>
+        private static string BuildDiffVerdict(string unified, string target, int common, int index, out bool blankDiff)
+        {
+            blankDiff = false;
+            bool targetBlank = common < target.Length && IsBlankChar(target, common);
+            bool fileBlank = index < unified.Length && IsBlankChar(unified, index);
+            if (targetBlank || fileBlank)
+            {
+                blankDiff = true;
+                return "差异是空白——锚点此处连续空白 " + BlankRunAt(target, common).ToString() + " 个，文件 " + BlankRunAt(unified, index).ToString() + " 个（空白肉眼不可辨，按此数校正）";
+            }
+            if (common >= target.Length)
+            {
+                return "锚点在差异点处已结束——锚点全文 " + target.Length.ToString() + " 字符全部命中文件前缀，差异来自文件该处还有后续内容";
+            }
+            if (index >= unified.Length)
+            {
+                return "文件在差异点处已结束——锚点比文件多出 " + (target.Length - common).ToString() + " 字符";
+            }
+            return "差异字符：期望 " + CodePointNote(target.Substring(common, 1)) + "，实际 " + CodePointNote(unified.Substring(index, 1));
+        }
+
+        /// <summary>字符码点标注——U+XXXX（可见形态）</summary>
+        /// <param name="ch">单字符</param>
+        /// <returns>码点文本</returns>
+        private static string CodePointNote(string ch)
+        {
+            int code = (int)ch[0];
+            return "U+" + code.ToString("X4") + "（" + VisibleChar(ch) + "）";
+        }
+
+        /// <summary>差异点所在连续空白段长度（空格 / TAB——向前后各扩到非空白处）</summary>
+        /// <param name="text">待检文本</param>
+        /// <param name="index">差异点索引</param>
+        /// <returns>空白段总长度</returns>
+        private static int BlankRunAt(string text, int index)
+        {
+            int start = index;
+            if (start > text.Length)
+            {
+                start = text.Length;
+            }
+            while (start > 0 && IsBlankChar(text, start - 1))
+            {
+                start = start - 1;
+            }
+            int end = index;
+            if (end < 0)
+            {
+                end = 0;
+            }
+            while (end < text.Length && IsBlankChar(text, end))
+            {
+                end = end + 1;
+            }
+            return end - start;
+        }
+
+        /// <summary>是否空格 / TAB（换行不算——换行走码点分支，避免空白段跨行误读）</summary>
+        /// <param name="text">待检文本</param>
+        /// <param name="index">索引</param>
+        /// <returns>true=空格或 TAB</returns>
+        private static bool IsBlankChar(string text, int index)
+        {
+            if (index < 0 || index >= text.Length)
+            {
+                return false;
+            }
+            char ch = text[index];
+            return ch == ' ' || ch == '\t';
+        }
+
+        /// <summary>偏移 → 行号（1 起）</summary>
+        /// <param name="content">归一化正文</param>
+        /// <param name="index">字符偏移</param>
+        /// <returns>行号</returns>
+        private static int LineNumberOf(string content, int index)
+        {
+            if (index > content.Length)
+            {
+                index = content.Length;
+            }
+            int line = 1;
+            for (int i = 0; i < index; i = i + 1)
+            {
+                if (content[i] == '\n')
+                {
+                    line = line + 1;
+                }
+            }
+            return line;
+        }
+
+        /// <summary>定向提示——只在差异真要转义 / 实体写法时出声（原判据「含反斜杠或引号即提示」在 C# 源码里必中，噪音淹没真因）</summary>
+        /// <param name="unified">归一化正文</param>
+        /// <param name="target">归一化锚点</param>
+        /// <param name="common">已匹配前缀长度</param>
+        /// <param name="index">文件侧差异点索引</param>
+        /// <returns>提示句（空串=无提示）</returns>
+        private static string BuildMissHint(string unified, string target, int common, int index)
+        {
+            string want = common < target.Length ? target.Substring(common, 1) : "";
+            string got = index < unified.Length ? unified.Substring(index, 1) : "";
+            if (want == "\\" || want == "\"" || got == "\\" || got == "\"")
+            {
+                return "提示：差异落在反斜杠 / 引号上——锚点按标准 JSON 语义书写（字面反斜杠写两个反斜杠、字面引号写反斜杠加引号），并直接取 text-read 的原文行";
+            }
+            int fromA = common > DiffContextChars ? common - DiffContextChars : 0;
+            int fromB = index > DiffContextChars ? index - DiffContextChars : 0;
+            string window = Slice(target, fromA, DiffContextChars * 2) + Slice(unified, fromB, DiffContextChars * 2);
+            if (TextAlgorithms.ContainsAny(window, EntityTokens))
+            {
+                return "提示：差异窗口含实体写法——锚点直接写裸符号 < > &；若文件本身是实体文本，锚点写双写形态 &amp;lt;";
+            }
+            return "";
         }
 
         /// <summary>截取片段（越界截断）</summary>
@@ -479,4 +683,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:D850EED01D96A24A776CBC22F7DDF5912E35235A5B302FBCA569993339C77178
+// #MAU_CHECKSUM:SHA256:246466CFA3DA6BD524DDE4CC70C2371282F645EBFFAD930A82E5C4368E61FFF4

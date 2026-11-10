@@ -46,8 +46,9 @@ const POOL = [
     'db-put', 'db-query', 'db-get', 'db-update', 'db-delete',
     // DbAdmin 3（库级管理——明细分列 / 建库 / 删库）
     'dbAdmin-libs', 'dbAdmin-create', 'dbAdmin-drop',
-    // TsCat 5（A294——TS 编码工具面）
+    // TsCat 9（A294 五件 + A332 工程质量面四件）
     'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
+    'ts-info', 'ts-lint', 'ts-test', 'ts-format',
     // GroupCat 8（A306 / A309 / A322——群聊 / 派单回执 / 会话重建 / 组内配置面）
     'group-info', 'group-inbox', 'group-post', 'group-delegate', 'group-newsession',
     'group-catinfo', 'group-catcfg-get', 'group-catcfg-set',
@@ -74,9 +75,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 94 件', () => {
+    it('落位表 = 工具池 98 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(94);
+        expect(POOL.length).toBe(98);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -549,6 +550,62 @@ describe('TsCat——TS 编码工具面渲染（A294）', () => {
         const text = node.textContent;
         expect(text).toContain('服务失败');
         expect(text).toContain('BAD_OP');
+    });
+
+    it('ts-info——折叠行读 strict 与规模，输出展开严格族 / 范围 / 未设置项', () => {
+        const res = tsResult({
+            ok: true, tsconfig: 'C:/x/tsconfig.json', extendsChain: ['C:/x/tsconfig.json'],
+            strict: true, strictExplicit: true,
+            strictFamily: { noImplicitAny: true, strictNullChecks: true, noImplicitThis: false },
+            unset: ['exclude'], target: 'ES2020', module: 'CommonJS', moduleResolution: 'Node10',
+            lib: [], types: [], include: ['src/**/*.ts'], exclude: [], baseUrl: '', paths: {},
+            files: 3, nodeModulesInScope: 0, skipLibCheck: false, esModuleInterop: false
+        });
+        const node = window.buildToolBlock(card('ts-info', { path: 'mau:tools/ts/fixtures/tsconfig.json' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('口径 tsconfig.json · strict · 3 文件');
+        expect(text).toContain('true（显式）');
+        expect(text).toContain('noImplicitThis');
+        expect(text).toContain('exclude (未设置)');
+    });
+
+    it('ts-lint——合计行 + 逐条命中（文件:行 [规则] 说明 ｜ 摘录）', () => {
+        const res = tsResult({
+            ok: true, mode: 'project', tsconfig: 'C:/x/tsconfig.json', files: 10,
+            rules: ['any', 'empty-catch'], counts: { any: 1, 'empty-catch': 1 }, total: 2,
+            items: [{ file: 'src/a.ts', line: 12, rule: 'any', note: '显式 any', excerpt: 'const v: any = 1;' }]
+        });
+        const node = window.buildToolBlock(card('ts-lint', { path: 'mau:tools/ts/fixtures/tsconfig.json' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('松散扫描 tsconfig.json · 2 条 · 10 文件');
+        expect(text).toContain('合计 2 条');
+        expect(text).toContain('src/a.ts:12 [any]');
+        expect(text).toContain('const v: any = 1;');
+    });
+
+    it('ts-test——通过率；失败态出用例明细（ok:false 无 error 仍渲正常段）', () => {
+        const green = tsResult({ ok: true, runner: 'vitest', files: 14, cases: 245, passed: 245, failed: 0, skipped: 0, failures: [], elapsedMs: 3461 });
+        const okNode = window.buildToolBlock(card('ts-test', { path: 'mau:CatHome4/html/tests' }, green), 'toolcard');
+        expect(okNode.textContent).toContain('245/245 通过');
+        expect(okNode.textContent).toContain('（无失败用例）');
+
+        const red = tsResult({ ok: false, runner: 'vitest', files: 15, cases: 246, passed: 245, failed: 1, skipped: 0, failures: ['FAIL  unit/x.test.mjs > probe > 必然失败 :: AssertionError: expected 1 to be 2'], elapsedMs: 4244 });
+        const redNode = window.buildToolBlock(card('ts-test', { path: 'mau:CatHome4/html/tests' }, red), 'toolcard');
+        expect(redNode.textContent).toContain('1 失败');
+        expect(redNode.textContent).toContain('必然失败');
+        expect(redNode.textContent).toContain('AssertionError');
+    });
+
+    it('ts-format——差异规模 + 逐文件；零差异显式占位', () => {
+        const res = tsResult({ ok: true, mode: 'check', files: 10, changedFiles: 1, changedLines: 2, indent: 'space 4', items: [{ file: 'src/a.ts', changedLines: 2, written: false }] });
+        const node = window.buildToolBlock(card('ts-format', { path: 'mau:tools/ts/fixtures/tsconfig.json' }, res), 'toolcard');
+        expect(node.textContent).toContain('1 文件差异');
+        expect(node.textContent).toContain('src/a.ts · 2 行差异');
+        expect(node.textContent).toContain('space 4');
+
+        const zero = window.buildToolBlock(card('ts-format', { path: 'x/tsconfig.json' },
+            tsResult({ ok: true, mode: 'check', files: 10, changedFiles: 0, changedLines: 0, indent: '（未发现 .editorconfig——缩进不动）', items: [] })), 'toolcard');
+        expect(zero.textContent).toContain('（零差异——无需规整）');
     });
 });
 

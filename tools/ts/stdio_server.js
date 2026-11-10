@@ -1339,6 +1339,25 @@ function readTsconfigChain(TS, configPath, depth, chain)
     return out;
 }
 
+// strict 族成员——strict:true 时由 TS 语义开启，但 parseJsonConfigFileContent 不把它们写进 options
+// （编译器内部按 getStrictOptionValue 派生）；回执须按同一语义展开，否则 strict:true 会读成「全关」（A334 D2）
+var STRICT_KEYS = ['noImplicitAny', 'noImplicitThis', 'strictNullChecks', 'strictFunctionTypes', 'strictBindCallApply', 'strictPropertyInitialization', 'alwaysStrict', 'useUnknownInCatchVariables', 'strictBuiltinIteratorReturn'];
+
+/**
+ * strict 族取值——显式子项优先，未写则继承 strict
+ * @param {object} options 编译选项
+ * @param {string} key 字段名
+ * @returns {boolean} 生效值
+ */
+function strictValue(options, key)
+{
+    if (options[key] !== undefined)
+    {
+        return options[key] === true;
+    }
+    return options.strict === true;
+}
+
 /**
  * ts.info — 工程口径回执：让「这份工程用什么口径编译」在回执里可见
  * @param {object} req 请求
@@ -1386,19 +1405,46 @@ handlers['ts.info'] = function (req)
             nodeModulesInScope = nodeModulesInScope + 1;
         }
     }
+    var strictFamily = {};
+    for (var s = 0; s < STRICT_KEYS.length; s = s + 1)
+    {
+        strictFamily[STRICT_KEYS[s]] = strictValue(options, STRICT_KEYS[s]);
+    }
+    // 未显式给出的字段——空数组 ≠ 显式设为空：前者走默认（include 默认 **/*、lib 由 target 派生），
+    // 后者是另一种写法；不辨会让「include:[]」被读成「编译面为空」（A334 S2，同族 Wisdom §1.16 ③）
+    var unset = [];
+    if (merged.include.length === 0)
+    {
+        unset.push('include');
+    }
+    if (merged.exclude.length === 0)
+    {
+        unset.push('exclude');
+    }
+    if ((options.lib || []).length === 0)
+    {
+        unset.push('lib');
+    }
+    if ((options.types || []).length === 0)
+    {
+        unset.push('types');
+    }
     return {
         ok: true,
         tsconfig: nodePath.resolve(configPath),
         extendsChain: chain,
         strict: options.strict === true,
+        strictExplicit: options.strict !== undefined,
+        strictFamily: strictFamily,
+        unset: unset,
         target: enumName(TS.ScriptTarget, options.target),
         module: enumName(TS.ModuleKind, options.module),
         moduleResolution: enumName(TS.ModuleResolutionKind, options.moduleResolution),
         lib: (options.lib || []).slice(),
         types: (options.types || []).slice(),
         skipLibCheck: options.skipLibCheck === true,
-        noImplicitAny: options.noImplicitAny === true,
-        strictNullChecks: options.strictNullChecks === true,
+        noImplicitAny: strictValue(options, 'noImplicitAny'),
+        strictNullChecks: strictValue(options, 'strictNullChecks'),
         esModuleInterop: options.esModuleInterop === true,
         baseUrl: options.baseUrl ? String(options.baseUrl) : '',
         paths: options.paths || {},
@@ -1462,6 +1508,12 @@ function lintFile(TS, fileName, baseDir, filter, items)
         return lc.line + 1;
     }
 
+    function lineOfPos(pos)
+    {
+        var lc = sf.getLineAndCharacterOfPosition(pos);
+        return lc.line + 1;
+    }
+
     function visit(node)
     {
         var kind = node.kind;
@@ -1474,12 +1526,16 @@ function lintFile(TS, fileName, baseDir, filter, items)
             var inner = node.expression.type;
             if (inner && inner.kind === TS.SyntaxKind.UnknownKeyword)
             {
-                add('as-unknown-as', lineOf(node), 'as unknown as 双断言');
+                // 落点取断言类型节点（第二个 as 之后）——外层 AsExpression 的起点在多行表达式里是语句首行，
+                // 按行号跳转会看不到命中 token（A334 S1：`return {…} as unknown as T` 报的是 return 行）
+                var typePos = node.type ? node.type.getStart(sf) : node.getStart(sf);
+                add('as-unknown-as', lineOfPos(typePos), 'as unknown as 双断言');
             }
         }
         if (kind === TS.SyntaxKind.NonNullExpression)
         {
-            add('non-null-assertion', lineOf(node), '非空断言');
+            // 落点取 `!` 本身（表达式末尾）——同类偏移治理
+            add('non-null-assertion', lineOfPos(node.end - 1), '非空断言');
         }
         if (kind === TS.SyntaxKind.CallExpression && node.expression && node.expression.kind === TS.SyntaxKind.PropertyAccessExpression)
         {
@@ -1646,17 +1702,56 @@ function stripAnsi(text)
     var i = 0;
     while (i < text.length)
     {
-        if (text.charCodeAt(i) === 27)
+        var code = text.charCodeAt(i);
+        if (code !== 27)
         {
-            i = i + 1;
-            while (i < text.length && text.charAt(i) !== 'm')
-            {
-                i = i + 1;
-            }
+            out = out + text.charAt(i);
             i = i + 1;
             continue;
         }
-        out = out + text.charAt(i);
+        i = i + 1;
+        if (i >= text.length)
+        {
+            break;
+        }
+        // CSI——参数 / 中间字节 0x20-0x3F，终止字节 0x40-0x7E
+        // 🔴 不假定终止字节是 'm'：'K'（擦行）/ 'A'（上移）/ 'H'（定位）同样是控制序列，
+        // 旧实现「跳到下一个 m」会把其后的正文一并吞掉——失败态摘要行被吞即报 TS_TEST_NO_COUNT（A334 D1 根因）
+        if (text.charAt(i) === '[')
+        {
+            i = i + 1;
+            while (i < text.length)
+            {
+                var csiCode = text.charCodeAt(i);
+                i = i + 1;
+                if (csiCode >= 64 && csiCode <= 126)
+                {
+                    break;
+                }
+            }
+            continue;
+        }
+        // OSC——以 BEL 或 ESC \ 收尾
+        if (text.charAt(i) === ']')
+        {
+            i = i + 1;
+            while (i < text.length)
+            {
+                if (text.charCodeAt(i) === 7)
+                {
+                    i = i + 1;
+                    break;
+                }
+                if (text.charCodeAt(i) === 27 && i + 1 < text.length && text.charAt(i + 1) === '\\')
+                {
+                    i = i + 2;
+                    break;
+                }
+                i = i + 1;
+            }
+            continue;
+        }
+        // 其余单字符 ESC 序列——跳过一个字符
         i = i + 1;
     }
     return out;
@@ -1706,6 +1801,72 @@ function findSummaryLine(text, label)
         }
     }
     return '';
+}
+
+/**
+ * 摘要计数——自尾向前逐行尝试解析，取首个有用例计数的结果
+ * （多报错块 / 组合形态 `1 failed | 33 passed (34)` 都能命中；单一「最后一个含标签行」不够稳）
+ * @param {string} text 正文
+ * @param {string} label 标签（Test Files / Tests）
+ * @returns {object} {line, counts}
+ */
+function findSummaryCounts(text, label)
+{
+    var empty = { line: '', counts: { failed: 0, passed: 0, skipped: 0, total: 0 } };
+    var rows = text.split(NEWLINE);
+    for (var i = rows.length - 1; i >= 0; i = i - 1)
+    {
+        if (rows[i].indexOf(label) < 0)
+        {
+            continue;
+        }
+        var counts = parseCounts(rows[i]);
+        if (counts.total > 0)
+        {
+            return { line: rows[i], counts: counts };
+        }
+    }
+    return empty;
+}
+
+/**
+ * 失败明细抽取——FAIL 行 + 其后首个断言 / 错误行（用例名之外的摘要证据）
+ * @param {string} text 正文
+ * @returns {string[]} 失败明细（每条一行）
+ */
+function collectFailures(text)
+{
+    var out = [];
+    var rows = text.split(NEWLINE);
+    for (var i = 0; i < rows.length; i = i + 1)
+    {
+        // 行首可能有缩进（vitest 输出 ` FAIL  file > suite > case`）——先剥前导空白再判前缀
+        var row = trimLeading(trimTrailing(rows[i]));
+        if (row.indexOf('FAIL ') !== 0 && row.indexOf('not ok ') !== 0)
+        {
+            continue;
+        }
+        var item = row;
+        for (var k = i + 1; k < rows.length && k <= i + 8; k = k + 1)
+        {
+            var next = trimLeading(trimTrailing(rows[k]));
+            if (next.length === 0)
+            {
+                continue;
+            }
+            if (next.indexOf('AssertionError') >= 0 || next.indexOf('Error:') >= 0 || next.indexOf('expected') >= 0)
+            {
+                item = item + ' :: ' + next;
+                break;
+            }
+            if (next.indexOf('FAIL ') === 0 || next.indexOf('❯ ') === 0)
+            {
+                break;
+            }
+        }
+        out.push(item);
+    }
+    return out;
 }
 
 /**
@@ -1857,32 +2018,29 @@ handlers['ts.test'] = function (req)
         return fail('TS_TEST_FAILED', '跑测未启动或超时：' + String(res.error.message ? res.error.message : res.error));
     }
     var clean = stripAnsi(raw);
-    var caseRow = findSummaryLine(clean, 'Tests');
-    var cases = parseCounts(caseRow);
+    var caseSummary = findSummaryCounts(clean, 'Tests');
+    var cases = caseSummary.counts;
     if (cases.total <= 0)
     {
-        return fail('TS_TEST_NO_COUNT', '回执无用例计数（退出码 0 且零输出不构成证据）｜运行器 ' + runner.kind + '｜尾部：' + tailText(clean, 6));
+        // 双因分流——「无匹配」是门禁有效，「解析失败」是证据丢了（旧实现把后者也报成前者，A334 D1）
+        var skipCounts = parseCounts(findSummaryLine(clean, 'Tests'));
+        if (skipCounts.skipped > 0)
+        {
+            return fail('TS_TEST_NO_COUNT', '无实际执行用例（通过 0 / 失败 0 / 跳过 ' + String(skipCounts.skipped) + '）——filter 可能无匹配｜运行器 ' + runner.kind);
+        }
+        return fail('TS_TEST_PARSE_FAIL', '解析失败（有输出但无计数行）——不代表没有用例｜运行器 ' + runner.kind + ' · 退出码 ' + String(res.status) + '｜尾部：' + tailText(clean, 8));
     }
     // 全跳过 = 什么都没跑（实测：filter 无匹配时 vitest 报 245 skipped、退出码 0）——零执行不构成通过
     if (cases.passed + cases.failed === 0)
     {
         return fail('TS_TEST_NO_COUNT', '无实际执行用例（通过 0 / 失败 0 / 跳过 ' + String(cases.skipped) + '）——filter 可能无匹配｜运行器 ' + runner.kind);
     }
-    var failures = [];
-    var rows = clean.split(NEWLINE);
-    for (var i = 0; i < rows.length; i = i + 1)
-    {
-        var row = trimTrailing(rows[i]);
-        if (row.indexOf('FAIL ') === 0 || row.indexOf('not ok ') === 0)
-        {
-            failures.push(trimLeading(row));
-        }
-    }
+    var failures = collectFailures(clean);
     return {
         ok: cases.failed === 0,
         runner: runner.kind,
         root: rootDir,
-        files: parseCounts(findSummaryLine(clean, 'Test Files')).total,
+        files: findSummaryCounts(clean, 'Test Files').counts.total,
         cases: cases.total,
         passed: cases.passed,
         failed: cases.failed,

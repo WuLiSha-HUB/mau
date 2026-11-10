@@ -157,7 +157,12 @@ var TOOL_SKELETONS = {
     'ts-list': 'listing',
     'ts-read': 'lines',
     'ts-find-ref': 'matches',
-    'ts-patch': 'text'
+    'ts-patch': 'text',
+    // 工程质量面四件（A332 工具 / A335 前端件）
+    'ts-info': 'json',
+    'ts-lint': 'diagnostics',
+    'ts-test': 'diagnostics',
+    'ts-format': 'diagnostics'
 };
 
 // ── 骨架图标 / 中文名（与骨架一一对应）──────────────────────

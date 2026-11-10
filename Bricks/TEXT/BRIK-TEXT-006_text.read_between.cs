@@ -5,7 +5,7 @@
 // 作用: 锚点区间读取——str1 与 str2 之间内容（str1 空=文件头 / str2 空=文件尾；锚点须全文唯一；编码自动探测）——LLM 工具 text-read_between 语料执行面
 // 依赖: 无
 // 引用: Mau.Runtime（FileSystemService/DataBox/TextAlgorithms）
-// 原理: ReadTextAuto 读 → TextAlgorithms 定位锚点 → 区间子串；唯一契约与全部文案在本积木（A227 归位——算法面只给事实）
+// 原理: ReadTextAuto 读 → TextAlgorithms 定位锚点 → 区间子串；未命中差异事实面复用 TextReplaceBrick.AnchorMissNote（单点，A333）；唯一契约在本积木（A227 归位——算法面只给事实）
 // 常用: TextCat 认领线——'text.read_between'[@args] > @result
 // ═══════════════════════════════════════════════════
 using System;
@@ -76,7 +76,7 @@ namespace Mau.Bricks
                     int[] idx1 = TextAlgorithms.FindOccurrences(unified, a1, TextMatchMode.Exact);
                     if (idx1.Length == 0)
                     {
-                        result = "ERR|ANCHOR_NOT_FOUND|起始锚点未找到: " + a1 + EscapeHint(a1);
+                        result = TextReplaceBrick.AnchorMissNote(unified, a1, "起始锚点");
                         return false;
                     }
                     if (idx1.Length > 1)
@@ -92,7 +92,7 @@ namespace Mau.Bricks
                     int[] idx2 = TextAlgorithms.FindOccurrences(unified, a2, TextMatchMode.Exact);
                     if (idx2.Length == 0)
                     {
-                        result = "ERR|ANCHOR_NOT_FOUND|结束锚点未找到: " + a2 + EscapeHint(a2);
+                        result = TextReplaceBrick.AnchorMissNote(unified, a2, "结束锚点");
                         return false;
                     }
                     if (idx2.Length > 1)
@@ -127,21 +127,6 @@ namespace Mau.Bricks
             }
         }
 
-        /// <summary>锚点含转义字符（反斜杠或双引号）时的报错引导后缀——标准 JSON 语义提示</summary>
-        /// <param name="anchor">锚点文本</param>
-        /// <returns>提示后缀（无条件时为空串）</returns>
-        private static string EscapeHint(string anchor)
-        {
-            for (int i = 0; i < anchor.Length; i = i + 1)
-            {
-                if (anchor[i] == '\\' || anchor[i] == '"')
-                {
-                    return "｜提示：锚点按标准 JSON 语义——字面反斜杠写成两个反斜杠、字面引号写成反斜杠加引号；锚点取 text-read 的原文行，勿把源码里的字符串结束引号当作已转义引号。";
-                }
-            }
-            return "";
-        }
-
         /// <summary>
         /// 结构化元数据头（统一口径·A214）——恒定 ok / tool + 主来源 target + 主计数 items（空串 / 负值 = 省略）。
         /// </summary>
@@ -167,4 +152,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:79998ED6D8BAF08B28FD29F75F59CB659B44590211B562A7B67F43E1FD9AC62F
+// #MAU_CHECKSUM:SHA256:5B0E923170F2FAA96BD74B82D64449AEDB8E127FB0D79B8039760157343C58B5
