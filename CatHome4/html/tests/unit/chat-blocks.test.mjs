@@ -183,15 +183,14 @@ describe('系统注入块（A219——systemautomessage）', () => {
 });
 
 describe('text 块操作条（P6b 复归 · 2026-10-06）', () => {
-    it('带 msgIndex——挂操作条（两按钮 + 悬浮提示）', () => {
+    it('带 msgIndex——挂操作条（回滚按钮 + 悬浮提示；分支已删——A326）', () => {
         const node = window.buildTextBlock({ text: 'hi' }, { type: 'text', msgIndex: 7 });
         const bar = node.querySelector('.node-actions');
         expect(bar).toBeTruthy();
-        expect(node.querySelectorAll('.node-btn').length).toBe(2);
+        expect(node.querySelectorAll('.node-btn').length).toBe(1);
         expect(node.querySelector('.node-btn-rollback').textContent).toBe('⟲ 回滚');
-        expect(node.querySelector('.node-btn-fork').textContent).toBe('⧉ 分支');
         expect(node.querySelector('.node-btn-rollback').title).toContain('回滚');
-        expect(node.querySelector('.node-btn-fork').title).toContain('分支');
+        expect(node.querySelector('.node-btn-fork')).toBe(null);
     });
 
     it('msgIndex 缺失 / -1——不挂操作条（独立块与旧块零回归）', () => {

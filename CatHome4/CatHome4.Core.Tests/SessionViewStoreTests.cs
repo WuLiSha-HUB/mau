@@ -713,34 +713,5 @@ namespace CatHome4.Core.Tests
             reloaded.Load();
             Assert.Equal(3, reloaded.GetBlocks().Length);
         }
-        /// <summary>
-        /// 视图层播种——fork：目标存储取得源保留面（≤ 切点），源面不受影响且落盘可往返。
-        /// </summary>
-        [Fact]
-        public void CopyFrom_SeedsSubset()
-        {
-            LlmMessage[] msgs = new LlmMessage[]
-            {
-                        User("u1", 1000),
-                        Assistant("a1", 1100),
-                        User("u2", 2000),
-                        Assistant("a2", 2100)
-            };
-            ReplayAll(_store, msgs);
-            CH4.SessionViewStore target = new CH4.SessionViewStore(Path.Combine(_dir, "view2.view.jsonl"));
-            target.CopyFrom(_store, 1);
-            CH4.ViewBlock[] seeded = target.GetBlocks();
-            Assert.Equal(2, seeded.Length);
-            Assert.Equal("user", seeded[0].RenderType);
-            Assert.Equal(0, seeded[0].MsgIndex);
-            Assert.Equal("text", seeded[1].RenderType);
-            Assert.Equal(1, seeded[1].MsgIndex);
-            // 源面不受影响——播种是单向复制
-            Assert.Equal(4, _store.GetBlocks().Length);
-            // 落盘往返——播种面可读回
-            CH4.SessionViewStore reloaded = new CH4.SessionViewStore(Path.Combine(_dir, "view2.view.jsonl"));
-            reloaded.Load();
-            Assert.Equal(2, reloaded.GetBlocks().Length);
-        }
     }
 }

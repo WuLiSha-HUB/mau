@@ -592,8 +592,8 @@ body { font-family: var(--ch-font-ui); background: var(--ch-bg-page); color: var
 .chat-bubble .md-block .md-copy:hover .md-copy-btn { opacity: 1; }
 .chat-bubble .md-block .md-copy-btn:hover { background: var(--ch-hover-overlay); color: var(--ch-fg-strong); }
 
-/* ============ P6b 节点操作条——text 块底部回滚 / 分支按钮（⟲ / ⧉ + 悬浮提示） ============ */
-/* 2026-10-06 复归：A167 重构时随 text 件剥离丢失——引擎与指令面（session.rollback / session.fork）一直在 */
+/* ============ P6b 节点操作条——text 块底部回滚按钮（⟲ + 悬浮提示） ============ */
+/* 2026-10-06 复归：A167 重构时随 text 件剥离丢失——引擎与指令面（session.rollback）一直在 */
 .node-actions { display: flex; gap: 6px; margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--ch-line-soft); }
 .node-btn { background: none; border: none; cursor: pointer; font-size: var(--ch-fs-body); color: var(--ch-fg-muted); padding: 2px 6px; border-radius: 4px; line-height: 1; }
 .node-btn:hover { background: var(--ch-hover-overlay); color: var(--ch-fg-strong); }

@@ -29,7 +29,7 @@ function buildTextBlock(payload, item) {
     return row;
 }
 
-/// P6b 节点操作条——正式回复底部两按钮（⟲ 回滚 / ⧉ 分支）
+/// P6b 节点操作条——正式回复底部按钮（⟲ 回滚）
 /// 入口判据 = 块级 `msgIndex`（前文来源；独立块 -1 不挂）；指令走指令总线（出口面——本件不拼网络请求）
 /// 投递回执走通知面（桌宠气泡 `warn`）——信息位归 state 段独占（契约 §12.7）
 function appendNodeActions(bubble, item) {
@@ -45,15 +45,6 @@ function appendNodeActions(bubble, item) {
             }
             postCommand('session.rollback ' + idx);
             warn('回滚指令已投递——建议刷新页面');
-        }));
-    bar.appendChild(nodeActionBtn('⧉ 分支', 'node-btn-fork',
-        '从此处新建独立猫（以该回复为起点分支新实例，继承配置与前文）', function () {
-            var name = window.prompt('新猫显示名：', 'fork-' + idx);
-            if (!name || name.length === 0) {
-                return;
-            }
-            postCommand('session.fork ' + name + ' ' + idx);
-            warn('分支指令已投递——请回主控界面启动新猫');
         }));
     bubble.appendChild(bar);
 }

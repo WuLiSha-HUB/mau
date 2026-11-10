@@ -493,7 +493,6 @@ function cmdHostCommand(cmd) {
         { p: 'session count', v: '查询会话数' },
         { p: 'session clear', v: '清空全部会话' },
         { p: 'session.rollback', v: '回滚会话' },
-        { p: 'session.fork', v: '分支新会话' },
         { p: 'note.start', v: '启动 Note 计划' },
         { p: 'note.add', v: '推进 Note 步骤' },
         { p: 'freeze', v: '冻结宿主轮转' },

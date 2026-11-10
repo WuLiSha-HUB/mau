@@ -151,5 +151,45 @@ namespace CatHome4.Core.Tests
             Assert.Equal("描述含 order: -1", meta.Tools[0].Description);
             Assert.Equal("{}", meta.Tools[0].ParametersJson);
         }
+
+        /// <summary>快照名集——info 漂移左值（A323：前文工具头事实，非内存面）。</summary>
+        [Fact]
+        public void LoadPersistedToolNames_SnapshotHit_ReturnsNames()
+        {
+            Func<string, string> prev = CH4.ChatSession.SessionMetaPathProvider;
+            string path = TempPath("names", ".session.json");
+            try
+            {
+                WriteSnapshot(path, new CH4.SessionToolSpec[] { Item("text-read", ""), Item("retired-tool", "") });
+                CH4.ChatSession.SessionMetaPathProvider = delegate (string catId) { return path; };
+                string[] names = CH4.ChatSession.LoadPersistedToolNames("tool-snap");
+                Assert.NotNull(names);
+                Assert.Equal(2, names.Length);
+                Assert.Equal("text-read", names[0]);
+                // 退役名照原样返回——漂移判定与「池剔除」是两个面（A323）
+                Assert.Equal("retired-tool", names[1]);
+            }
+            finally
+            {
+                CH4.ChatSession.SessionMetaPathProvider = prev;
+            }
+        }
+
+        /// <summary>无快照——返回 null（调用方回落内存面，不静默空集）。</summary>
+        [Fact]
+        public void LoadPersistedToolNames_NoSnapshot_ReturnsNull()
+        {
+            Func<string, string> prev = CH4.ChatSession.SessionMetaPathProvider;
+            try
+            {
+                CH4.ChatSession.SessionMetaPathProvider = delegate (string catId) { return TempPath("namesmiss", ".session.json"); };
+                string[] names = CH4.ChatSession.LoadPersistedToolNames("tool-snap");
+                Assert.Null(names);
+            }
+            finally
+            {
+                CH4.ChatSession.SessionMetaPathProvider = prev;
+            }
+        }
     }
 }

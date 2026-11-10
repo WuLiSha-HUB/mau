@@ -376,6 +376,26 @@ namespace CH4
             }
             return meta.Tools;
         }
+        /// <summary>
+        /// 读取持久化工具面快照的工具名集——info 漂移判定左值（磁盘面 = 前文工具头事实，A323）。
+        /// 快照缺失 / 未接线 = null——调用方回落会话内存面，不静默成空集。
+        /// </summary>
+        /// <param name="catId">猫 key</param>
+        /// <returns>快照工具名数组；无快照 = null</returns>
+        public static string[] LoadPersistedToolNames(string catId)
+        {
+            SessionToolSpec[] persisted = LoadPersistedTools(catId);
+            if (persisted == null || persisted.Length == 0)
+            {
+                return null;
+            }
+            string[] names = new string[persisted.Length];
+            for (int i = 0; i < persisted.Length; i = i + 1)
+            {
+                names[i] = persisted[i].Name;
+            }
+            return names;
+        }
 
         /// <summary>
         /// 池面名字命中——快照条目是否仍在当前池中（退役剔除判据）。

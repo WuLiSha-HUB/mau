@@ -963,49 +963,6 @@ namespace CH4
             _pendingTools.Clear();
             Rewrite();
         }
-        /// <summary>
-        /// 视图层播种——fork（session.fork）：把源视图存储的保留面（≤ 切点）复制进本存储，与新猫播种前文同步。
-        /// 保留口径与 <see cref="TruncateFrom"/> 同源（前文派生按索引 · 非前文派生按时间戳界限）；
-        /// 条目按引用搬入（只读沿用，不复制对象）；注入报告随面搬入；写盘。
-        /// </summary>
-        /// <param name="source">源视图存储（同类实例）</param>
-        /// <param name="msgIndex">切点前文索引（保留 ≤ 该索引）</param>
-        public void CopyFrom(SessionViewStore source, int msgIndex)
-        {
-            if (source == null)
-            {
-                return;
-            }
-            long dropMinTs = long.MaxValue;
-            _blocks.Clear();
-            for (int i = 0; i < source._blocks.Count; i = i + 1)
-            {
-                ViewBlock b = source._blocks[i];
-                if (b.MsgIndex > msgIndex)
-                {
-                    if (b.Timestamp < dropMinTs)
-                    {
-                        dropMinTs = b.Timestamp;
-                    }
-                }
-                else
-                {
-                    _blocks.Add(b);
-                }
-            }
-            _gapTexts.Clear();
-            CopyBlocksBefore(source._gapTexts, _gapTexts, dropMinTs);
-            _roundSums.Clear();
-            CopyBlocksBefore(source._roundSums, _roundSums, dropMinTs);
-            _errors.Clear();
-            CopyBlocksBefore(source._errors, _errors, dropMinTs);
-            _retries.Clear();
-            CopyBlocksBefore(source._retries, _retries, dropMinTs);
-            _pendingTools.Clear();
-            // 注入报告为普通块——随 _blocks 搬迁（MsgIndex=-1 不参与索引判定，天然保留）
-            _lastTs = MaxTimestamp();
-            Rewrite();
-        }
         /// <summary>丢弃时间戳不早于界限的条目——截断用（保留面 = 界限之前）。</summary>
         /// <param name="list">条目容器（原地删）</param>
         /// <param name="cutoff">界限（时间戳 ≥ 该值即丢弃）</param>

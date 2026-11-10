@@ -428,11 +428,17 @@ namespace CH4
             }
             dbBlock["rootVisible"] = dbRootVisible;
             info["db"] = dbBlock;
-            // [段9] tools_drift——工具面漂移（会话注入面 vs 当前授权集；仅不一致时输出——design-ch4-tools §三·十一）
+            // [段9] tools_drift——工具面漂移（前文工具面 vs 当前授权集；仅不一致时输出——design-ch4-tools §三·十一）
+            // 左值 = 磁盘持久化快照（A323：前文工具头事实）；快照缺失回落会话内存面
             // added 附用法摘要（name/desc/args——注册表声明派生，冷启动猫不新会话即可上手；removed 只给名字）
             if (session != null)
             {
-                string[] declaredNames = session.DeclaredToolNames;
+                // A323 左值取磁盘持久化快照——前文工具头落盘事实；无快照回落会话内存面（不静默空集）
+                string[] declaredNames = ChatSession.LoadPersistedToolNames(catKey);
+                if (declaredNames == null)
+                {
+                    declaredNames = session.DeclaredToolNames;
+                }
                 string[] authorizedNames = CatHostService.ResolveCatAuthorizedToolNames(catKey);
                 List<string> driftAdded = new List<string>();
                 List<string> driftRemoved = new List<string>();

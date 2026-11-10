@@ -157,9 +157,8 @@ namespace CatHome4.Admin
             InputRoute noteStart = new InputRoute("note.start", false, true, RouteNoteStart, "Note 计划启动（推给 LLM）");
             InputRoute noteAdd = new InputRoute("note.add ", true, true, RouteNoteAdd, "Note 手动新增一步");
 
-            // [段4] 会话回滚 / 分支——上下文仅主线程触碰
+            // [段4] 会话回滚——上下文仅主线程触碰
             InputRoute rollback = new InputRoute("session.rollback ", true, true, RouteSessionCmdExec, "回滚会话到指定节点");
-            InputRoute fork = new InputRoute("session.fork ", true, true, RouteSessionCmdExec, "分支新会话（播种克隆）");
 
             // [段5] 热重载——主入口专属（宿主级能力，注入执行体）
             InputRoute reload = new InputRoute("reload ", true, true, RouteReload, "热重载 Flow（事务三段式）");
@@ -173,7 +172,7 @@ namespace CatHome4.Admin
             // [段7] 延迟指令族——调度器内部锁保护，任意线程可直执
             InputRoute delay = new InputRoute("delay.", true, false, RouteDelayCommand, "延迟指令队列（定时输入）");
 
-            return new InputRoute[] { chat, pause, cont, sessionNew, sessionNewInline, sessionClear, sessionCount, noteStart, noteAdd, rollback, fork, reload, catCmd, catCfgCmd, delay };
+            return new InputRoute[] { chat, pause, cont, sessionNew, sessionNewInline, sessionClear, sessionCount, noteStart, noteAdd, rollback, reload, catCmd, catCfgCmd, delay };
         }
 
         /// <summary>
