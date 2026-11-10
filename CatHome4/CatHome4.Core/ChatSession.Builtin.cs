@@ -144,11 +144,8 @@ namespace CH4
             return ToolMetaHead.With("random", true, "", -1, randomFields, "随机 | " + min.ToString() + ".." + max.ToString() + " = " + picked.ToString());
         }
 
-        /// <summary>
-        /// sleep 执行体——登记定时唤醒条目（design-ch4-delay §5.3）：本轮正常继续（不挂起、不阻塞），
-        /// 到点由调度器向本会话注入唤醒消息。
-        /// 参数面：hours/minutes/seconds（非负整数，合计 1..3600 秒；未知参数拒绝——零容忍）。
-        /// </summary>
+        /// <summary>sleep 执行体——同轮帧等待（design-ch4-delay §5.3）：工具单保持未闭合，PumpSleepWait 每帧推进，到点补结果，本轮继续、不结算、不产生新轮；允许对话注入（cat.cfg userInjectIdleOnly=false）时，等待期间到达的人工消息即刻打断等待（Group 回执走 user 通道，管理员睡中可收）。
+        /// 参数面：hours/minutes/seconds（非负整数，合计 1..99 秒；超长走 timer；未知参数拒绝——零容忍）。</summary>
         /// <param name="argsJson">参数 JSON（hours/minutes/seconds 可缺省=0）</param>
         /// <returns>结构化结果（元数据头 + 正文；失败 ERR| 前缀）</returns>
         private string ExecuteSleep(string argsJson)
@@ -215,14 +212,15 @@ namespace CH4
                 return "ERR|BAD_ARGS|本批已有 sleep 在等待——同批只允许一个（剩余 " + _sleepDueFrame.ToString() + " 帧）";
             }
             // [段2] 帧登记——工具单保持未闭合，PumpToolBatch 每帧推进，到点补结果；本轮不结束（同轮续跑）
+            // 回执与元数据一律以秒示人（内部计时才用帧——1 帧 = 0.1 秒；帧号只留在日志与排错面）
             long waitFrames = total * FramesPerSecond;
             _sleepDueFrame = waitFrames;
             Dictionary<string, object> sleepFields = new Dictionary<string, object>();
             sleepFields["hours"] = hours;
             sleepFields["minutes"] = minutes;
             sleepFields["seconds"] = seconds;
-            sleepFields["waitFrames"] = waitFrames;
-            string body = "等待 | " + total.ToString() + " 秒（" + waitFrames.ToString() + " 帧）——到点即回本批，本轮继续，不结束轮次。";
+            sleepFields["waitSeconds"] = total;
+            string body = "等待 | " + total.ToString() + " 秒——到点即回本批，本轮继续，不结束轮次。";
             _sleepReply = ToolMetaHead.With("sleep", true, "", -1, sleepFields, body);
             return SleepSuspendMark;
         }

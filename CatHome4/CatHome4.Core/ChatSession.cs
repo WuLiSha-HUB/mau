@@ -1243,40 +1243,6 @@ namespace CH4
         }
 
         /// <summary>
-        /// sleep 作废——主干被「非 sleep 输入」启动时，本猫未到点 sleep 全部销毁（等待语义：人回来了就不再需要叫醒）。
-        /// 返回告知文本（调用方以系统注入口径入队落前文——FIFO 保证其位于触发消息之前）。
-        /// 触发点：轮首取尽之前（唯一入口——含 QQ 消息 / Note 拉起 / timer / delay / restart 回执）。
-        /// </summary>
-        /// <param name="triggerSource">触发本轮的输入来源（sleep=自身到点，不销毁）</param>
-        /// <returns>告知文本（空串=无作废 · 无需注入）</returns>
-        private string ConsumeSleepOnWake(string triggerSource)
-        {
-            if (triggerSource == "sleep")
-            {
-                return "";
-            }
-            DelayEntry[] killed = DelayQueue.CancelBySource(_catKey, "sleep");
-            if (killed.Length == 0)
-            {
-                return "";
-            }
-            StringBuilder sb = new StringBuilder();
-            sb.Append("（系统自动 · sleep 作废）等待被提前启动打断——以下定时唤醒已销毁（共 ");
-            sb.Append(killed.Length.ToString());
-            sb.Append(" 条）：");
-            for (int i = 0; i < killed.Length; i = i + 1)
-            {
-                sb.Append("\n  #");
-                sb.Append(killed[i].Id.ToString());
-                sb.Append(" 原定 ");
-                sb.Append(DelayQueue.FormatTime(killed[i].DueAt));
-                sb.Append(" 到期");
-            }
-            LogStore.Add("CatHome4", 1, "sleep 作废（等待被提前启动打断）: cat=" + _catKey + " | 销毁 " + killed.Length.ToString() + " 条 | 触发来源 " + triggerSource, "DELAY");
-            return sb.ToString();
-        }
-
-        /// <summary>
         /// 用户消息入队——Idle 时 Pump 立即启动轮次；忙时排队等待（原同步阻塞天然排队语义保持）。
         /// 主线程泵消费调用（ThreadGuard：不推进相位——启动在 Pump）。
         /// </summary>
@@ -1361,15 +1327,13 @@ namespace CH4
                         LoopTiming.Accumulate("cs.idle", ElapsedMsSince(segTicks));
                         return;
                     }
-                    // sleep 作废——继续属「非 sleep 输入」（与常规轮同口径）
-                    ConsumeSleepOnWake("continue");
                     StartContinueRound();
                     LoopTiming.Accumulate("cs.idle", ElapsedMsSince(segTicks));
                     return;
                 }
                 if (_pending.Count > 0 || _sysPending.Count > 0)
                 {
-                    // 轮首取尽——本帧排队条目全部落前文（FIFO）后启一轮；sleep 作废告知置最前
+                    // 轮首取尽——本帧排队条目全部落前文（FIFO）后启一轮
                     StartRoundFromPending();
                 }
                 LoopTiming.Accumulate("cs.idle", ElapsedMsSince(segTicks));
@@ -1468,12 +1432,6 @@ namespace CH4
                     _roundOrigin = batch[i].Origin;
                     break;
                 }
-            }
-            // sleep 作废——主干被「非 sleep 输入」启动即销毁未到点 sleep（等待语义）
-            string notice = ConsumeSleepOnWake(batch[0].Source);
-            if (notice.Length > 0)
-            {
-                AppendInjection(notice, SysKindSystemAuto, "");
             }
             for (int i = 0; i < batch.Count; i = i + 1)
             {
@@ -2837,7 +2795,17 @@ namespace CH4
             }
         }
         /// <summary>
-        /// sleep 同轮等待推进——每帧检查到点即闭合工具单（帧计数口径，100ms/帧，不引入真实时钟）。
+        /// 帧数 → 秒文本（1 帧 = 0.1 秒）——sleep 回执一律以秒示人，帧号只留在内部计时与日志面。
+        /// </summary>
+        /// <param name="frames">帧数</param>
+        /// <returns>「6.1 秒」形态（一位小数）</returns>
+        private static string SleepSecondsText(long frames)
+        {
+            double seconds = frames / (double)FramesPerSecond;
+            return seconds.ToString("0.0") + " 秒";
+        }
+        /// <summary>
+        /// sleep 同轮等待推进——每帧检查到点 / 对话注入打断即闭合工具单（帧计数口径，100ms/帧，不引入真实时钟）。
         /// 批等待上限先到时按诚实 ERR 收口——挂起标记不得泄给 LLM。
         /// </summary>
         private void PumpSleepWait()
@@ -2850,18 +2818,26 @@ namespace CH4
             {
                 return;
             }
-            bool due = _phaseFrames >= _sleepDueFrame;
+            long dueFrame = _sleepDueFrame;
+            bool due = _phaseFrames >= dueFrame;
             bool batchOver = _phaseFrames >= ToolBatchWaitFrames;
-            if (!due && !batchOver)
+            // A327——允许对话注入（!_userInjectIdleOnly）时，等待期间到达的人工消息即视为打断：
+            // Group 回执走 user 通道，组管理员在 sleep 等待中也能收到回执（sys 注入不打断，开关开启时同现状排队）
+            bool interrupted = !due && !batchOver && !_userInjectIdleOnly && _pending.Count > 0;
+            if (!due && !batchOver && !interrupted)
             {
                 return;
             }
             List<ToolOrderDog> batch = _batches[_batchIndex];
             long waited = _phaseFrames;
             string result = _sleepReply;
-            if (!due)
+            if (interrupted)
             {
-                result = "ERR|SLEEP_TIMEOUT|sleep 等待未到点即遇工具批超时（已等 " + waited.ToString() + " 帧 / 需要 " + _sleepDueFrame.ToString() + " 帧）";
+                result = "等待 | 被对话注入打断（已等 " + SleepSecondsText(waited) + " / 需 " + SleepSecondsText(dueFrame) + "）——本轮继续，注入消息随本批收口进入上下文";
+            }
+            else if (!due)
+            {
+                result = "ERR|SLEEP_TIMEOUT|sleep 等待未到点即遇工具批超时（已等 " + SleepSecondsText(waited) + " / 需要 " + SleepSecondsText(dueFrame) + "）";
             }
             _sleepDueFrame = -1;
             _sleepReply = "";

@@ -566,7 +566,7 @@ namespace CatHome4.Core.Tests
             LlmMessage[] all = session.Context.GetMessages();
             for (int i = 0; i < all.Length; i = i + 1)
             {
-                if (all[i].Role == LlmRole.Tool && all[i].Content != null && all[i].Content.Contains("等待 | 3 秒（30 帧）"))
+                if (all[i].Role == LlmRole.Tool && all[i].Content != null && all[i].Content.Contains("等待 | 3 秒——到点即回本批"))
                 {
                     sawWait = true;
                 }
@@ -576,7 +576,7 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// sleep 参数面——超上限拒绝（1..3600 秒；错误可见性：ERR| 文本进工具结果）。
+        /// sleep 参数面——超上限拒绝（1..99 秒；错误可见性：ERR| 文本进工具结果）。
         /// </summary>
         [Fact]
         public void Sleep_ExecuteTool_RejectsBadArgs()
@@ -700,6 +700,115 @@ namespace CatHome4.Core.Tests
                 }
             }
             Assert.Empty(CH4.DelayQueue.List("test-session"));
+            CH4.DelayQueue.ResetForTest();
+        }
+
+        /// <summary>
+        /// sleep 打断（A327）——允许对话注入（userInjectIdleOnly=false）时，等待期间到达的人工消息即刻闭合等待，
+        /// 消息随本批收口进入上下文并同轮续跑（Group 回执走 user 通道，即走此路）。
+        /// </summary>
+        [Fact]
+        public void Sleep_InterruptedByUserInject_WhenIdleOnlyOff()
+        {
+            CH4.DelayQueue.ResetForTest();
+            MockLlm llm = new MockLlm();
+            string tc = "[{\"id\":\"s5\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":5}\"}}]";
+            llm.ToolCallsQueue.Enqueue(tc);
+            CH4.ChatSession session = CreateSession(llm, new ToolSpec[]
+            {
+                new ToolSpec("Note", "Note 任务追踪", "{}"),
+                new ToolSpec("sleep", "定时唤醒", "{}")
+            });
+            session.SetCatKey("test-session");
+            session.PostUserMessage("等我 5 秒");
+            for (int i = 0; i < 3; i = i + 1)
+            {
+                session.Pump();
+                Thread.Sleep(5);
+            }
+            Assert.False(session.IsIdle);
+            session.PostUserMessage("回来了");
+            for (int i = 0; i < 400; i = i + 1)
+            {
+                session.Pump();
+                Thread.Sleep(5);
+                if (session.IsIdle && llm.CallCount >= 2 && i >= 2)
+                {
+                    break;
+                }
+            }
+            bool sawInterrupt = false;
+            bool sawUser = false;
+            LlmMessage[] all = session.Context.GetMessages();
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                if (all[i].Role == LlmRole.Tool && all[i].Content != null && all[i].Content.Contains("对话注入打断"))
+                {
+                    sawInterrupt = true;
+                }
+                if (all[i].Role == LlmRole.User && all[i].Content != null && all[i].Content.Contains("回来了"))
+                {
+                    sawUser = true;
+                }
+            }
+            Assert.True(sawInterrupt);
+            Assert.True(sawUser);
+            Assert.Equal(2, llm.CallCount);
+            CH4.DelayQueue.ResetForTest();
+        }
+
+        /// <summary>
+        /// sleep 不打断（A327 反例）——空闲注入开启（userInjectIdleOnly=true）时，等待期间的人工消息排队到轮收尾后另起一轮，
+        /// 等待照常到点闭合（开关即唯一判据）。
+        /// </summary>
+        [Fact]
+        public void Sleep_NotInterrupted_WhenIdleOnlyOn()
+        {
+            CH4.DelayQueue.ResetForTest();
+            MockLlm llm = new MockLlm();
+            string tc = "[{\"id\":\"s6\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":2}\"}}]";
+            llm.ToolCallsQueue.Enqueue(tc);
+            CH4.ChatSession session = CreateSession(llm, new ToolSpec[]
+            {
+                new ToolSpec("Note", "Note 任务追踪", "{}"),
+                new ToolSpec("sleep", "定时唤醒", "{}")
+            });
+            session.SetCatKey("test-session");
+            session.SetUserInjectIdleOnly(true);
+            session.PostUserMessage("等我 2 秒");
+            for (int i = 0; i < 3; i = i + 1)
+            {
+                session.Pump();
+                Thread.Sleep(5);
+            }
+            Assert.False(session.IsIdle);
+            session.PostUserMessage("回来了");
+            for (int i = 0; i < 400; i = i + 1)
+            {
+                session.Pump();
+                Thread.Sleep(5);
+                if (session.IsIdle && llm.CallCount >= 3 && i >= 2)
+                {
+                    break;
+                }
+            }
+            bool sawInterrupt = false;
+            bool sawUser = false;
+            LlmMessage[] all = session.Context.GetMessages();
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                if (all[i].Role == LlmRole.Tool && all[i].Content != null && all[i].Content.Contains("对话注入打断"))
+                {
+                    sawInterrupt = true;
+                }
+                if (all[i].Role == LlmRole.User && all[i].Content != null && all[i].Content.Contains("回来了"))
+                {
+                    sawUser = true;
+                }
+            }
+            Assert.False(sawInterrupt);
+            Assert.True(sawUser);
+            Assert.Equal(3, llm.CallCount);
             CH4.DelayQueue.ResetForTest();
         }
 
