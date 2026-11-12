@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cathome5/mau/fs"
 	"cathome5/mau/runtime"
@@ -41,11 +42,14 @@ func TestEndToEndToolFlow(t *testing.T) {
 	}
 
 	// 帧驱动直到闭合（1200 帧上限内应远早于此）
+	// par 导线走后台 goroutine、结果次帧回投，帧间隔须给调度留窗口——零间隔帧循环下
+	// goroutine 无执行窗口（-cpu=1 必红，满载偶发未回投）。
 	for i := 0; i < 600; i++ {
 		runner.Tick()
 		if office := oa.GetOffice(officeID); office.Status == runtime.OfficeClosed || office.Status == runtime.OfficeTimeout {
 			break
 		}
+		time.Sleep(200 * time.Microsecond)
 	}
 	office := oa.GetOffice(officeID)
 	if office.Status != runtime.OfficeClosed {
