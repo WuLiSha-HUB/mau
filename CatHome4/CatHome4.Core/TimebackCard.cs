@@ -39,11 +39,11 @@ namespace CH4
             }
             if (type == TimebackProfile.CodeReview)
             {
-                return "只读取证——读码 / 查引用 / 查死码；不含编译与跑测（那属 code_write）";
+                return "只读取证——C#（cs-*）与 TypeScript（ts-*）两栈：读码 / 查引用 / 查死码 / 类型诊断；不含写盘与跑测（那属 code_write）";
             }
             if (type == TimebackProfile.CodeWrite)
             {
-                return "实现域——读 / 改 / 编译 / 跑测一域内完成；遇计划外问题先 back 回主干";
+                return "实现域——C#（cs-*）与 TypeScript（ts-*）两栈：读 / 改 / 编译 / 类型诊断 / 跑测一域内完成；遇计划外问题先 back 回主干";
             }
             return "（未登记边界的域类型）";
         }

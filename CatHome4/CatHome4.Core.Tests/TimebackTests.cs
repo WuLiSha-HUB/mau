@@ -414,7 +414,8 @@ namespace CatHome4.Core.Tests
 
         /// <summary>
         /// 域类型白名单——表级形态：五类型均含基础读面（文本读面 + 文件结构面）；系统信息类（info / host-flows）
-        /// 不进任何域；审查类不含写面 / 跑测面；实现类含 cs 全套十三件（含跑测件 cs-test）+ 文本写面 + mau-verify。
+        /// 不进任何域；审查类不含写面 / 跑测面（cs 与 ts 两栈同判——`ts-patch` / `ts-test` / `ts-format` 均不进）；
+        /// 实现类含 cs 全套十三件 + ts 全套九件（含跑测件 `cs-test` / `ts-test`）+ 文本写面 + mau-verify。
         /// 说明：域内名单工具均为 OA 工具——单测无工单消费者（Post 后无回执 → 批次不闭合），
         /// 故放行面在表级验证；会话级「名单外一律拒」由 `Scope_ProfileRejectsToolOutsideWhitelist` 反向覆盖。
         /// </summary>
@@ -441,6 +442,17 @@ namespace CatHome4.Core.Tests
             Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "cs-test"));
             Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "text-replace"));
             Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "mau-verify"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeReview, "ts-read"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeReview, "ts-check"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeReview, "ts-lint"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeReview, "ts-info"));
+            Assert.False(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeReview, "ts-patch"));
+            Assert.False(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeReview, "ts-test"));
+            Assert.False(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeReview, "ts-format"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "ts-patch"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "ts-test"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "ts-format"));
+            Assert.True(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "ts-find-ref"));
             Assert.False(CH4.TimebackProfile.Allows(CH4.TimebackProfile.CodeWrite, "file-delete"));
             Assert.Equal(CH4.TimebackProfile.KindReview, CH4.TimebackProfile.Kind(CH4.TimebackProfile.TextSearch));
             Assert.Equal(CH4.TimebackProfile.KindReview, CH4.TimebackProfile.Kind(CH4.TimebackProfile.CodeReview));

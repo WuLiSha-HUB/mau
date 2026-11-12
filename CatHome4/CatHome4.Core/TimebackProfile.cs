@@ -23,10 +23,10 @@ namespace CH4
         /// <summary>域类型·文本检索——文本 / 文档只读检索。</summary>
         public const string TextSearch = "text_search";
 
-        /// <summary>域类型·代码审查——基础读面 + cs 只读面（纯取证：不含跑测面）。</summary>
+        /// <summary>域类型·代码审查——基础读面 + cs / ts 只读面（C# 与 TypeScript 两栈编码取证；纯取证，不含跑测面）。</summary>
         public const string CodeReview = "code_review";
 
-        /// <summary>域类型·代码实现——基础读面 + cs 全套十三件 + 文本写面 + 语料检查（域内完成读 / 改 / 编译 / 跑测）。</summary>
+        /// <summary>域类型·代码实现——基础读面 + cs 全套十三件 + ts 全套九件 + 文本写面 + 语料检查（支持 C# 与 TypeScript 编码，域内完成读 / 改 / 编译 / 跑测）。</summary>
         public const string CodeWrite = "code_write";
 
         /// <summary>文本读面——被多个 type 复用（域内只读取证：文本检索 + 内容检索）。</summary>
@@ -59,19 +59,22 @@ namespace CH4
         /// <summary>text_search 名单——基础读面。</summary>
         private static readonly string[] TextSearchNames = ReadBaseNames;
 
-        /// <summary>code_review 名单——基础读面 + cs 只读七件（纯取证：读码 / 查引用 / 查死码，不含任何跑测面）。</summary>
+        /// <summary>code_review 名单——基础读面 + cs 只读七件 + ts 只读六件（纯取证：读码 / 查引用 / 查死码 / 类型诊断，不含任何跑测面）。</summary>
         private static readonly string[] CodeReviewNames = Concat(ReadBaseNames, new string[]
         {
-            "cs-check", "cs-list", "cs-read", "cs-find", "cs-find_ref", "cs-dead", "cs-comment_check"
+            "cs-check", "cs-list", "cs-read", "cs-find", "cs-find_ref", "cs-dead", "cs-comment_check",
+            "ts-check", "ts-list", "ts-read", "ts-find-ref", "ts-info", "ts-lint"
         });
 
-        /// <summary>code_write 名单——基础读面 + cs 全套十三件 + 文本写面 + 语料检查。
-        /// 域内一次完成「读 → 改 → 编译 → 跑测」：编译输出 / 跑测流水 / 诊断清单一律随域回收，不持久化进主干
-        /// （`cs-test` 在名单内——实现域自带验证环；未通过的读数经台账 `FAIL` 态回报，不记 OK）。</summary>
+        /// <summary>code_write 名单——基础读面 + cs 全套十三件 + ts 全套九件 + 文本写面 + 语料检查（支持 C# 与 TypeScript 两栈编码）。
+        /// 域内一次完成「读 → 改 → 编译/类型诊断 → 跑测」：编译输出 / 跑测流水 / 诊断清单一律随域回收，不持久化进主干
+        /// （`cs-test` / `ts-test` 在名单内——实现域自带验证环；未通过的读数经台账 `FAIL` 态回报，不记 OK）。
+        /// `ts-format` 含 apply 写盘面、`ts-patch` 为写侧——两者只在实现域给，审查域不给。</summary>
         private static readonly string[] CodeWriteNames = Concat(new string[]
         {
             "cs-check", "cs-list", "cs-read", "cs-patch", "cs-member", "cs-comment",
             "cs-find", "cs-find_ref", "cs-dead", "cs-comment_check", "cs-format", "cs-build", "cs-test",
+            "ts-check", "ts-list", "ts-read", "ts-find-ref", "ts-patch", "ts-info", "ts-lint", "ts-test", "ts-format",
             "text-replace", "text-write", "text-append",
             "mau-verify"
         }, ReadBaseNames);

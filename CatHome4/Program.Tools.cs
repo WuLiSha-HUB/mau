@@ -149,7 +149,7 @@ namespace CH4
             tools[9] = new
             {
                 name = "timeback-start",
-                description = "上下文作用域·开锚——type 选域类型（决定域内可用工具白名单 / 回执骨架 / 资源预热），purpose 记用途；过程在作用域内膨胀，回收时用 timeback-back 回卷（膨胀过程从上下文销毁，只把 findings 带回主干——下一轮首条可见）。域类型枚举：browser_vision（浏览网页取证：browser-* + 基础读面，**不含识图**）· image_vision（看图取证：image-* + 基础读面——回执给 ASCII 图证 + 结论）· text_search（文本与文档检索：文本读面 + 文件结构面）· code_review（代码审查取证：基础读面 + cs 只读七件，不含跑测面）· code_write（代码实现：基础读面 + cs 全套十三件 + 文本写面 + mau-verify——读 / 改 / 编译 / 跑测一域内完成）。🔴 域内只放行本类型白名单——名单外调用被拒（ERR|TIMEBACK_PROFILE，需用则先 back 回主干，不在域内换类型）；系统信息类工具（info / host-flows）不进任何域；域内不做计划、不调 Note / sleep / timer。热重载 / 重启 / 部署不在域内（进程中断即失域）。🔴 开域判据：本环节预期串接 ≥3 次工具调用才收口——单次 / 两次即得答案留主干。v1 未闭合前禁止再次 start。",
+                description = "上下文作用域·开锚——type 选域类型（决定域内可用工具白名单 / 回执骨架 / 资源预热），purpose 记用途；过程在作用域内膨胀，回收时用 timeback-back 回卷（膨胀过程从上下文销毁，只把 findings 带回主干——下一轮首条可见）。域类型枚举：browser_vision（浏览网页取证：browser-* + 基础读面，**不含识图**）· image_vision（看图取证：image-* + 基础读面——回执给 ASCII 图证 + 结论）· text_search（文本与文档检索：文本读面 + 文件结构面）· code_review（代码审查取证：基础读面 + cs 只读七件 + ts 只读六件——**支持 C# 与 TypeScript（TS）编码的取证**，不含跑测面）· code_write（代码实现：基础读面 + cs 全套十三件 + ts 全套九件 + 文本写面 + mau-verify——**支持 C# 与 TypeScript（TS）编码**，读 / 改 / 编译 / 跑测一域内完成）。🔴 域内只放行本类型白名单——名单外调用被拒（ERR|TIMEBACK_PROFILE，需用则先 back 回主干，不在域内换类型）；系统信息类工具（info / host-flows）不进任何域；域内不做计划、不调 Note / sleep / timer。热重载 / 重启 / 部署不在域内（进程中断即失域）。🔴 开域判据：本环节预期串接 ≥3 次工具调用才收口——单次 / 两次即得答案留主干。v1 未闭合前禁止再次 start。",
                 parameters = new
                 {
                     type = "object",
