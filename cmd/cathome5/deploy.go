@@ -18,7 +18,7 @@ import (
 // 本文件是 CAT5 部署链（D2）——同 exe 子命令 `cathome5 deploy prepare|deploy|relaunch`。
 //
 // 语义对齐 ccbp:Project/CatHome5/design-deploy.md §四（三模式与报告）与 §五（五决策点定案）：
-//   - prepare：go build / vet / test + 收集 html / corpus / Bricks / config → 暂存区
+//   - prepare：go build / vet / test + 收集 html / corpus / Bricks / config / csbridge → 暂存区
 //   - deploy：暂存区 → <target>_new → 原子切换（target→target_old，_new→target）
 //   - relaunch：等旧 pid 退出（≤120s）→ 按模式 prepare / 搬运 / 原地 → 起新实例 → 探活 → 失败回退
 //   - 报告：<target>/deploy-report-<ts>.json；退出码四态 0/2/3/1
@@ -35,6 +35,8 @@ const (
 	deployExitNotReplaced = 3
 	// deployExitManual 需人工介入
 	deployExitManual = 1
+	// csBridgeExeName cs 桥可执行文件名（与 mau/bricks/cs_service.go 的候选链同名）
+	csBridgeExeName = "MauCsBridge.exe"
 )
 
 // deployOptions 是三模式的共用参数（未用到的模式忽略多余参数）。
@@ -55,6 +57,8 @@ type deployOptions struct {
 	Bricks string
 	// ConfigSrc 配置模板源目录
 	ConfigSrc string
+	// CsBridge cs 桥产物源目录（空 = <repo>/host/csbridge/bin/Debug/net10.0）
+	CsBridge string
 	// GoExe go 可执行文件（空 = PATH 或 tools/go）
 	GoExe string
 	// Mode relaunch 模式：full / incr / host
@@ -246,6 +250,41 @@ func (r *deployRun) prepare() error {
 	}
 	r.artifacts["exe"] = exePath
 	r.artifacts["version"] = version
+	// [段4] cs 桥产物——部署包自持桥（部署实例 cs-* 可用）；缺失出声跳过（不阻断主部署链）
+	if err := r.collectCsBridge(staging); err != nil {
+		return err
+	}
+	return nil
+}
+
+// resolveCsBridgeSource 桥产物源目录（--csbridge 覆盖；空 = <repo>/host/csbridge/bin/Debug/net10.0）。
+func (r *deployRun) resolveCsBridgeSource() string {
+	if r.o.CsBridge != "" {
+		return r.o.CsBridge
+	}
+	return filepath.Join(r.o.Repo, "host", "csbridge", "bin", "Debug", "net10.0")
+}
+
+// collectCsBridge 收集 cs 桥产物到暂存区 csbridge/（部署实例起服走 <exeDir>/csbridge/ 候选链）。
+//
+// 缺失出声跳过（桥是 .NET 侧产物，未编桥 / 只改 Go 面属常见中间态）——不阻断主部署链；
+// 部署实例此时 cs-* 按既有明示语义回 CSHARP_NO_BRIDGE，可用 --csbridge 指定源目录。
+func (r *deployRun) collectCsBridge(staging string) error {
+	src := r.resolveCsBridgeSource()
+	if _, err := os.Stat(filepath.Join(src, csBridgeExeName)); err != nil {
+		r.add("csbridge", false, "跳过——桥产物缺失（"+src+"）；部署实例 cs-* 将回 CSHARP_NO_BRIDGE（可 --csbridge 指定）")
+		return nil
+	}
+	dst := filepath.Join(staging, "csbridge")
+	if err := os.RemoveAll(dst); err != nil {
+		return fmt.Errorf("清理旧产物失败（csbridge）: %w", err)
+	}
+	if err := copyTree(src, dst); err != nil {
+		return fmt.Errorf("复制失败（csbridge）: %w", err)
+	}
+	files, _ := countTree(dst)
+	r.add("csbridge", true, src+" → "+dst+"（"+strconv.Itoa(files)+" 文件）")
+	r.artifacts["csbridge"] = dst
 	return nil
 }
 
@@ -815,6 +854,7 @@ func registerDeployFlags(fs *flag.FlagSet, o *deployOptions) {
 	fs.StringVar(&o.Corpus, "corpus", o.Corpus, "语料源目录（ch4）")
 	fs.StringVar(&o.Bricks, "bricks", o.Bricks, "积木源目录")
 	fs.StringVar(&o.ConfigSrc, "config", o.ConfigSrc, "配置模板源目录")
+	fs.StringVar(&o.CsBridge, "csbridge", "", "cs 桥产物源目录（空 = <repo>/host/csbridge/bin/Debug/net10.0）")
 	fs.StringVar(&o.GoExe, "go", "", "go 可执行文件（空 = PATH / tools/go）")
 	fs.StringVar(&o.Mode, "mode", "incr", "relaunch 模式：full / incr / host")
 	fs.IntVar(&o.WaitPID, "wait-pid", 0, "起新实例前等待退出的旧进程 pid")
