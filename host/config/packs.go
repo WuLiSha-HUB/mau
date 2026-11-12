@@ -125,3 +125,74 @@ func SerializePackPool(pool []PackDefinition) []byte {
 func SavePackPool(path string, pool []PackDefinition) error {
 	return writeAtomic(path, SerializePackPool(pool))
 }
+
+// GetMountedPacks 猫级挂载清单——cat.cfg packs 字段（缺失 / 损坏 = 未挂载任何包）。
+func GetMountedPacks(dataRoot, catKey string) []string {
+	if catKey == "" {
+		return nil
+	}
+	cfg, err := LoadCatCfg(filepath.Join(dataRoot, "sessions", catKey, "cat.cfg"))
+	if err != nil || cfg == nil {
+		return nil
+	}
+	return cfg.Packs
+}
+
+// BuildPackPayload 包解析入口——pack 内置工具数据面（catKey + packKey → 结果 JSON）。
+//
+// 三道门：池内存在 → 本猫已挂载 → 返回路径清单（读取与展开归会话层，与前文注入同源）。
+// 成功：{"ok":true,"key":"..","desc":"..","paths":[".."]}；失败：{"ok":false,"error":"ERR|..."}。
+// 逐字对齐 C# `AdminService.Packs.cs` 的 BuildPackPayload。
+func BuildPackPayload(dataRoot, catKey, packKey string) string {
+	pool := LoadPackPool(PackPoolPath(dataRoot))
+	available := make([]string, 0, len(pool))
+	for _, def := range pool {
+		available = append(available, def.Key)
+	}
+	availableText := strings.Join(available, ",")
+	if availableText == "" {
+		availableText = "(空池)"
+	}
+	var target *PackDefinition
+	for i := range pool {
+		if pool[i].Key == packKey {
+			target = &pool[i]
+			break
+		}
+	}
+	if target == nil {
+		return `{"ok":false,"error":` + jsonString("ERR|PACK_KEY_NOT_FOUND|包不存在: "+packKey+" | 池内可用: "+availableText) + `}`
+	}
+	mounted := GetMountedPacks(dataRoot, catKey)
+	isMounted := false
+	for _, key := range mounted {
+		if key == packKey {
+			isMounted = true
+			break
+		}
+	}
+	if !isMounted {
+		mountedText := strings.Join(mounted, ",")
+		if mountedText == "" {
+			mountedText = "(未挂载)"
+		}
+		return `{"ok":false,"error":` + jsonString("ERR|PACK_NOT_MOUNTED|包未挂载: "+packKey+" | 本猫已挂载: "+mountedText+" | 池内可用: "+availableText) + `}`
+	}
+	if len(target.Paths) == 0 {
+		return `{"ok":false,"error":` + jsonString("ERR|PACK_EMPTY|包无路径清单: "+packKey) + `}`
+	}
+	var b strings.Builder
+	b.WriteString(`{"ok":true,"key":`)
+	b.WriteString(jsonString(target.Key))
+	b.WriteString(`,"desc":`)
+	b.WriteString(jsonString(target.Desc))
+	b.WriteString(`,"paths":[`)
+	for i, path := range target.Paths {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString(jsonString(path))
+	}
+	b.WriteString(`]}`)
+	return b.String()
+}

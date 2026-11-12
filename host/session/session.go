@@ -100,6 +100,14 @@ type Session struct {
 	modelOverride string
 	// roundSummary 轮末总结服务状态（开关 / 在途工单 / 本轮缓冲）
 	roundSummary roundSummaryState
+	// Delays 延迟队列（timer 排程注入 + state.delay 段数据源；nil = 未接线——timer 明示、状态段空 entries）
+	Delays *DelayQueue
+	// packPayload 加载包数据面（catKey + key → 结果 JSON；nil = 未接线）
+	packPayload func(catKey, key string) string
+	// packResolver 加载包路径解析（受控根展开；nil = 未接线）
+	packResolver func(path string) (string, error)
+	// packReader 加载包文本读取（编码探测；nil = 未接线）
+	packReader func(absPath string) (string, error)
 }
 
 // NewSession 建立会话实体（catKey 为空时先构造、SetCatKey 后补齐落盘面）。
@@ -603,4 +611,20 @@ func (s *Session) ModelOverride() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.modelOverride
+}
+
+// SetDelayQueue 接线延迟队列（timer 排程 + state.delay 段数据源；nil = 未接线）。
+func (s *Session) SetDelayQueue(queue *DelayQueue) {
+	s.mu.Lock()
+	s.Delays = queue
+	s.mu.Unlock()
+}
+
+// SetPackProvider 接线加载包数据面——池解析 + 路径展开 + 文本读取三件（nil = 未接线）。
+func (s *Session) SetPackProvider(payload func(catKey, key string) string, resolve func(path string) (string, error), readText func(absPath string) (string, error)) {
+	s.mu.Lock()
+	s.packPayload = payload
+	s.packResolver = resolve
+	s.packReader = readText
+	s.mu.Unlock()
 }

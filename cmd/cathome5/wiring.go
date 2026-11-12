@@ -13,6 +13,7 @@ import (
 	"cathome5/host/session"
 	"cathome5/host/toolpool"
 	maudb "cathome5/mau/db"
+	"cathome5/mau/fs"
 )
 
 // sessionWiring 是会话装配结果——宿主主流程需要的全部句柄。
@@ -38,6 +39,8 @@ type sessionWiring struct {
 	// 装配顺序：会话层先于机制面构造（机制面要用会话句柄），故本字段在 buildToolRuntime
 	// 之后由 main 回填；info 数据源闭包按调用时刻读取，回填即生效。
 	DBSvc *maudb.Service
+	// Delays 延迟队列（timer 排程注入 + state.delay 段数据源）
+	Delays *session.DelayQueue
 }
 
 // wireSession 装配默认会话——cat.cfg + 前文 + 视图 + 工具面 + LLM 客户端。
@@ -80,6 +83,19 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	appearancePool := config.LoadAppearancePool(filepath.Join(dataRoot, "config", "appearance.json"))
 	sess.SetPetKind(resolvePetKind(appearancePool, cfg.AppearanceID))
 	wiring.Session = sess
+
+	// 延迟队列（c-2）——timer 排程注入 + state.delay 段数据源（落盘 runtime/delays.json，跨重启保留）
+	delays := session.NewDelayQueue(filepath.Join(dataRoot, "runtime", "delays.json"))
+	delays.Load()
+	sess.SetDelayQueue(delays)
+	wiring.Delays = delays
+	// 加载包数据面（c-2）——池解析三道门（config）+ 受控根路径展开 + 文本读取（与前文注入同源）
+	packFS := &fs.Service{Roots: fsRoots(workspace)}
+	sess.SetPackProvider(
+		func(catKey, key string) string { return config.BuildPackPayload(dataRoot, catKey, key) },
+		func(path string) (string, error) { return packFS.Resolve(path, false) },
+		func(absPath string) (string, error) { return packFS.ReadTextAuto(absPath) },
+	)
 
 	// 工具面——授权集实时口径快照 → 声明面裁剪 → 会话快照优先（A221：重启不改面，仅 session.new 换新）
 	includePrivileged := toolpool.IsDefaultCatKey(catID)
@@ -299,4 +315,25 @@ func hasDBRoot(workspace *config.WorkspaceConfig) bool {
 		}
 	}
 	return false
+}
+
+// PumpDelays 延迟队列泵——主循环每帧调用：到点条目按序转入归属会话即时队。
+//
+// 停机态（宿主重启中）不投递——条目保留，由重启后的新宿主加载后投递；
+// 归属会话不存在——条目丢弃并出声（不静默）。对齐 C# `ChatBridge.DeliverDelay`。
+func (w *sessionWiring) PumpDelays() {
+	if w.Delays == nil || w.Session == nil {
+		return
+	}
+	w.Delays.Pump(func(catKey, content, source string) bool {
+		if session.HostRestarting() {
+			return false
+		}
+		if catKey != w.CatID {
+			session.Logf("CatHome5", 2, "延迟条目归属会话不存在——已丢弃: cat="+catKey, "DELAY")
+			return true
+		}
+		w.Session.PostSystemMessage(source, content, "")
+		return true
+	})
 }

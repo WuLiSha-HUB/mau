@@ -221,6 +221,10 @@ type roundState struct {
 	batchIndex int
 	// toolBatchActive 工具批执行中
 	toolBatchActive bool
+	// sleepDueFrame sleep 同轮等待到点帧（-1 = 无；帧计数口径 100ms/帧）
+	sleepDueFrame int64
+	// sleepReply sleep 到点回执（到点补入工具单结果）
+	sleepReply string
 }
 
 // round 取轮状态（懒建，测试构造的 Session 也安全）。
@@ -228,7 +232,7 @@ func (s *Session) roundState() *roundState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.round == nil {
-		s.round = &roundState{batchIndex: -1, phaseKind: -1}
+		s.round = &roundState{batchIndex: -1, phaseKind: -1, sleepDueFrame: -1}
 	}
 	return s.round
 }
@@ -432,6 +436,8 @@ func (s *Session) resetRoundCounters() {
 	r.retryMax = ""
 	r.retryReason = ""
 	r.toolDone = false
+	r.sleepDueFrame = -1
+	r.sleepReply = ""
 	r.roundStartedAt = time.Now()
 	r.roundPhases = SessionPhases{}
 	r.roundElapsedMs = 0

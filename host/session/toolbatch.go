@@ -301,6 +301,10 @@ func (s *Session) startBatch(index int) {
 		}
 		if s.builtinTool(dog.Name) {
 			dog.Result = s.executeBuiltin(dog.Name, dog.ArgsJSON)
+			if dog.Result == sleepSuspendMark {
+				// sleep 同轮等待——工具单保持未闭合，由 pumpSleepWait 帧推进到点补结果（C# StartBatch 同序）
+				continue
+			}
 			dog.IsClosed = true
 			dog.ClosedAtMs = nowMillis()
 			continue
@@ -343,6 +347,9 @@ func (s *Session) pumpToolBatch() {
 	hostDogs := append([]*toolDog(nil), r.hostDogs...)
 	batchStartedAt := r.phaseStartedAt
 	r.mu.Unlock()
+
+	// sleep 同轮等待推进——到点即闭合工具单（帧计数口径，先于 allDone 判定；C# PumpToolBatch 同序）
+	s.pumpSleepWait()
 
 	// 工单轮询——认领 / 闭合 / 超时三态（OA 由 100ms 机制 ticker 推进）
 	r.mu.Lock()
@@ -432,6 +439,51 @@ func (s *Session) pumpToolBatch() {
 	r.round++
 	r.mu.Unlock()
 	s.launchLlm()
+}
+
+// pumpSleepWait sleep 同轮等待推进——每帧检查到点即闭合工具单（帧计数口径，100ms/帧，不引入真实时钟）。
+//
+// 批等待上限先到时按诚实 ERR 收口——挂起标记不得泄给 LLM（C# PumpSleepWait 同序）。
+func (s *Session) pumpSleepWait() {
+	r := s.roundState()
+	r.mu.Lock()
+	dueFrame := r.sleepDueFrame
+	if dueFrame < 0 {
+		r.mu.Unlock()
+		return
+	}
+	batchIndex := r.batchIndex
+	if batchIndex < 0 || batchIndex >= len(r.batches) {
+		r.mu.Unlock()
+		return
+	}
+	due := r.phaseFrames >= dueFrame
+	batchOver := r.phaseFrames >= toolBatchWaitFrames
+	if !due && !batchOver {
+		r.mu.Unlock()
+		return
+	}
+	waited := r.phaseFrames
+	result := r.sleepReply
+	if !due {
+		result = "ERR|SLEEP_TIMEOUT|sleep 等待未到点即遇工具批超时（已等 " + itoa64(waited) + " 帧 / 需要 " + itoa64(dueFrame) + " 帧）"
+	}
+	r.sleepDueFrame = -1
+	r.sleepReply = ""
+	batch := r.batches[batchIndex]
+	r.mu.Unlock()
+	for _, dog := range batch {
+		if dog.IsClosed || dog.IsTimedOut {
+			continue
+		}
+		if dog.Name != "sleep" {
+			continue
+		}
+		dog.Result = result
+		dog.IsClosed = true
+		dog.ClosedAtMs = nowMillis()
+		return
+	}
 }
 
 // flushToolCard 工具卡定稿兜底——空结果补具名 ERR（终态卡由持久区按声明序落位）。

@@ -13,14 +13,16 @@ import (
 // 口径：
 //   - 轮级 token——Idle 态回落最近落盘边界快照（roundTokens），其余态取实时累计；
 //   - 前文长度——ContextTokensKnown（请求级实时值优先，回落落盘快照）；
-//   - delay 段按空 entries 输出并在首次构建时出声（延迟队列未实现——c-2），不伪造队列内容；
+//   - delay 段 = 延迟队列按本猫过滤的待触发条目数组（未接线 = 空 entries 并出声一次），不伪造队列内容；
 //   - conn.server 取宿主重启停机态（停机中 = stopping），clients 取连接数提供器（未注入 = 0）。
 func (s *Session) BuildStateJSON() string {
 	name, phases, requests := s.GetRunState()
 	roundTokens := s.roundTokenSnapshot()
 	sessionTokens := s.sessionTokensValue()
 	s.delayNoted.Do(func() {
-		logAt(LogModuleSession, 1, "state.delay 段按空 entries 输出——延迟队列未实现（c-2）", LogCategoryChat)
+		if s.Delays == nil {
+			logAt(LogModuleSession, 1, "state.delay 段按空 entries 输出——延迟队列未接线（宿主装配缺失）", LogCategoryChat)
+		}
 	})
 	lastActive := s.LastActiveAtKnown()
 	chars := computeContextChars(s.Context.Messages())
@@ -31,7 +33,12 @@ func (s *Session) BuildStateJSON() string {
 	sessionID := s.sessionID
 	createdAt := s.createdAt
 	petKind := s.petKind
+	delays := s.Delays
 	s.mu.Unlock()
+	delayJSON := `{"entries":[]}`
+	if delays != nil {
+		delayJSON = `{"entries":` + delays.BuildEntriesFragment(catID) + `}`
+	}
 	server := "ok"
 	if isHostRestarting() {
 		server = "stopping"
@@ -46,7 +53,7 @@ func (s *Session) BuildStateJSON() string {
 		`,"reply":` + itoa64(phases.Reply) + `}` +
 		`,"requests":` + itoa64(requests) +
 		`,"note":` + s.Note.BuildJSON() +
-		`,"delay":{"entries":[]}` +
+		`,"delay":` + delayJSON +
 		`,"pending":` + s.BuildPendingFragment() +
 		`,"conn":{"server":` + jsonStr(server) + `,"clients":` + itoa(s.clientCount()) + `}` +
 		`,"tokens":{"prompt":` + itoa64(roundTokens.Prompt) +

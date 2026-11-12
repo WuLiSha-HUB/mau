@@ -74,7 +74,7 @@ func TestBuildStateJSONTokens(t *testing.T) {
 	}
 }
 
-// TestBuildStateJSONDelayNote delay 段空口径且只出声一次。
+// TestBuildStateJSONDelayNote delay 段未接线空口径且只出声一次；接线后按队列条目输出。
 func TestBuildStateJSONDelayNote(t *testing.T) {
 	dir := withSessionDirs(t)
 	s := newTestSession(t, dir, "cat-delay")
@@ -90,15 +90,24 @@ func TestBuildStateJSONDelayNote(t *testing.T) {
 	s.BuildStateJSON()
 	s.BuildStateJSON()
 	mu.Lock()
-	defer mu.Unlock()
 	count := 0
 	for _, line := range logs {
-		if strings.Contains(line, "延迟队列未实现") {
+		if strings.Contains(line, "延迟队列未接线") {
 			count++
 		}
 	}
+	mu.Unlock()
 	if count != 1 {
 		t.Fatalf("delay 空口径应只出声一次，实际 %d 次: %v", count, logs)
+	}
+	// 接线后——条目按队列输出（排序键 DueAt 升序）
+	dq := NewDelayQueue("")
+	dq.SetNowProvider(func() int64 { return 1_000_000 })
+	s.SetDelayQueue(dq)
+	dq.Add("cat-delay", "巡检", "timer", 1_500_000, 0, false)
+	state := s.BuildStateJSON()
+	if !strings.Contains(state, `"delay":{"entries":[{"id":1,"content":"巡检"`) {
+		t.Fatalf("接线后 delay 段应含队列条目:\n%s", state)
 	}
 }
 

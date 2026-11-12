@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.26.4"
+var version = "0.26.5"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -485,6 +485,8 @@ func main() {
 				case <-ticker.C:
 					toolRT.Runner.Tick()
 					wiring.Session.Pump()
+					// 延迟队列泵（c-2）——到点条目转 sys 注入队（停机态保留；对齐 C# ChatBridge.PumpDelays）
+					wiring.PumpDelays()
 					// 按猫新会话请求（cat.new-session）——仅 Idle 时执行（轮内不重建）
 					router.ConsumePendingNewSession()
 					// 重启闸门（T3/T4）——通过后接力已拉起，主循环走退出通道
@@ -525,6 +527,7 @@ func main() {
 			tick: func() {
 				toolRT.Runner.Tick()
 				wiring.Session.Pump()
+				wiring.PumpDelays()
 				router.ConsumePendingNewSession()
 			},
 			state: func() (string, int, int) {
