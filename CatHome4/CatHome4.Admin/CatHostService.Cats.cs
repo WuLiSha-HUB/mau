@@ -1735,7 +1735,8 @@ namespace CatHome4.Admin
                 ServeChatPage = true,
                 RouteRegistrar = RegisterChatPageRoutes,
                 HtmlRootProvider = HtmlRoot,
-                DisplayName = cat.DisplayName
+                DisplayName = cat.DisplayName,
+                Surface = "chat"
             });
         }
 
@@ -1780,7 +1781,8 @@ namespace CatHome4.Admin
                     ServeChatPage = true,
                     RouteRegistrar = RegisterChatPageRoutes,
                     HtmlRootProvider = HtmlRoot,
-                    DisplayName = _chatBridge.DefaultSession.DisplayName
+                    DisplayName = _chatBridge.DefaultSession.DisplayName,
+                    Surface = "chat"
                 });
             }
             catch (System.Exception ex)

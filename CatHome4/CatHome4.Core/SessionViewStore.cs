@@ -999,20 +999,6 @@ namespace CH4
                 }
             }
         }
-        /// <summary>搬运时间戳早于界限的条目——播种用（复制引用，不改对象）。</summary>
-        /// <param name="source">源容器</param>
-        /// <param name="dest">目标容器</param>
-        /// <param name="cutoff">界限（时间戳 ≥ 该值即跳过）</param>
-        private static void CopyBlocksBefore(List<ViewBlock> source, List<ViewBlock> dest, long cutoff)
-        {
-            for (int i = 0; i < source.Count; i = i + 1)
-            {
-                if (source[i].Timestamp < cutoff)
-                {
-                    dest.Add(source[i]);
-                }
-            }
-        }
 
         /// <summary>
         /// 生成前文派生视图条目——时间戳取消息 CreatedAt（A157：工具卡可指定时间戳覆盖——取工具调用声明时刻，与实时区先行卡同基点）。

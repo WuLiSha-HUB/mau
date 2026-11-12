@@ -38,6 +38,7 @@
     { "key": "node.service.ts.args", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=无附加启动参数", "desc": "ts 服务启动参数（命令行附加串）" },
     { "key": "node.service.ts.out_dir", "file": "node.cfg", "default": "", "sensitive": false, "writable": true, "empty_desc": "空=业务侧自行兜底", "desc": "ts 服务产物目录（业务侧消费）" },
     { "key": "node.service.ts.timeout_ms", "file": "node.cfg", "default": "120000", "sensitive": false, "writable": true, "type": "int", "min": "1000", "max": "120000", "desc": "ts 服务单次调用超时毫秒（含冷启动；上限与工具执行层同口径）" },
-    { "key": "node.service.ts.follow", "file": "node.cfg", "default": "false", "sensitive": false, "writable": true, "type": "bool", "desc": "ts 服务随宿主启动拉起（默认 false=首次调用时按需拉起）" }
+    { "key": "node.service.ts.follow", "file": "node.cfg", "default": "false", "sensitive": false, "writable": true, "type": "bool", "desc": "ts 服务随宿主启动拉起（默认 false=首次调用时按需拉起）" },
+    { "key": "auth.console_hash", "file": "app.cfg", "default": "", "sensitive": true, "writable": true, "empty_desc": "空=未设置 → console 免认证（与升级前行为一致）", "desc": "Console 口令哈希（PBKDF2-SHA256 编码串——仅由登录层写入；手工改坏会登录失败，删除该项即回无口令模式；A328）" }
   ]
 }

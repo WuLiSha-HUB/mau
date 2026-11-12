@@ -141,9 +141,10 @@
             <!-- 配置区 -->
             <section id="tab-config" class="tab">
                 <div id="configbar" style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--ch-line-faint);align-items:center">
-                    <span style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">有效配置项读写——列表含 schema 声明全项 + 未声明落盘键（来源列：file=落盘 / env=环境变量 / default=未落盘；「·未声明」=只读项，需在模板声明后生效）；写盘即生效（llm.* 实时读取 / ui.* 前端刷新可见）；灰置项为只读声明；API 连接三参走 LLM API 池管理</span>
+                    <span style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag);flex:1;min-width:0">有效配置项读写——列表含 schema 声明全项 + 未声明落盘键（来源列：file=落盘 / env=环境变量 / default=未落盘；「·未声明」=只读项，需在模板声明后生效）；写盘即生效（llm.* 实时读取 / ui.* 前端刷新可见）；灰置项为只读声明；API 连接三参走 LLM API 池管理</span>
                     <button id="configRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
                     <button id="openDataDir" style="background:var(--ch-bg-raised);border:1px solid var(--ch-bg-accent);color:var(--ch-ok);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">📂 打开数据目录</button>
+                    <button id="consolePwdBtn" title="设置或修改 console 口令（A328——仅主端口 API 校验）" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">🔑 改 console 口令</button>
                 </div>
                 <div style="flex:1;overflow-y:auto;padding:8px 12px">
                     <h2 style="margin:6px 0 8px;color:var(--ch-ok)">⚡ 立即生效</h2>
@@ -375,18 +376,7 @@
 
     <!-- 两页共用前端工具（loadUiVersion/applyUiConfig——js/ui-common.js 单一定义；配置接线复用 app.js loadConfig 的同一响应） -->
     <script src="js/ui-common.js?v=__V__"></script>
-    <script>loadUiVersion();</script>
-    <!-- 2026-09-08 体量治理——JS 四域外置（加载顺序：app 公共 → panel 多猫 → panel-apis API 池 → panel-catcfg 每猫配置/受控根；对话已迁 chat.html 独立页——F2.1 index 纯管理面）；__V__ 宿主注入版本号（cache-busting） -->
-    <script src="js/app.js?v=__V__"></script>
-    <script src="js/panel.js?v=__V__"></script>
-    <script src="js/panel-group.js?v=__V__"></script>
-    <script src="js/panel-apis.js?v=__V__"></script>
-    <script src="js/panel-appearance.js?v=__V__"></script>
-    <script src="js/panel-catcfg.js?v=__V__"></script>
-    <script src="js/panel-packs.js?v=__V__"></script>
-    <script src="js/panel-deps.js?v=__V__"></script>
-    <script src="js/panel-res.js?v=__V__"></script>
-    <script src="js/panel-boot.js?v=__V__"></script>
-    <script src="js/panel-db.js?v=__V__"></script>
+    <!-- A328——console 口令校验：业务脚本（app.js / panel*.js）由 js/auth.js 认证通过后按序动态加载并触发 loadUiVersion；未认证 = 页面空壳、零数据 -->
+    <script src="js/auth.js?v=__V__"></script>
 </body>
 </html>

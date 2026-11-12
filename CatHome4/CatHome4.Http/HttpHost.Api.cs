@@ -116,6 +116,20 @@ namespace CatHome4.Http
                 body = await reader.ReadToEndAsync();
             }
             string text = ExtractText(body);
+            // A328——对话端口只服务对话输入与页内自用指令（停止/继续/新会话/回滚）：其余管理指令一律拒绝
+            if (!_surfaceConsole && !IsChatPortInputAllowed(text))
+            {
+                LogStore.Add("HttpSurface", 1, "对话端口拒绝管理指令 | " + text, "A328");
+                string denyId = "cmd-" + Interlocked.Increment(ref _seq).ToString();
+                var deny = new
+                {
+                    ok = false,
+                    cmdId = denyId,
+                    frame = FlowRunner.GlobalFrame,
+                    error = "对话端口不接受管理指令（请在 console 主端口执行）: " + text
+                };
+                return Results.Json(deny);
+            }
             // A65 图片包裹——前端投递图片路径列表时由后端组装（编号取组装时刻前文条数真值；不成立时原样投递）
             if (_envelopeBuilder != null)
             {

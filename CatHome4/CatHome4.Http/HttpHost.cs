@@ -79,6 +79,12 @@ namespace CatHome4.Http
 
         /// <summary>LLM 端点池探活回调（可空=不注册 /api/v1/llm/probe）——宿主侧注入 LlmEndpointProbe.ProbeAsync（A253 扩展）</summary>
         public Func<Task<string>> LlmProbe { get; set; }
+
+        /// <summary>Console 口令校验实例（可空=不启用认证）——仅主端口注入；每猫对话端口与组端口不注入（A328）</summary>
+        public ConsoleAuth ConsoleAuth { get; set; }
+
+        /// <summary>端口面——console（主端口全量）/ chat（对话端口最小集）/ group（组端口最小集）；缺省 console（A328 端口面收缩）</summary>
+        public string Surface { get; set; }
     }
 
     /// <summary>
@@ -116,6 +122,18 @@ namespace CatHome4.Http
 
         /// <summary>LLM 端点池探活回调——宿主侧注入（LlmEndpointProbe.ProbeAsync；可空=不注册探活端点）</summary>
         private Func<Task<string>> _llmProbe;
+
+        /// <summary>Console 口令校验实例（可空=不启用认证——仅主端口注入，A328）</summary>
+        private ConsoleAuth _consoleAuth;
+
+        /// <summary>主端口面——全量端点（含配置写 / 管理指令 / 前端测试）（A328）</summary>
+        private bool _surfaceConsole = true;
+
+        /// <summary>对话端口面——只读观测 + 对话输入 + 图片音频（不含配置写与管理指令）（A328）</summary>
+        private bool _surfaceChat;
+
+        /// <summary>组端口面——组消息流 + 只读展示（不含配置写 / 对话输入 / SSE）（A328）</summary>
+        private bool _surfaceGroup;
 
         /// <summary>图片包裹组装回调——宿主侧注入（Admin 按会话前文条数拼编号；可空 = 不组装）</summary>
         private Func<string, IList<string>, string> _envelopeBuilder;
@@ -206,6 +224,21 @@ namespace CatHome4.Http
             host._dispatcher = options.Dispatcher;
             host._depsRefresh = options.DepsRefresh;
             host._llmProbe = options.LlmProbe;
+            host._consoleAuth = options.ConsoleAuth;
+            // A328 端口面——未声明 = console（主端口全量）；chat / group 各自最小集
+            host._surfaceConsole = true;
+            host._surfaceChat = false;
+            host._surfaceGroup = false;
+            if (string.Equals(options.Surface, "chat", StringComparison.OrdinalIgnoreCase))
+            {
+                host._surfaceConsole = false;
+                host._surfaceChat = true;
+            }
+            else if (string.Equals(options.Surface, "group", StringComparison.OrdinalIgnoreCase))
+            {
+                host._surfaceConsole = false;
+                host._surfaceGroup = true;
+            }
             host._envelopeBuilder = options.EnvelopeBuilder;
             host._frameBuilder = options.FrameBuilder;
             host._catsBuilder = options.CatsBuilder;
@@ -243,6 +276,20 @@ namespace CatHome4.Http
                 options.ListenLocalhost(_port);
             });
             _app = builder.Build();
+            // A328——端口面收缩：非 console 面只放行最小端点集（其余 /api/v1 请求 404）
+            if (!_surfaceConsole)
+            {
+                _app.Use(HttpSurfaceGate);
+            }
+            // A328——console 口令校验：仅主端口注入 ConsoleAuth 时启用（其余端口 null = 不校验）
+            if (_consoleAuth != null)
+            {
+                _app.Use(ConsoleAuthGate);
+                _app.MapGet("/api/v1/auth/status", (Delegate)HandleAuthStatus);
+                _app.MapPost("/api/v1/auth/login", (Delegate)HandleAuthLogin);
+                _app.MapPost("/api/v1/auth/setup", (Delegate)HandleAuthSetup);
+                _app.MapPost("/api/v1/auth/logout", (Delegate)HandleAuthLogout);
+            }
             _app.MapGet("/api/v1/snapshot", (HttpContext ctx) =>
             {
                 // 缓存快照——主线程 PumpMainThread 构建（ThreadGuard：OA.GetSnapshot 仅宿主主线程）

@@ -174,7 +174,8 @@ namespace CatHome4.Http
         {
             return key.IndexOf("api_key", StringComparison.OrdinalIgnoreCase) >= 0
                 || key.IndexOf("secret", StringComparison.OrdinalIgnoreCase) >= 0
-                || key.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0;
+                || key.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0
+                || key.IndexOf("console_hash", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         /// <summary>

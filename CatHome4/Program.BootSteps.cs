@@ -835,7 +835,9 @@ namespace CH4
                 RouteRegistrar = AdminRoutes.Register,
                 DepsRefresh = DependencyProbe.Refresh,
                 LlmProbe = LlmEndpointProbe.ProbeAsync,
-                HtmlRootProvider = new HtmlRootProvider()
+                HtmlRootProvider = new HtmlRootProvider(),
+                // A328——console 口令校验：仅主端口注入（每猫对话端口 / 组端口不注入 = 不校验）
+                ConsoleAuth = new CatHome4.Http.ConsoleAuth()
             };
             // A260 端口回退——首选端口被占时在端口段内回退；段内全占 = 无外观层（宿主继续运行）
             int mainPort = 0;

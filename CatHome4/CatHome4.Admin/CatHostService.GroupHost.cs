@@ -162,7 +162,8 @@ namespace CatHome4.Admin
                         StaticPage = "group.html",
                         RouteRegistrar = delegate (IHttpRouteSink sink) { RegisterGroupRoutes(sink, boundName); },
                         HtmlRootProvider = HtmlRoot,
-                        DisplayName = "群聊 · " + boundName
+                        DisplayName = "群聊 · " + boundName,
+                        Surface = "group"
                     });
                 }
                 catch (Exception ex)
