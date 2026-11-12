@@ -651,7 +651,7 @@ describe('GroupCat——群聊 / 派单工具（A306）', () => {
         expect(ok.textContent).toContain('不唤醒任何人');
 
         const err = window.buildToolBlock(card('group-delegate', { group: '猫窝施工大队', to: 'x', text: 'y' },
-            'ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: k9'), 'toolcard');
-        expect(err.textContent).toContain('GROUP_NOT_ADMIN');
+            'ERR|GROUP_NOT_MEMBER|调用者不是本组成员: k9'), 'toolcard');
+        expect(err.textContent).toContain('GROUP_NOT_MEMBER');
     });
 });

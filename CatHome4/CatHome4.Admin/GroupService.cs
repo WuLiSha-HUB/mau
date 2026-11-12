@@ -219,7 +219,7 @@ namespace CatHome4.Admin
             return BuildReply("group-post", g.Name, -1, extras, summary, new List<string>());
         }
 
-        /// <summary>派单（工具名 group-delegate）——写组消息 + 唤醒目标猫（同一方法内顺序完成）。</summary>
+        /// <summary>派单（工具名 group-delegate）——写组消息 + 唤醒目标猫（同一方法内顺序完成）；A337 起组员可用（对齐 group-info）。</summary>
         /// <param name="argsJson">工具参数 JSON（group / to / text 必填；refs 可选）</param>
         /// <returns>A214 回执（头行 + 摘要行）；失败为 ERR| 前缀（消息已入组时在文本中带 seq）</returns>
         public string Send(string argsJson)
@@ -259,9 +259,9 @@ namespace CatHome4.Admin
             {
                 return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
             }
-            if (!IsAdmin(g, catId))
+            if (!IsMember(g, catId))
             {
-                return "ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: " + catId;
+                return "ERR|GROUP_NOT_MEMBER|调用者不是本组成员: " + catId;
             }
             if (to.Length == 0)
             {
