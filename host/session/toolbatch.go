@@ -351,6 +351,8 @@ func (s *Session) pumpToolBatch() {
 	for _, dog := range batch {
 		s.pollOffice(office, dog)
 	}
+	// 实时面——未完成工具集合投影（完成即移除；同值零动作不产帧）
+	s.refreshToolLive()
 
 	allDone := true
 	for _, dog := range batch {
@@ -443,6 +445,31 @@ func (s *Session) flushToolCard(dog *toolDog) {
 		return
 	}
 	dog.Result = "ERR|EMPTY_RESULT|工具执行无结果"
+}
+
+// refreshToolLive 工具运行态重写——未完成工具卡数组 JSON 入 live 段（A196 状态投影）。
+//
+// 完成即从 context 移除（该卡由持久区 toolcard 承载，两区不配对）；全部收口后由收尾点写 empty。
+// 元素形态与持久工具卡载荷同构（前端复用同一渲染件）；时长三值固定 -1（进行中不造值）。
+// 同值零动作——每帧调用不产字节（帧轮据此产出零字节）。
+func (s *Session) refreshToolLive() {
+	r := s.roundState()
+	r.mu.Lock()
+	dogs := make([]*toolDog, len(r.dogs))
+	copy(dogs, r.dogs)
+	r.mu.Unlock()
+	cards := make([]string, 0, len(dogs))
+	for i, dog := range dogs {
+		if dog.IsClosed {
+			continue
+		}
+		cards = append(cards, BuildToolCard(dog.Name, s.injectCatID(dog.ArgsJSON), nil, i+1, len(dogs), -1, -1, -1))
+	}
+	context := "[]"
+	if len(cards) > 0 {
+		context = "[" + strings.Join(cards, ",") + "]"
+	}
+	s.ViewBus.SetLive(TypeToolrun, context)
 }
 
 // isToolAllowed 授权面判定——注入的实时判定优先，未接线回落会话声明面快照。

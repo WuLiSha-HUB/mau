@@ -506,8 +506,11 @@ func (s *Session) consumeStreamEvent(ev StreamEvent) {
 		}
 		r.mu.Lock()
 		r.llmResultText += ev.Text
+		replyText := r.llmResultText
 		r.mu.Unlock()
 		s.enterPhase(PhaseReply)
+		// A196 临时区——状态投影：回复流当前全文整段覆盖（前端按 type 投给渲染结构）
+		s.ViewBus.SetLive(TypeReplysse, replyText)
 	case StreamReasoning:
 		r.mu.Lock()
 		if r.sawRetry {
@@ -519,8 +522,11 @@ func (s *Session) consumeStreamEvent(ev StreamEvent) {
 		}
 		r.mu.Lock()
 		r.reasonAccum.WriteString(ev.Text)
+		reasonText := r.reasonAccum.String()
 		r.mu.Unlock()
 		s.enterPhase(PhaseThink)
+		// A196 临时区——状态投影：思考流当前全文整段覆盖
+		s.ViewBus.SetLive(TypeThinksse, reasonText)
 	case StreamToolCallsStart:
 		s.enterPhase(PhaseTool)
 	case StreamToolCalls:
@@ -763,6 +769,8 @@ func (s *Session) pumpLlm() {
 			}
 		}
 		s.Timeback.NoteEvent()
+		// A196 临时区——本轮收尾写空态（内容已由持久区承载）
+		s.ViewBus.SetLive(TypeEmpty, "")
 		if s.DrainPendingIntoRound(true) {
 			r.mu.Lock()
 			r.round = 0
@@ -785,8 +793,13 @@ func (s *Session) pumpLlm() {
 		}
 	}
 	s.Timeback.NoteEvent()
+	// 思考段整块——工具轮 seal：离开 think 态（内容由持久区 reason 块承载）+ 临时区复位
+	s.sealReasonStream()
+	s.ViewBus.SetLive(TypeEmpty, "")
 	s.enterPhase(PhaseRun)
 	s.enterToolBatch(toolCalls)
+	// A196 临时区——工具运行态：未完成工具卡数组入 context（派发即写；完成即减）
+	s.refreshToolLive()
 }
 
 // llmReasoningValue 当前思考全文。
@@ -964,11 +977,18 @@ func (s *Session) pauseFinalize() {
 		cancel()
 	}
 	s.phaseSettle()
+	// A196 临时区——中断收尾写空态（未落持久块的内容随覆盖消失，不进前文 / 存档）
+	s.sealReasonStream()
 	s.resetRetryView()
 }
 
-// sealReasonStream 思考段终结（占位——实时缓冲区空态由视图出口承担）。
-func (s *Session) sealReasonStream() {}
+// sealReasonStream 思考段终结——临时区写空态（A196 状态投影：写 empty 即清面板）。
+//
+// 思考内容由持久区 reason 整块承载。调用面：enterPhase 离开 think 态（唯一态转移出口）
+// + 工具轮 seal + 错误中止 / 暂停收尾。重复调用幂等（同值零动作）。
+func (s *Session) sealReasonStream() {
+	s.ViewBus.SetLive(TypeEmpty, "")
+}
 
 // takeReasonDuration 取走本块思考用时。
 func (s *Session) takeReasonDuration() int64 {
@@ -987,10 +1007,15 @@ func (s *Session) enterPhase(kind int) {
 	}
 	r := s.roundState()
 	now := time.Now()
+	// leaveThink 离开 think 态标记——锁外统一收口临时区（C# PhaseEnter 同口径）
+	leaveThink := false
 	r.mu.Lock()
 	if r.phaseKind == kind {
 		r.mu.Unlock()
 		return
+	}
+	if r.phaseKind == PhaseThink && kind != PhaseThink {
+		leaveThink = true
 	}
 	if r.phaseKind >= 0 && !r.phaseStart.IsZero() {
 		ms := now.Sub(r.phaseStart).Milliseconds()
@@ -1010,6 +1035,10 @@ func (s *Session) enterPhase(kind int) {
 	}
 	r.phaseStartedAt = now
 	r.mu.Unlock()
+	// 锁外推——思考段终结（幂等：无在途思考流式时同值零动作）
+	if leaveThink {
+		s.sealReasonStream()
+	}
 }
 
 // phaseSettle 结算当前运行态——累计落七态 + 态标记归零 + 快照留档。
