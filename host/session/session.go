@@ -620,6 +620,13 @@ func (s *Session) SetDelayQueue(queue *DelayQueue) {
 	s.mu.Unlock()
 }
 
+// DelayQueue 取延迟队列（nil = 未接线）——delay.* 指令族与 timer 共用的读面。
+func (s *Session) DelayQueue() *DelayQueue {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Delays
+}
+
 // SetPackProvider 接线加载包数据面——池解析 + 路径展开 + 文本读取三件（nil = 未接线）。
 func (s *Session) SetPackProvider(payload func(catKey, key string) string, resolve func(path string) (string, error), readText func(absPath string) (string, error)) {
 	s.mu.Lock()

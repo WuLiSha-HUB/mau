@@ -157,3 +157,70 @@ func TestDelayQueueNilSafe(t *testing.T) {
 		t.Fatalf("nil 队列应返回空数组: %s", got)
 	}
 }
+
+// TestDelayQueueEditOps 改时刻 / 循环开关 / 取消三面——越权 / 不存在 / 非法时刻逐字。
+func TestDelayQueueEditOps(t *testing.T) {
+	q := NewDelayQueue("")
+	q.SetNowProvider(func() int64 { return 1_000_000 })
+	q.Add("cat", "条目", "delay", 1_500_000, 60_000, false)
+	if got := q.SetDueAt("cat", 1, 1_700_000); got != "ok|#1 due="+FormatDelayTime(1_700_000) {
+		t.Fatalf("改时刻回执不符: %q", got)
+	}
+	if got := q.SetDueAt("cat", 1, 0); got != "ERR|BAD_ARGS|触发时刻非法" {
+		t.Fatalf("非法时刻文案不符: %q", got)
+	}
+	if got := q.SetDueAt("other", 1, 1_800_000); got != "ERR|DELAY_NOT_FOUND|条目不属于本会话: #1" {
+		t.Fatalf("越权文案不符: %q", got)
+	}
+	if got := q.SetDueAt("cat", 99, 1_800_000); got != "ERR|DELAY_NOT_FOUND|条目不存在: #99" {
+		t.Fatalf("不存在文案不符: %q", got)
+	}
+	if got := q.SetLoop("cat", 1, true); got != "ok|#1 循环开" {
+		t.Fatalf("循环开回执不符: %q", got)
+	}
+	if got := q.SetLoop("cat", 1, false); got != "ok|#1 循环关" {
+		t.Fatalf("循环关回执不符: %q", got)
+	}
+	if got := q.Cancel("cat", 1); got != "ok|#1 已取消" {
+		t.Fatalf("取消回执不符: %q", got)
+	}
+	if got := q.Cancel("cat", 1); got != "ERR|DELAY_NOT_FOUND|条目不存在: #1" {
+		t.Fatalf("重复取消文案不符: %q", got)
+	}
+}
+
+// TestDelayQueueSetLoopNeedsInterval 无循环时长的条目不允许开 loop（关 loop 不校验）。
+func TestDelayQueueSetLoopNeedsInterval(t *testing.T) {
+	q := NewDelayQueue("")
+	q.Add("cat", "一次性", "delay", 1_500_000, 0, false)
+	if got := q.SetLoop("cat", 1, true); got != "ERR|BAD_ARGS|条目缺少循环时长（重新登记时给定时长）: #1" {
+		t.Fatalf("缺时长文案不符: %q", got)
+	}
+	if got := q.SetLoop("cat", 1, false); got != "ok|#1 循环关" {
+		t.Fatalf("关 loop 回执不符: %q", got)
+	}
+}
+
+// TestDelayQueueListText delay.list 文本——空态 / 条目行 / 循环标 / 他猫隔离。
+func TestDelayQueueListText(t *testing.T) {
+	q := NewDelayQueue("")
+	if got := q.BuildListText("cat"); got != "延迟队列：空（本会话无待触发条目）" {
+		t.Fatalf("空态文案不符: %q", got)
+	}
+	q.SetNowProvider(func() int64 { return 1_000_000 })
+	q.Add("cat", "巡检", "delay", 1_600_000, 60_000, false)
+	want := "延迟队列：1 条（本会话）\n  #1 | " + FormatDelayTime(1_600_000) + " | delay | 巡检"
+	if got := q.BuildListText("cat"); got != want {
+		t.Fatalf("条目行不符:\ngot  %q\nwant %q", got, want)
+	}
+	if got := q.SetLoop("cat", 1, true); got != "ok|#1 循环开" {
+		t.Fatalf("循环开回执不符: %q", got)
+	}
+	wantLoop := "延迟队列：1 条（本会话）\n  #1 | " + FormatDelayTime(1_600_000) + " | delay 🔁 | 巡检"
+	if got := q.BuildListText("cat"); got != wantLoop {
+		t.Fatalf("循环标不符:\ngot  %q\nwant %q", got, wantLoop)
+	}
+	if got := q.BuildListText("other"); got != "延迟队列：空（本会话无待触发条目）" {
+		t.Fatalf("他猫应隔离: %q", got)
+	}
+}

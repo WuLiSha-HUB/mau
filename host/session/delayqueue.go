@@ -313,6 +313,117 @@ func (q *DelayQueue) BuildEntriesFragment(catKey string) string {
 	return b.String()
 }
 
+// SetDueAt 改触发时刻——重设 DueAt（前端编辑 / 手动调整时间戳）。
+//
+// 失败面逐字对齐 C# `DelayQueue.SetDueAt`：非法时刻 / 条目不属于本会话 / 条目不存在。
+func (q *DelayQueue) SetDueAt(catKey string, id, dueAt int64) string {
+	if dueAt <= 0 {
+		return "ERR|BAD_ARGS|触发时刻非法"
+	}
+	q.mu.Lock()
+	for i, entry := range q.entries {
+		if entry.ID != id {
+			continue
+		}
+		if entry.CatKey != catKey {
+			q.mu.Unlock()
+			return "ERR|DELAY_NOT_FOUND|条目不属于本会话: #" + itoa64(id)
+		}
+		q.entries = append(q.entries[:i], q.entries[i+1:]...)
+		entry.DueAt = dueAt
+		q.insertSortedLocked(entry)
+		q.saveLocked()
+		q.mu.Unlock()
+		logAt(LogModuleHost, 1, "延迟条目改时刻: id=#"+itoa64(id)+" | due="+FormatDelayTime(dueAt), "DELAY")
+		return "ok|#" + itoa64(id) + " due=" + FormatDelayTime(dueAt)
+	}
+	q.mu.Unlock()
+	return "ERR|DELAY_NOT_FOUND|条目不存在: #" + itoa64(id)
+}
+
+// Cancel 取消条目——越权校验（非本会话条目拒绝）。
+func (q *DelayQueue) Cancel(catKey string, id int64) string {
+	q.mu.Lock()
+	for i, entry := range q.entries {
+		if entry.ID != id {
+			continue
+		}
+		if entry.CatKey != catKey {
+			q.mu.Unlock()
+			return "ERR|DELAY_NOT_FOUND|条目不属于本会话: #" + itoa64(id)
+		}
+		q.entries = append(q.entries[:i], q.entries[i+1:]...)
+		q.saveLocked()
+		q.mu.Unlock()
+		logAt(LogModuleHost, 1, "延迟条目取消: id=#"+itoa64(id)+" | cat="+catKey, "DELAY")
+		return "ok|#" + itoa64(id) + " 已取消"
+	}
+	q.mu.Unlock()
+	return "ERR|DELAY_NOT_FOUND|条目不存在: #" + itoa64(id)
+}
+
+// SetLoop 切换循环标记——loop=true 需条目已有循环时长（无时长拒绝并出声）。
+func (q *DelayQueue) SetLoop(catKey string, id int64, loop bool) string {
+	q.mu.Lock()
+	for _, entry := range q.entries {
+		if entry.ID != id {
+			continue
+		}
+		if entry.CatKey != catKey {
+			q.mu.Unlock()
+			return "ERR|DELAY_NOT_FOUND|条目不属于本会话: #" + itoa64(id)
+		}
+		if loop && entry.IntervalMs <= 0 {
+			q.mu.Unlock()
+			return "ERR|BAD_ARGS|条目缺少循环时长（重新登记时给定时长）: #" + itoa64(id)
+		}
+		entry.Loop = loop
+		q.saveLocked()
+		q.mu.Unlock()
+		mark := "关"
+		if loop {
+			mark = "开"
+		}
+		logAt(LogModuleHost, 1, "延迟条目循环标记: id=#"+itoa64(id)+" | loop="+mark, "DELAY")
+		return "ok|#" + itoa64(id) + " 循环" + mark
+	}
+	q.mu.Unlock()
+	return "ERR|DELAY_NOT_FOUND|条目不存在: #" + itoa64(id)
+}
+
+// BuildListText 待触发条目文本——delay.list 回执（空表 = 明确空态）。
+//
+// 形态逐字对齐 C# `DelayQueue.BuildListText`：行间 LF（非 CRLF）· 循环带 🔁 · 已响累计。
+func (q *DelayQueue) BuildListText(catKey string) string {
+	if q == nil {
+		return "延迟队列：空（本会话无待触发条目）"
+	}
+	q.mu.Lock()
+	list := make([]DelayEntry, 0, len(q.entries))
+	for _, entry := range q.entries {
+		if entry.CatKey == catKey {
+			list = append(list, *entry)
+		}
+	}
+	q.mu.Unlock()
+	if len(list) == 0 {
+		return "延迟队列：空（本会话无待触发条目）"
+	}
+	var sb strings.Builder
+	sb.WriteString("延迟队列：" + itoa(len(list)) + " 条（本会话）")
+	for i := range list {
+		sb.WriteString("\n  #" + itoa64(list[i].ID) + " | " + FormatDelayTime(list[i].DueAt) + " | " + list[i].Source)
+		if list[i].Loop {
+			sb.WriteString(" 🔁")
+		}
+		if list[i].Fired > 0 {
+			sb.WriteString(" 已响 " + itoa(list[i].Fired))
+		}
+		sb.WriteString(" | " + list[i].Content)
+	}
+	return sb.String()
+}
+
 // nowLocked 取时钟（调用方持锁）。
 func (q *DelayQueue) nowLocked() int64 {
 	if q.now == nil {
