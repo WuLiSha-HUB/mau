@@ -793,6 +793,11 @@ func (s *Session) pumpLlm() {
 		}
 	}
 	s.Timeback.NoteEvent()
+	// 工具轮 seal——视图层补 gap text 块（全量外观真源：前端历史 / QQBot 转发消费）；空文本不写
+	// 口径对齐 C# ChatSession.cs:2888-2892（先于 SealReasonStream——实时序：间隙文本在思考块收口前落盘）
+	if s.Views != nil && resultText != "" {
+		s.Views.AppendGapText(resultText, s.ViewTimestamp())
+	}
 	// 思考段整块——工具轮 seal：离开 think 态（内容由持久区 reason 块承载）+ 临时区复位
 	s.sealReasonStream()
 	s.ViewBus.SetLive(TypeEmpty, "")
