@@ -674,65 +674,30 @@ func mountExpertText(extraBytes int64) string {
 }
 
 // handleInjectAutoGet 服务 GET /api/v1/inject/auto?cat=——读每猫自动识别开关（缺省 true）。
+//
+// 实现单点 = InjectAutoJSON（主端口条件注册版共用，不造第二份规则）。
 func (d *Deps) handleInjectAutoGet(w http.ResponseWriter, r *http.Request) {
-	catKey := r.URL.Query().Get("cat")
-	if catKey == "" {
-		catKey = "majordomo"
-	}
-	if !config.IsSafeCatKey(catKey) {
-		writeJSON(w, injectAutoGetFailResponse{OK: false, Error: "cat 参数非法: " + catKey})
-		return
-	}
-	cfg, err := config.LoadCatCfg(d.catCfgPath(catKey))
-	if err != nil || cfg == nil {
-		writeJSON(w, injectAutoGetFailResponse{OK: false, Error: "cat.cfg 不存在: " + catKey})
-		return
-	}
-	writeJSON(w, injectAutoResponse{OK: true, Cat: catKey, On: cfg.MountAuto})
+	writeRawJSON(w, d.InjectAutoJSON(r.URL.Query().Get("cat")))
 }
 
 // handleInjectAutoPost 服务 POST /api/v1/inject/auto——字段级合并写 cat.cfg.mountAuto。
 //
 // 关 = 只认手动挂载；开 = 消息里「上工/开工 X」自动挂 + 空闲自动取消。
+// 实现单点 = InjectAutoSetJSON（主端口条件注册版共用）。
 func (d *Deps) handleInjectAutoPost(w http.ResponseWriter, r *http.Request) {
 	fields, ok := readBodyFields(r)
 	if !ok {
 		writeJSON(w, injectAutoPostFailResponse{OK: false, Reason: "body 解析失败"})
 		return
 	}
-	catKey := fieldString(fields, "cat")
-	if catKey == "" {
-		catKey = "majordomo"
-	}
-	on := true
+	var on *bool
 	if raw, present := fields["on"]; present {
 		var value bool
 		if err := json.Unmarshal(raw, &value); err == nil {
-			on = value
+			on = &value
 		}
 	}
-	if !config.IsSafeCatKey(catKey) {
-		writeJSON(w, injectAutoPostFailResponse{OK: false, Reason: "cat 参数非法: " + catKey})
-		return
-	}
-	if catKey != "majordomo" {
-		writeJSON(w, injectAutoPostFailResponse{OK: false, Reason: "未找到猫：" + catKey})
-		return
-	}
-	path := d.catCfgPath("majordomo")
-	cfg, err := config.LoadCatCfg(path)
-	if err != nil || cfg == nil {
-		writeJSON(w, injectAutoPostFailResponse{OK: false, Reason: "cat.cfg 不存在: majordomo"})
-		return
-	}
-	cfg.MountAuto = on
-	if err := config.SaveCatCfg(path, cfg); err != nil {
-		d.logInject(2, "自动识别开关写入失败："+err.Error())
-		writeJSON(w, injectAutoPostFailResponse{OK: false, Reason: "cat.cfg 写入失败: " + err.Error()})
-		return
-	}
-	d.logInject(1, "自动识别开关：cat=majordomo on="+strconv.FormatBool(on))
-	writeJSON(w, injectAutoResponse{OK: true, Cat: catKey, On: on})
+	writeRawJSON(w, d.InjectAutoSetJSON(fieldString(fields, "cat"), on))
 }
 
 // fileExists 判定文件存在（非目录）。

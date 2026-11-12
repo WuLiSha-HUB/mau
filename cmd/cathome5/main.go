@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.23.4"
+var version = "0.24.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -363,6 +363,43 @@ func main() {
 		},
 	}
 	server.BindAdmin(func(mux *http.ServeMux) { admin.Register(mux, adminDeps) })
+	// [段12d] 对话页条件面（d-2）——按 C# HttpHostOptions 构造期条件注册：
+	// 仅对话页实例（--page chat.html）注入；管理面板实例（index.html）保持 404（与 C# 管理端口同构）。
+	if *pageFlag == "chat.html" {
+		server.BindContext(wiring.Session.BuildContextView)
+		server.BindKeyInfo(wiring.Session.BuildKeyInfoView)
+		server.BindFullContext(wiring.Session.BuildFullContextView)
+		server.BindEffort(
+			func() string { return adminDeps.BuildEffortJSON(wiring.CatID) },
+			func(value string) string { return adminDeps.SetEffortJSON(wiring.CatID, value) },
+		)
+		server.BindAPIRole(func() string {
+			return admin.BuildAPIRoleJSON(wiring.Session, wiring.LLMStore, wiring.CatCfg.APIConfigID)
+		})
+		server.BindAPIRoleToggle(func() string {
+			role := wiring.Session.ToggleAPIRole()
+			if wiring.Client != nil {
+				wiring.Client.SetRoleBackup(role == "备用")
+			}
+			return `{"ok":true,"role":` + session.JSONString(role) + `}`
+		})
+		server.BindAPIModels(func() string {
+			return admin.BuildAPIModelsJSON(wiring.LLMStore, wiring.CatCfg.APIConfigID, wiring.Session.APIRoleBackup(), wiring.Session.ModelOverride())
+		})
+		server.BindAPIModel(func(model string) string {
+			value := wiring.Session.SetModelOverride(model)
+			if wiring.Client != nil {
+				wiring.Client.SetModelOverride(value)
+			}
+			return `{"ok":true,"model":` + session.JSONString(value) + `}`
+		})
+		server.BindInject(
+			adminDeps.InjectProjectsJSON,
+			adminDeps.InjectProjectJSON,
+			adminDeps.InjectAutoJSON,
+			adminDeps.InjectAutoSetJSON,
+		)
+	}
 	// [段12e] mountAuto 消费面——消息里「上工/开工 <项目>」即时挂载（复用管理面挂载执行体，
 	// 清单装配仍是 buildInjectListWithMount 单点；禁第二份规则）
 	// 同段接线：catcfg.bridge 的宿主指令服务 + cat.cfg.set 的生效 / 校验面（与管理面写面同一实现）

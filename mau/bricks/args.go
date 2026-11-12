@@ -243,7 +243,8 @@ func boolArg(raw string) (bool, bool) {
 
 // MetaHeadFields 结构化元数据头（A214）——ok / tool / target / items + 调用方字段（按插入序）。
 //
-// 字段值按类型分派：bool → true/false；int / int64 → 十进制；其它按字符串转义。
+// 字段值按类型分派：bool → true/false；int / int64 → 十进制；[]string → JSON 数组（逐元素 jsonString）；
+// 其它按字符串转义。
 func MetaHeadFields(tool string, ok bool, target string, items int, fields [][2]any) string {
 	var b strings.Builder
 	b.WriteString(`{"ok":`)
@@ -281,6 +282,15 @@ func MetaHeadFields(tool string, ok bool, target string, items int, fields [][2]
 			b.WriteString(strconv.FormatFloat(v, 'f', -1, 64))
 		case string:
 			b.WriteString(jsonString(v))
+		case []string:
+			b.WriteByte('[')
+			for i, item := range v {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				b.WriteString(jsonString(item))
+			}
+			b.WriteByte(']')
 		default:
 			b.WriteString("null")
 		}

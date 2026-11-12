@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 
 	"cathome5/host/config"
 	"cathome5/host/group"
@@ -579,4 +580,86 @@ func (d *Deps) ValidateEnabledRoots(ids []string) (kept, removed []string, poolU
 // FilterInjectPaths 注入路径过滤（导出——cat.cfg.set 指令共用）。
 func (d *Deps) FilterInjectPaths(items []string) []string {
 	return filterInjectPaths(items, d)
+}
+
+// writeRawJSON 写已编码的 JSON 文本（构建器自产回执——与 writeJSON 同头部）。
+func writeRawJSON(w http.ResponseWriter, text string) {
+	w.Header().Set("Content-Type", "application/json")
+	_, _ = w.Write([]byte(text))
+}
+
+// jsonText 编码紧凑 JSON 文本——与 writeJSON 同口径（关闭 HTML 转义、去尾换行）。
+func jsonText(v any) string {
+	var buf bytes.Buffer
+	encoder := json.NewEncoder(&buf)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(v); err != nil {
+		return `{"ok":false,"error":"json encode failed"}`
+	}
+	return string(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
+}
+
+// RegisterChatInjectRoutes 主端口对话页实例的项目挂载三件——与段 12 同一实现（C# 双注册同构）。
+func RegisterChatInjectRoutes(mux *http.ServeMux, d *Deps) {
+	mux.HandleFunc("GET /api/v1/inject/projects", d.handleInjectProjectsGet)
+	mux.HandleFunc("POST /api/v1/inject/project", d.handleInjectProjectPost)
+	mux.HandleFunc("GET /api/v1/inject/auto", d.handleInjectAutoGet)
+	mux.HandleFunc("POST /api/v1/inject/auto", d.handleInjectAutoPost)
+}
+
+// InjectProjectsJSON 项目清单 JSON——主端口条件注册版数据源（同一实现，不造第二份规则）。
+func (d *Deps) InjectProjectsJSON() string { return jsonText(d.buildInjectProjects()) }
+
+// InjectProjectJSON 项目挂载写面 JSON——expert 为 nil = 沿用现值。
+func (d *Deps) InjectProjectJSON(catKey, project string, expert *bool) string {
+	expertValue := false
+	if expert != nil {
+		expertValue = *expert
+	}
+	resp, _ := d.applyInjectProject(catKey, project, expertValue, expert != nil, true)
+	return jsonText(resp)
+}
+
+// InjectAutoJSON 自动识别开关读面 JSON（缺省 cat = majordomo）。
+func (d *Deps) InjectAutoJSON(catKey string) string {
+	if catKey == "" {
+		catKey = "majordomo"
+	}
+	if !config.IsSafeCatKey(catKey) {
+		return jsonText(injectAutoGetFailResponse{OK: false, Error: "cat 参数非法: " + catKey})
+	}
+	cfg, err := config.LoadCatCfg(d.catCfgPath(catKey))
+	if err != nil || cfg == nil {
+		return jsonText(injectAutoGetFailResponse{OK: false, Error: "cat.cfg 不存在: " + catKey})
+	}
+	return jsonText(injectAutoResponse{OK: true, Cat: catKey, On: cfg.MountAuto})
+}
+
+// InjectAutoSetJSON 自动识别开关写面 JSON——on 为 nil 时默认 true（C# 主端口版同口径）。
+func (d *Deps) InjectAutoSetJSON(catKey string, on *bool) string {
+	if catKey == "" {
+		catKey = "majordomo"
+	}
+	value := true
+	if on != nil {
+		value = *on
+	}
+	if !config.IsSafeCatKey(catKey) {
+		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "cat 参数非法: " + catKey})
+	}
+	if catKey != "majordomo" {
+		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "未找到猫：" + catKey})
+	}
+	path := d.catCfgPath("majordomo")
+	cfg, err := config.LoadCatCfg(path)
+	if err != nil || cfg == nil {
+		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "cat.cfg 不存在: majordomo"})
+	}
+	cfg.MountAuto = value
+	if err := config.SaveCatCfg(path, cfg); err != nil {
+		d.logInject(2, "自动识别开关写入失败："+err.Error())
+		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "cat.cfg 写入失败: " + err.Error()})
+	}
+	d.logInject(1, "自动识别开关：cat=majordomo on="+strconv.FormatBool(value))
+	return jsonText(injectAutoResponse{OK: true, Cat: catKey, On: value})
 }

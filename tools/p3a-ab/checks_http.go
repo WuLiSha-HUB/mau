@@ -185,6 +185,25 @@ func checkSSEFrame(rep *report, side, text string) {
 	}
 }
 
+// check404Both 两侧 404 对照一条——任一侧网络失败记 FAIL；一侧非 404 记 DIFF。
+func check404Both(rep *report, label string, goRes, csRes httpResult) {
+	const cls = "404"
+	if !goRes.ok() || !csRes.ok() {
+		rep.add(cls, label+"（未注册条件路由）", stFail, describeStatus(goRes)+" / "+describeStatus(csRes))
+		return
+	}
+	if goRes.status == 404 && csRes.status == 404 {
+		rep.add(cls, label+"（未注册条件路由）", stPass, "两侧 404")
+		return
+	}
+	rep.add(cls, label+"（未注册条件路由）", stDiff, statusPair(goRes, csRes))
+}
+
+// routeFileName 路由 → 证据文件名（斜杠换下划线）。
+func routeFileName(path string) string {
+	return strings.Trim(strings.ReplaceAll(path, "/", "_"), "_")
+}
+
 // checkNotFound 对拍 404 面（未注册条件路由 / 缺失静态资源）。
 func checkNotFound(rep *report, opts options, goSide, csSide *sideState) {
 	const cls = "404"
@@ -201,6 +220,19 @@ func checkNotFound(rep *report, opts options, goSide, csSide *sideState) {
 		}
 	} else {
 		rep.add(cls, "GET /api/v1/api-role（未注册条件路由）", stDiff, statusPair(goRes, csRes))
+	}
+	// 对话页条件面（d-2）——管理面板实例不挂载（构造期条件注册；C# HttpHostOptions 同语义）
+	// 7 条：context / keyinfo / fullctx / effort(GET/POST) / api-role/toggle(POST) / api-model(POST)；
+	// inject 三条归 admin-A2（管理面已注册，200 面）。
+	conditionalGets := []string{"/api/v1/context", "/api/v1/keyinfo", "/api/v1/fullctx", "/api/v1/effort"}
+	for _, path := range conditionalGets {
+		goRes, csRes := fetchBoth(opts.outDir, "notfound_"+routeFileName(path)+".txt", goSide, csSide, path, 10*time.Second)
+		check404Both(rep, path, goRes, csRes)
+	}
+	conditionalPosts := []string{"/api/v1/effort", "/api/v1/api-role/toggle", "/api/v1/api-model"}
+	for _, path := range conditionalPosts {
+		goRes, csRes := fetchBothPOST(opts.outDir, "notfound_"+routeFileName(path)+".json", goSide, csSide, path, "{}", "application/json", 10*time.Second)
+		check404Both(rep, "POST "+path, goRes, csRes)
 	}
 	// 条件注册对照：C# 主端口注册 cats（catsBuilder 非空），Go P3-a 未绑定
 	goCats, csCats := fetchBoth(opts.outDir, "cats.json", goSide, csSide, "/api/v1/cats", 10*time.Second)

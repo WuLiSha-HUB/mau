@@ -28,6 +28,43 @@
       <HintPath>D:\Mau\MauOut\Mau.Translator.dll</HintPath>
       <Private>true</Private>
     </Reference>
+    <!-- Roslyn 编译期引用（只读引用 mauout；Private=false 不复制——运行时用下方 None 复制件） -->
+    <Reference Include="Microsoft.CodeAnalysis">
+      <HintPath>D:\Mau\MauOut\Microsoft.CodeAnalysis.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp">
+      <HintPath>D:\Mau\MauOut\Microsoft.CodeAnalysis.CSharp.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.Workspaces">
+      <HintPath>D:\Mau\MauOut\Microsoft.CodeAnalysis.Workspaces.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="Microsoft.CodeAnalysis.CSharp.Workspaces">
+      <HintPath>D:\Mau\MauOut\Microsoft.CodeAnalysis.CSharp.Workspaces.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Composition.Runtime">
+      <HintPath>D:\Mau\MauOut\System.Composition.Runtime.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Composition.AttributedModel">
+      <HintPath>D:\Mau\MauOut\System.Composition.AttributedModel.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Composition.TypedParts">
+      <HintPath>D:\Mau\MauOut\System.Composition.TypedParts.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Composition.Hosting">
+      <HintPath>D:\Mau\MauOut\System.Composition.Hosting.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="System.Composition.Convention">
+      <HintPath>D:\Mau\MauOut\System.Composition.Convention.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- 运行时依赖：Roslyn / MSBuild / 组合容器 / build host——按文件复制到输出目录 -->

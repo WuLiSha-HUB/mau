@@ -94,6 +94,10 @@ type Session struct {
 	roundRequests int64
 	// roundTools 本轮工具调用次数
 	roundTools int64
+	// apiRoleBackup 会话端点角色（true=备用；仅本会话有效——手动对调，C# ChatSession._apiRole 同语义）
+	apiRoleBackup bool
+	// modelOverride 会话级临时模型（空=跟随端点默认；不回写端点池配置）
+	modelOverride string
 }
 
 // NewSession 建立会话实体（catKey 为空时先构造、SetCatKey 后补齐落盘面）。
@@ -550,4 +554,49 @@ func (s *Session) DescribeInjection() string {
 		names = append(names, spec.Name)
 	}
 	return strings.Join(names, ",")
+}
+
+// ToggleAPIRole 手动对调端点角色——仅本会话有效（清自动窗口：用户意志优先）；返回切换后角色文本（主要/备用）。
+func (s *Session) ToggleAPIRole() string {
+	s.mu.Lock()
+	s.apiRoleBackup = !s.apiRoleBackup
+	backup := s.apiRoleBackup
+	s.mu.Unlock()
+	if backup {
+		return "备用"
+	}
+	return "主要"
+}
+
+// APIRoleText 当前端点角色文本（主要/备用）。
+func (s *Session) APIRoleText() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.apiRoleBackup {
+		return "备用"
+	}
+	return "主要"
+}
+
+// APIRoleBackup 备用态判定（true = 当前走备用站）。
+func (s *Session) APIRoleBackup() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.apiRoleBackup
+}
+
+// SetModelOverride 会话级临时模型写入——空串 = 清空覆盖（跟随端点默认模型）；不回写端点池配置。
+func (s *Session) SetModelOverride(model string) string {
+	value := strings.TrimSpace(model)
+	s.mu.Lock()
+	s.modelOverride = value
+	s.mu.Unlock()
+	return value
+}
+
+// ModelOverride 会话级临时模型（空 = 跟随端点默认）。
+func (s *Session) ModelOverride() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.modelOverride
 }

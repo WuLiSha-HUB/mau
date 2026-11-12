@@ -41,9 +41,10 @@ type Client struct {
 	ModelOverride string
 	// ReasoningEffort 每猫思考强度覆盖（空 = 跟随全局）——写入口径同 APIConfigID
 	ReasoningEffort string
+	// roleBackup 会话端点角色（true=备用站；仅本会话有效——手动对调，C# ChatSession._apiRole 同语义）
+	roleBackup bool
 	// Settings 全局配置读取（键 → 值；nil = 全默认）
-	Settings func(key string) string
-	// Failover 故障转移判定钩子（nil = 不启用；返回 true 表示已切换、可重发）
+	Settings func(key string) string // Failover 故障转移判定钩子（nil = 不启用；返回 true 表示已切换、可重发）
 	Failover func(errorText string) bool
 	// SelfTag 入站自报身份提供器（nil = 不发自报头；仅自家 apis——回环 + 18100——生效）
 	SelfTag func() session.SelfTag
@@ -73,6 +74,36 @@ func (c *Client) bindingID() string {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.APIConfigID
+}
+
+// SetModelOverride 会话级临时模型写入——空 = 跟随端点默认；返回归一后的值（不回写端点池配置）。
+func (c *Client) SetModelOverride(model string) string {
+	value := strings.TrimSpace(model)
+	c.mu.Lock()
+	c.ModelOverride = value
+	c.mu.Unlock()
+	return value
+}
+
+// ModelOverrideValue 会话级临时模型（空 = 跟随端点默认）。
+func (c *Client) ModelOverrideValue() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.ModelOverride
+}
+
+// SetRoleBackup 端点角色切换——true=备用站（会话级手动对调）；无备用端点时 target 回落主要站。
+func (c *Client) SetRoleBackup(backup bool) {
+	c.mu.Lock()
+	c.roleBackup = backup
+	c.mu.Unlock()
+}
+
+// RoleBackup 当前是否走备用站。
+func (c *Client) RoleBackup() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.roleBackup
 }
 
 // effortOverride 读当前思考强度覆盖（加锁）。
@@ -116,10 +147,15 @@ func (c *Client) APIKey() string {
 	return strings.TrimSpace(os.Getenv("DEEPSEEK_API_KEY"))
 }
 
-// target 解析目标端点配置——空身份 = 默认端点；显式身份未命中 = nil（回落环境变量）。
+// target 解析目标端点配置——备用态优先备用站；空身份 = 默认端点；显式身份未命中 = nil（回落环境变量）。
 func (c *Client) target() *APIConfig {
 	if c.Pool == nil {
 		return nil
+	}
+	if c.RoleBackup() {
+		if backup := c.Pool.ResolveBackup(); backup != nil {
+			return backup
+		}
 	}
 	binding := c.bindingID()
 	if IsZeroGUID(binding) {
@@ -130,8 +166,8 @@ func (c *Client) target() *APIConfig {
 
 // model 模型名——会话覆盖 → 端点默认 → 兜底。
 func (c *Client) model() string {
-	if c.ModelOverride != "" {
-		return c.ModelOverride
+	if override := c.ModelOverrideValue(); override != "" {
+		return override
 	}
 	if config := c.target(); config != nil && config.DefaultModel != "" {
 		return config.DefaultModel

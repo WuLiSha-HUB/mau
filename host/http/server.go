@@ -69,6 +69,18 @@ type Server struct {
 	apiModelsBuilder func() string
 	depsRefresh      func()
 	llmProbe         func() string
+	// 对话页条件面——构造期条件注册（nil 即不挂载；C# HttpHostOptions 同语义）
+	contextBuilder        func(max int) string
+	keyInfoBuilder        func(max int) string
+	fullContextBuilder    func(max int) string
+	effortBuilder         func() string
+	effortSetter          func(value string) string
+	apiRoleToggler        func() string
+	apiModelSetter        func(model string) string
+	injectProjectsBuilder func() string
+	injectProjectSetter   func(cat, project string, expert *bool) string
+	injectAutoGetter      func(cat string) string
+	injectAutoSetter      func(cat string, on *bool) string
 	// adminRegister 是管理端路由注册面（nil = 不挂载管理段；C# _routeRegistrar 同语义）
 	adminRegister func(mux *http.ServeMux)
 
@@ -153,6 +165,35 @@ func (s *Server) BindDepsRefresh(fn func()) { s.depsRefresh = fn }
 
 // BindLLMProbe 绑定端点探活；nil = 不注册。
 func (s *Server) BindLLMProbe(fn func() string) { s.llmProbe = fn }
+
+// BindContext 绑定前文条目视图（?max= 上限）；nil = 不注册 /api/v1/context。
+func (s *Server) BindContext(fn func(max int) string) { s.contextBuilder = fn }
+
+// BindKeyInfo 绑定关键信息视图；nil = 不注册 /api/v1/keyinfo。
+func (s *Server) BindKeyInfo(fn func(max int) string) { s.keyInfoBuilder = fn }
+
+// BindFullContext 绑定完整前文视图；nil = 不注册 /api/v1/fullctx。
+func (s *Server) BindFullContext(fn func(max int) string) { s.fullContextBuilder = fn }
+
+// BindEffort 绑定思考强度读写面；nil = 不注册 /api/v1/effort。
+func (s *Server) BindEffort(get func() string, set func(value string) string) {
+	s.effortBuilder = get
+	s.effortSetter = set
+}
+
+// BindAPIRoleToggle 绑定端点角色手动对调；nil = 不注册 /api/v1/api-role/toggle。
+func (s *Server) BindAPIRoleToggle(fn func() string) { s.apiRoleToggler = fn }
+
+// BindAPIModel 绑定会话级临时模型写入；nil = 不注册 /api/v1/api-model。
+func (s *Server) BindAPIModel(fn func(model string) string) { s.apiModelSetter = fn }
+
+// BindInject 绑定项目挂载三件（projects / project / auto）；nil = 不注册。
+func (s *Server) BindInject(projects func() string, project func(cat, project string, expert *bool) string, autoGet func(cat string) string, autoSet func(cat string, on *bool) string) {
+	s.injectProjectsBuilder = projects
+	s.injectProjectSetter = project
+	s.injectAutoGetter = autoGet
+	s.injectAutoSetter = autoSet
+}
 
 // BindView 绑定视图全量构建器（首帧补发用）；nil = 不推 view 帧。
 func (s *Server) BindView(fn func() string) { s.viewBuilder = fn }

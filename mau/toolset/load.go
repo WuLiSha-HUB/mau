@@ -1,5 +1,5 @@
 // Package toolset 把语料组（corpus/ch4/<组>/<组>.mau）装配成可驱动的运行时图：
-// 工具积木映射（66 件）+ 公共五积木（oa.* / self.desc）+ 组加载门禁。
+// 工具积木映射（72 件）+ 公共五积木（oa.* / self.desc）+ 组加载门禁。
 //
 // 分层：bricks（工具执行体）← 本包（积木表 + 组装配）→ graph（图）/ runtime（帧序）。
 // 门禁口径：组内引用的积木全部在本包积木表里才注册；缺件组逐条出声跳过（不静默）。
@@ -69,7 +69,7 @@ type BrickOptions struct {
 	Mau *bricks.MauService
 }
 
-// BuildBrickSet 构造积木表——66 件工具积木（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 3 / py 3）+ 公共五积木。
+// BuildBrickSet 构造积木表——72 件工具积木（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 3 / py 3 / mau 4 / temp 2）+ 公共五积木。
 //
 // 工具积木名与语料一致（text.read / file.tree / ps.exec …），参数是语料求值后的字符串切片：
 // 单动作积木取 args[0]（整包工具参数 JSON）；公共积木按各自签名取参。
@@ -90,6 +90,13 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		"self.desc": func(args []string) (string, bool) {
 			return bricks.SelfDesc(db, runtime.CurrentFlowID, args...)
+		},
+		// ── TEMP（TempToolCat 两件——临时工具注册表生产空表；Key 分发 str→str，异常回收 ERR|TEMP_EXEC）──
+		"temp.exec": func(args []string) (string, bool) {
+			return bricks.TempExec(bricks.DefaultTempRegistry, argAt(args, 0))
+		},
+		"temp.keys": func(args []string) (string, bool) {
+			return bricks.TempKeys(bricks.DefaultTempRegistry)
 		},
 		// ── Config（ConfigCat 六条认领线——配置自改 + 每猫配置读写）──
 		"config.bridge": func(args []string) (string, bool) {

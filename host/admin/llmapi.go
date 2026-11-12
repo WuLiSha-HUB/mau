@@ -245,14 +245,6 @@ func (d *Deps) handleLlmApisBackup(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, okResponse{OK: true})
 }
 
-// handleLlmApisProbe 服务 POST /api/v1/llm-apis/probe——连通性三探。
-//
-// 探活依赖上游站点协议（模型清单 / 站点信息 / 定价分组三路），归 P4 探活面；
-// 此处如实回未实现，不伪造连通结果（假绿比缺口更贵）。
-func (d *Deps) handleLlmApisProbe(w http.ResponseWriter, r *http.Request) {
-	writeErr(w, "llm-apis probe not implemented (P4)")
-}
-
 // newGUID 生成随机 GUID（v4 形态 D 文本）。
 func newGUID() string {
 	var raw [16]byte

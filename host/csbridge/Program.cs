@@ -1,4 +1,5 @@
-﻿using System.Text.Json;
+﻿using System.Reflection;
+using System.Text.Json;
 using Mau.Development;
 using Mau.Runtime;
 
@@ -24,6 +25,17 @@ public static class Program
     public static int Main(string[] args)
     {
         Console.OutputEncoding = System.Text.Encoding.UTF8;
+        // 依赖解析兜底——输出目录同名 dll 显式解析（Roslyn 4.11 依赖链在非标准加载上下文下的加载失败防护）
+        AppDomain.CurrentDomain.AssemblyResolve += (sender, e) =>
+        {
+            string name = new AssemblyName(e.Name).Name;
+            if (string.IsNullOrEmpty(name))
+            {
+                return null;
+            }
+            string path = Path.Combine(AppContext.BaseDirectory, name + ".dll");
+            return File.Exists(path) ? Assembly.LoadFrom(path) : null;
+        };
 
         int port = 8130;
         List<WorkspaceConfig.RootEntry> roots = new List<WorkspaceConfig.RootEntry>();
@@ -101,7 +113,21 @@ public static class Program
                 }
                 bool ok;
                 string result;
-                if (method == "verify_raw" || method == "gen" || method == "proj")
+                if (method == "format")
+                {
+                    // 桥侧本地 format——MefHostServices 显式装配 C# 格式化服务（mauout 无 Features 程序集，
+                    // MauRoslynBridge.Format 的 AdhocWorkspace 默认 host 报「语言"C#"不受支持」）
+                    try
+                    {
+                        ok = LocalFormat.Invoke(argsJson, roots.ToArray(), out result);
+                    }
+                    catch (Exception ex)
+                    {
+                        ok = false;
+                        result = "ERR|EX|" + ex.GetType().Name + "|" + (ex.Message + " " + ex.StackTrace);
+                    }
+                }
+                else if (method == "verify_raw" || method == "gen" || method == "proj")
                 {
                     ok = MauToolchainBridge.Invoke(method, argsJson, out result);
                 }

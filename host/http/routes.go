@@ -30,10 +30,47 @@ func (s *Server) routes() {
 	if s.apiModelsBuilder != nil {
 		s.mux.HandleFunc("GET /api/v1/api-models", s.handleAPIModels)
 	}
-	// 管理端路由表（段 1/2/4 起）——构造期装配，nil = 不挂载
+	// 对话页条件面——构造期条件注册（管理面板实例不注入 → 不挂载，C# 同构）
+	if s.contextBuilder != nil {
+		s.mux.HandleFunc("GET /api/v1/context", s.handleContext)
+	}
+	if s.keyInfoBuilder != nil {
+		s.mux.HandleFunc("GET /api/v1/keyinfo", s.handleKeyInfo)
+	}
+	if s.fullContextBuilder != nil {
+		s.mux.HandleFunc("GET /api/v1/fullctx", s.handleFullContext)
+	}
+	if s.effortBuilder != nil {
+		s.mux.HandleFunc("GET /api/v1/effort", s.handleEffortGet)
+	}
+	if s.effortSetter != nil {
+		s.mux.HandleFunc("POST /api/v1/effort", s.handleEffortPost)
+	}
+	if s.apiRoleToggler != nil {
+		s.mux.HandleFunc("POST /api/v1/api-role/toggle", s.handleAPIRoleToggle)
+	}
+	if s.apiModelSetter != nil {
+		s.mux.HandleFunc("POST /api/v1/api-model", s.handleAPIModelPost)
+	}
+	// 项目挂载三件——管理面已注册同名路由（段 12 同一实现）：此处不重复注册（ServeMux 同模式重复注册会 panic）。
+	// 管理面未挂载时由条件面补挂（C# 对话页实例 RouteRegistrar 同语义）。
 	if s.adminRegister != nil {
 		s.adminRegister(s.mux)
+	} else {
+		if s.injectProjectsBuilder != nil {
+			s.mux.HandleFunc("GET /api/v1/inject/projects", s.handleInjectProjects)
+		}
+		if s.injectProjectSetter != nil {
+			s.mux.HandleFunc("POST /api/v1/inject/project", s.handleInjectProjectPost)
+		}
+		if s.injectAutoGetter != nil {
+			s.mux.HandleFunc("GET /api/v1/inject/auto", s.handleInjectAutoGet)
+		}
+		if s.injectAutoSetter != nil {
+			s.mux.HandleFunc("POST /api/v1/inject/auto", s.handleInjectAutoPost)
+		}
 	}
+	// 管理端路由表（段 1/2/4 起）——构造期装配，nil = 不挂载
 
 	// 静态面——全部禁缓存（fonts 长缓存），路径穿越校验
 	s.mux.HandleFunc("GET /{$}", s.handleIndex)
