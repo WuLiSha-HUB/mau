@@ -1,0 +1,29 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AssemblyName>MauProbe</AssemblyName>
+    <RootNamespace>MauProbe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Mau.Runtime">
+      <HintPath>ref\Mau.Runtime.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Mau.Contracts">
+      <HintPath>ref\Mau.Contracts.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="FL_TextCat">
+      <HintPath>ref\FL_TextCat.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+</Project>

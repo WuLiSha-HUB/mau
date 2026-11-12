@@ -1,0 +1,197 @@
+package main
+
+import (
+	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
+
+	"cathome5/host/admin"
+	"cathome5/host/config"
+	"cathome5/host/llm"
+	"cathome5/host/session"
+	"cathome5/host/toolpool"
+)
+
+// sessionWiring 是会话装配结果——宿主主流程需要的全部句柄。
+type sessionWiring struct {
+	// Session 会话实体
+	Session *session.Session
+	// CatID 会话 key（猫 key）
+	CatID string
+	// DisplayName 显示名
+	DisplayName string
+	// Authorized 当前授权工具名（实时口径快照）
+	Authorized []string
+	// Err 装配降级原因（空 = 正常）
+	Err string
+	// Client LLM 客户端（端点切换的运行时句柄）
+	Client *llm.Client
+	// LLMStore 端点池存储（管理面与请求面共用同一实例——写入即时可见）
+	LLMStore *config.LlmAPIStore
+	// CatCfg 本猫配置（dbLibs 等库级授权字段的数据源）
+	CatCfg *config.CatCfg
+}
+
+// wireSession 装配默认会话——cat.cfg + 前文 + 视图 + 工具面 + LLM 客户端。
+//
+// 失败面全部降级出声：cat.cfg 缺失按默认值、前文缺失按空、LLM 端点缺失由请求期诚实报错。
+func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult *toolpool.BuildResult, schema *config.Schema, store *config.Store) *sessionWiring {
+	wiring := &sessionWiring{CatID: "majordomo", DisplayName: "majordomo"}
+	catID := wiring.CatID
+	catDir := filepath.Join(dataRoot, "sessions", catID)
+	cfgPath := filepath.Join(catDir, "cat.cfg")
+	cfg, err := config.LoadCatCfg(cfgPath)
+	if err != nil {
+		wiring.Err = "cat.cfg 读取失败（按默认值）: " + err.Error()
+		cfg = &config.CatCfg{ID: catID, DisplayName: catID}
+	}
+	if cfg.ID != "" {
+		catID = cfg.ID
+		wiring.CatID = catID
+	}
+	if cfg.DisplayName != "" {
+		wiring.DisplayName = cfg.DisplayName
+	}
+	wiring.CatCfg = cfg
+
+	sessionStore := session.NewSessionStore(filepath.Join(dataRoot, "sessions", catID, catID+".jsonl"))
+	// 元数据落点——sessions/<id>/<id>.session.json（P3-c 单会话；多猫归 P3-d）
+	session.SessionMetaPathProvider = func(key string) string {
+		return filepath.Join(dataRoot, "sessions", key, key+".session.json")
+	}
+	messages, _ := sessionStore.TryLoad()
+	ctx := session.NewContext()
+	if len(messages) > 0 {
+		ctx.ReplaceMessages(messages)
+	}
+	views := session.NewViewStore(filepath.Join(dataRoot, "sessions", catID, catID+".view.jsonl"))
+	views.Load()
+	sess := session.NewSession(catID, ctx, sessionStore, views)
+	sess.SetDisplayName(wiring.DisplayName)
+	// 桌宠种类——外观池解析（cat.cfg appearanceId 零值 = 跟随默认外观；池缺失 / 引用失效 = 空 = 无桌宠）
+	sess.SetPetKind(resolvePetKind(dataRoot, cfg.AppearanceID))
+	wiring.Session = sess
+
+	// 工具面——授权集实时口径快照 → 声明面裁剪 → 会话快照优先（A221：重启不改面，仅 session.new 换新）
+	includePrivileged := toolpool.IsDefaultCatKey(catID)
+	authorized := toolsResult.Registry.ResolveToolNames(cfg.ToolNames, includePrivileged)
+	wiring.Authorized = authorized
+	defs := toolsResult.Registry.FilterToolSpecs(authorized, includePrivileged)
+	poolSpecs := make([]session.ToolSpec, 0, len(defs))
+	for _, def := range defs {
+		poolSpecs = append(poolSpecs, session.ToolSpec{Name: def.Name, Description: def.Description, ParametersJSON: def.ParametersJSON})
+	}
+	// 持久化快照优先（旧档 / 首建回落池面；退役剔除出声）——与 C# ChatSession.ResolveSessionTools 同序
+	sess.SetToolSpecs(session.ResolveSessionTools(catID, poolSpecs))
+
+	// LLM 客户端——端点池 + 密钥 + 全局配置读取（存储与管理面共用同一实例）
+	llmStore := config.LoadLlmAPIStore(
+		filepath.Join(dataRoot, "config", "llm-api.json"),
+		filepath.Join(dataRoot, "secrets", "llm-api.cfg"),
+	)
+	if llmStore.LastError() != "" {
+		wiring.Err = llmStore.LastError()
+	}
+	wiring.LLMStore = llmStore
+	pool := llm.NewPoolFromStore(llmStore)
+	client := &llm.Client{
+		Pool:            pool,
+		APIConfigID:     cfg.APIConfigID,
+		ReasoningEffort: cfg.ReasoningEffort,
+		Settings: func(key string) string {
+			return store.Resolve(schema, key).Value
+		},
+	}
+	llm.Logf = func(level int, message string) {
+		session.Logf("LLM", level, message, "LLM")
+	}
+	sess.SetStreamer(&llm.SessionStreamer{Client: client})
+	wiring.Client = client
+	sess.SetCacheUserID(resolveCacheIsolationKey(store, schema, catID))
+	// 入站自报身份——自家 apis（回环 + 18100）请求附加头数据源；挂载项按 cat.cfg 初值
+	client.SelfTag = sess.SelfTag
+	sess.SetClientID("cat-home5/" + version)
+	sess.SetSelfTagMount(cfg.ProjectMount, admin.MountModeText(cfg.ProjectMount, cfg.ProjectMountExpert), admin.BuildJobList(cfg.InjectList))
+
+	// 授权面——特权 + 注册表 + 当前名单（与 C# IsToolAllowed 同序）
+	authorizedSet := make(map[string]bool, len(authorized))
+	for _, name := range authorized {
+		authorizedSet[name] = true
+	}
+	sess.SetAuthorizer(func(name string) bool {
+		if toolsResult.Registry.IsPrivilegedName(name) && !sess.IsDefaultSession() {
+			return false
+		}
+		if _, ok := toolsResult.Registry.Find(name); !ok {
+			return false
+		}
+		return authorizedSet[name]
+	})
+	sess.SetBuiltinExecutor(func(name string) bool {
+		entry, ok := toolsResult.Registry.Find(name)
+		return ok && entry.IsBuiltin
+	}, sess.ExecuteBuiltin)
+	// 非内置执行体——P3-c 未接 OA/积木执行面：显式 nil → 诚实 ERR（不静默降级）
+	sess.SetToolExecutor(nil)
+
+	// 环境自省——info 内置工具数据源（只给可计算段，不造值）
+	sess.SetInfoProvider(func() string {
+		return buildInfoJSON(sess, workspace, catID, wiring.DisplayName)
+	})
+	return wiring
+}
+
+// resolvePetKind 解析猫的桌宠种类——cat.cfg appearanceId 零值 / 非法 = 跟随默认外观；
+// 池缺失或引用失效 = 空串（无桌宠——前端按空值不渲染，不回落默认素材）。
+func resolvePetKind(dataRoot, appearanceID string) string {
+	pool := config.LoadAppearancePool(filepath.Join(dataRoot, "config", "appearance.json"))
+	if len(pool) == 0 {
+		return ""
+	}
+	target := config.ParseGUID(appearanceID)
+	if target == "" || config.IsZeroGUID(target) {
+		for _, entry := range pool {
+			if entry.IsDefault {
+				return entry.PetKind
+			}
+		}
+		return ""
+	}
+	for _, entry := range pool {
+		if entry.AppearanceID == target {
+			return entry.PetKind
+		}
+	}
+	return ""
+}
+
+// resolveCacheIsolationKey 缓存隔离键——llm.cache_isolation：cat=猫键 / off=空；其余按猫键。
+func resolveCacheIsolationKey(store *config.Store, schema *config.Schema, catID string) string {
+	mode := strings.TrimSpace(store.Resolve(schema, "llm.cache_isolation").Value)
+	if mode == "off" {
+		return ""
+	}
+	return catID
+}
+
+// buildInfoJSON 构建 info 内置工具返回块——只输出可计算段（时间 / LLM / 根表 / 前文长度 / 包挂载）。
+func buildInfoJSON(sess *session.Session, workspace *config.WorkspaceConfig, catID, displayName string) string {
+	var roots []string
+	if workspace != nil {
+		for _, root := range workspace.Roots {
+			roots = append(roots, `{"id":`+session.JSONString(root.ID)+
+				`,"writable":`+strconv.FormatBool(root.Writable)+
+				`,"path":`+session.JSONString(root.Path)+`}`)
+		}
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	return "{\n" +
+		`  "version": {"version": ` + session.JSONString(version) + `},` + "\n" +
+		`  "time": {"now": ` + session.JSONString(now) + `},` + "\n" +
+		`  "llm": {"cat": ` + session.JSONString(catID) + `, "name": ` + session.JSONString(displayName) + `},` + "\n" +
+		`  "roots": [` + strings.Join(roots, ",") + `],` + "\n" +
+		`  "tokens": {"context": ` + strconv.FormatInt(sess.ContextTokensKnown(), 10) + `},` + "\n" +
+		`  "tools": {"declared": ` + strconv.Itoa(len(sess.ToolSpecs())) + `}` + "\n" +
+		"}"
+}

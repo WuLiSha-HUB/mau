@@ -1,0 +1,9 @@
+# 构建产物（Go 宿主 / .NET 桥）——可重建，不入历史
+bin/
+obj/
+
+# 对拍报告（可重跑生成，不是真相源）
+tools/*/reports/
+
+# 仓库根旧残留可执行（构建入口是 bin/cathome5.exe）
+/cathome5.exe

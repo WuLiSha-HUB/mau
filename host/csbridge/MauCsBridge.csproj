@@ -1,0 +1,42 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MauCsBridge</AssemblyName>
+    <RootNamespace>MauCsBridge</RootNamespace>
+    <!-- 引用源 = mauout 运行区（只读引用，不触发 mau 仓库构建）。
+         失败面：MSB3277 版本冲突为已知噪音（Roslyn 4.11 与 .NET 10 平台引用并存）。 -->
+    <NoWarn>MSB3277</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="Mau.Development">
+      <HintPath>D:\Mau\MauOut\Mau.Development.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Mau.Runtime">
+      <HintPath>D:\Mau\MauOut\Mau.Runtime.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Mau.Contracts">
+      <HintPath>D:\Mau\MauOut\Mau.Contracts.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Mau.Translator">
+      <HintPath>D:\Mau\MauOut\Mau.Translator.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <!-- 运行时依赖：Roslyn / MSBuild / 组合容器 / build host——按文件复制到输出目录 -->
+  <ItemGroup>
+    <None Include="D:\Mau\MauOut\Microsoft.*.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="D:\Mau\MauOut\System.Composition.*.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="D:\Mau\MauOut\System.Reflection.MetadataLoadContext.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="D:\Mau\MauOut\Newtonsoft.Json.dll" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="D:\Mau\MauOut\BuildHost-netcore\**\*" CopyToOutputDirectory="PreserveNewest" LinkBase="BuildHost-netcore" />
+  </ItemGroup>
+
+</Project>
