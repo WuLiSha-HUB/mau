@@ -132,6 +132,31 @@ namespace CH4
         }
 
         /// <summary>
+        /// 收拢摘要——A331（2026-11-12 莎裁）：域闭合后整段回收（start 声明 / start 结果 / 域内过程 / back 声明 / back 结果）
+        /// 全部离开前文，由此**一条** systemauto user 消息取代——它是留在前文的唯一域痕迹（来源族名 `timeback`）。
+        /// 与域规范卡的分工：卡 = 开域告知（活跃期存在，随区间回收）；本件 = 闭合交代（回收的产物，长期留存）。
+        /// </summary>
+        /// <param name="type">域类型（TimebackProfile 枚举）</param>
+        /// <param name="purpose">用途标签</param>
+        /// <param name="id">作用域编号</param>
+        /// <param name="released">整段回收的前文条数</param>
+        /// <param name="grewTokens">域内净增 token（开锚快照 → 闭合时刻的实测差）</param>
+        /// <param name="tools">域内工具调用次数</param>
+        /// <param name="seconds">域存活秒数</param>
+        /// <param name="findings">带回载荷（原样保留——它是域内唯一被带出前文的工作结论）</param>
+        /// <returns>摘要文本（单条 user 消息载荷）</returns>
+        public static string Summary(string type, string purpose, long id, int released, long grewTokens, int tools, long seconds, string findings)
+        {
+            StringBuilder text = new StringBuilder();
+            text.Append("（系统自动 · timeback #").Append(id.ToString()).Append(" 域已闭合）");
+            text.Append(type).Append(" · 用途「").Append(purpose).Append("」· ").Append(seconds.ToString()).Append(" 秒");
+            text.Append("\n📉 整段回收 ").Append(released.ToString()).Append(" 条前文（含 start / back 两张卡）· 域内节约 ").Append(grewTokens.ToString()).Append(" token · 工具使用 ").Append(tools.ToString()).Append(" 次");
+            text.Append("\n\n").Append(findings);
+            text.Append("\n\n").Append(Readback(type));
+            return text.ToString();
+        }
+
+        /// <summary>
         /// 浏览器操作指引——仅 `browser_vision` 域追加（§十一 卡扩展 · 2026-10-10）。
         /// 承载时机敏感、易踩的操作面（寻路 / 取值 / 截图落点 / 看图分流 / 扒图链 / 边界）。
         /// </summary>

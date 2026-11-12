@@ -232,11 +232,32 @@ namespace CatHome4.Core.Tests
             return false;
         }
 
+        /// <summary>取 timeback 收拢摘要正文——前文里唯一含「timeback #」的 user 消息（无则空串）。</summary>
+        /// <param name="session">会话</param>
+        /// <returns>摘要全文</returns>
+        private static string SummaryText(CH4.ChatSession session)
+        {
+            LlmMessage[] all = session.Context.GetMessages();
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                if (all[i].Role != LlmRole.User)
+                {
+                    continue;
+                }
+                string content = all[i].Content == null ? "" : all[i].Content;
+                if (content.Contains("timeback #", StringComparison.Ordinal))
+                {
+                    return content;
+                }
+            }
+            return "";
+        }
+
         /// <summary>
-        /// 跨轮取证——start → 查证（info）→ back：区间删除后前文只留两次调用对与结论。
+        /// 跨轮取证（A331 改口径）——start → 查证（info）→ back：整段收拢后前文只剩 user / sys 摘要 / 结论轮回复。
         /// </summary>
         [Fact]
-        public void Back_DeletesScopeRange_KeepsBothCalls()
+        public void Back_CollapsesScopeRange_KeepsSummaryOnly()
         {
             MockLlm llm = new MockLlm();
             CH4.ChatSession session = CreateSession(llm);
@@ -246,39 +267,19 @@ namespace CatHome4.Core.Tests
             session.PostUserMessage("开始取证");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "msgCount=" + session.Context.GetMessageCount().ToString() + " phase=" + session.Phase.ToString() + " round=" + session.Round.ToString());
-            // 前文：[user][start 声明][start 结果][back 声明][back 结果][结论轮回复] = 6 条
-            Assert.Equal(6, session.Context.GetMessageCount());
-            // 两次调用对保留——assistant 声明（ToolCallsJson）仍在
+            // 前文：[user][sys 摘要][结论轮回复] = 3 条（声明 / 结果 / 域内过程整段移出）
+            Assert.Equal(3, session.Context.GetMessageCount());
             LlmMessage[] all = session.Context.GetMessages();
-            bool hasStartDecl = false;
-            bool hasBackDecl = false;
+            // 两次调用对亦不保留——域闭合后前文零 timeback 痕迹
             for (int i = 0; i < all.Length; i = i + 1)
             {
                 string tcJson = all[i].ToolCallsJson == null ? "" : all[i].ToolCallsJson;
-                if (all[i].Role != LlmRole.Assistant || !tcJson.Contains("timeback", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                if (tcJson.Contains("start", StringComparison.Ordinal))
-                {
-                    hasStartDecl = true;
-                }
-                if (tcJson.Contains("back", StringComparison.Ordinal))
-                {
-                    hasBackDecl = true;
-                }
+                Assert.DoesNotContain("timeback", tcJson);
             }
-            Assert.True(hasStartDecl);
-            Assert.True(hasBackDecl);
-            // 结论 = back 的工具返回值（tool 消息）
-            Assert.True(HasMessage(session, LlmRole.Tool, "结论：目录 85 个"));
-            // 返回值元数据——释放条数（back 时刻预算）+ 前文长度快照与净增（真实 usage 值；测试环境尚未请求 → 0）
-            string backResult = ToolResultText(session, 1);
-            // 释放条数 3 = 域规范卡（§十一——卡注在区间内，随回收一并删）+ info 调用声明 + 其结果
-            Assert.Contains("\"items\":3", backResult);
-            Assert.Contains("\"tokens\":0", backResult);
-            Assert.Contains("\"grew\":0", backResult);
-            // 查证过程（info 调用声明）已删——只看调用声明（back 回执的工具台账正文提及工具名不算残留）
+            // 结论 = sys 摘要（user 角色）里的 findings
+            Assert.True(HasMessage(session, LlmRole.User, "结论：目录 85 个"));
+            Assert.True(HasMessage(session, LlmRole.User, "整段回收 7 条前文"));
+            // 查证过程（info 调用声明）已删——只看调用声明（台账正文提及工具名不算残留）
             for (int i = 0; i < all.Length; i = i + 1)
             {
                 Assert.DoesNotContain("info", all[i].ToolCallsJson == null ? "" : all[i].ToolCallsJson);
@@ -292,8 +293,13 @@ namespace CatHome4.Core.Tests
         /// back 声明思考净化（莎 2026-10-09 定）——回收后 back 声明的 ReasoningContent 换占位句；
         /// start 声明的思考保留（工具需求生成过程）；视图层保留原文（不动）。
         /// </summary>
+        /// <summary>
+        /// A331 整段回收——域闭合后前文不留 start / back 声明，也不留域内过程：
+        /// `[start 声明][start 结果][域内过程][back 声明][back 结果]` 全部移出，原位只留一条 sys 摘要。
+        /// （原「start 思考保留 / back 思考换占位句」的净化口径随整段删除退役——声明本身已不在前文。）
+        /// </summary>
         [Fact]
-        public void Back_ClearsBackDeclarationReasoning()
+        public void Back_CollapsesWholeScope_NoDeclarationsInContext()
         {
             MockLlm llm = new MockLlm();
             CH4.ChatSession session = CreateSession(llm);
@@ -307,35 +313,17 @@ namespace CatHome4.Core.Tests
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
             LlmMessage[] all = session.Context.GetMessages();
-            string startReason = "";
-            string backReason = "";
+            // 前文零域痕迹——start / back 声明与域内过程（含两轮思考）全部移出
             for (int i = 0; i < all.Length; i = i + 1)
             {
                 string tcJson = all[i].ToolCallsJson == null ? "" : all[i].ToolCallsJson;
-                if (all[i].Role != LlmRole.Assistant || !tcJson.Contains("timeback", StringComparison.Ordinal))
-                {
-                    continue;
-                }
-                if (tcJson.Contains("timeback-start", StringComparison.Ordinal))
-                {
-                    startReason = all[i].ReasoningContent == null ? "" : all[i].ReasoningContent;
-                }
-                if (tcJson.Contains("timeback-back", StringComparison.Ordinal))
-                {
-                    backReason = all[i].ReasoningContent == null ? "" : all[i].ReasoningContent;
-                }
-            }
-            // start 声明——思考保留原文
-            Assert.Contains("开域计划", startReason, StringComparison.Ordinal);
-            // back 声明——思考已换占位句（断言原文不残留）
-            Assert.Equal("原思考内容已因锚回收被清除", backReason);
-            // 查证轮的思考随区间删除——前文零残留
-            for (int i = 0; i < all.Length; i = i + 1)
-            {
+                Assert.DoesNotContain("timeback", tcJson);
                 Assert.DoesNotContain("域内巡检", all[i].ReasoningContent == null ? "" : all[i].ReasoningContent);
+                Assert.DoesNotContain("开域计划", all[i].ReasoningContent == null ? "" : all[i].ReasoningContent);
             }
-            // 视图层不动——原文仍可回看
-            Assert.True(ViewHas(session, "均已查完"));
+            // 原位留一条 sys 摘要——域编号 + 用途 + findings 一处交代
+            Assert.True(HasMessage(session, LlmRole.User, "timeback #1 域已闭合"));
+            Assert.True(HasMessage(session, LlmRole.User, "成果：（无）"));
         }
 
         /// <summary>
@@ -564,8 +552,8 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 回执自带用途（2026-10-01 · B 档 / §十一 改）——start 回执**结构化头**含 purpose（第一个保留的工具对自解释；
-        /// 正文自 §十一 起为空，故断言面取头字段）；back 结构化头含 purpose（回收卡自解释——不必回翻锚定声明）。
+        /// 用途自解释（2026-10-01 · B 档；A331 改载体）——start / back 两张卡整段离开前文后，
+        /// 用途由 sys 摘要承载（闭合交代自解释：类型 + 用途 + 用时一行给全）。
         /// </summary>
         [Fact]
         public void Back_MetaCarriesPurpose()
@@ -577,15 +565,15 @@ namespace CatHome4.Core.Tests
             llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-back", "t2", "{\"findings\":\"结论：验证\\n事实：（无）\\n指针：（无）\"}"));
             session.PostUserMessage("开始取证");
             PumpUntilIdle(session);
-            Assert.Contains("\"purpose\":\"回执用途验证\"", ToolResultText(session, 0));
-            Assert.Contains("\"purpose\":\"回执用途验证\"", ToolResultText(session, 1));
+            Assert.True(HasMessage(session, LlmRole.User, "用途「回执用途验证」"));
+            Assert.True(HasMessage(session, LlmRole.User, "text_search · 用途「回执用途验证」"));
         }
 
         /// <summary>
-        /// 同批 start + back——无可删区间（两次调用同一批），作用域照常关闭。
+        /// 同批 start + back（A331）——整段（声明 + 两个结果）收拢为一条 sys 摘要，作用域照常关闭。
         /// </summary>
         [Fact]
-        public void StartAndBackInSameBatch_DeletesNothing()
+        public void StartAndBackInSameBatch_CollapsesToSummary()
         {
             MockLlm llm = new MockLlm();
             CH4.ChatSession session = CreateSession(llm);
@@ -597,18 +585,19 @@ namespace CatHome4.Core.Tests
             session.PostUserMessage("同批开收");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle);
-            // user + 声明 + 两个结果 + 结论轮回复 = 5 条（无删除）
-            Assert.Equal(5, session.Context.GetMessageCount());
-            Assert.True(HasMessage(session, LlmRole.Tool, "结论：同批"));
+            // user + sys 摘要 + 结论轮回复 = 3 条（声明与两个结果整段移出）
+            Assert.Equal(3, session.Context.GetMessageCount());
+            Assert.True(HasMessage(session, LlmRole.User, "结论：同批"));
             Assert.False(session.TimebackActive);
         }
 
         /// <summary>
-        /// 同批多调用——start 与另一工具同批时，start 的完整结果块必须原样保留。
-        /// （回归：曾按「声明 + 1」算保留边界，把同批其余结果误删 → 格式修复补「宿主中断」占位）
+        /// 同批多调用（A331 改口径）——sibling 工具（info）与 start 同批时同属域内，随整段一并收拢：
+        /// 前文不留声明与结果（原「start 结果块必须原样保留」的回归口径随整段回收退役），
+        /// 域内做了什么由 sys 摘要的工具次数交代。
         /// </summary>
         [Fact]
-        public void StartBatchWithSiblingTool_KeepsAllResults()
+        public void StartBatchWithSiblingTool_CollapsesSiblings()
         {
             MockLlm llm = new MockLlm();
             CH4.ChatSession session = CreateSession(llm);
@@ -622,12 +611,11 @@ namespace CatHome4.Core.Tests
             session.PostUserMessage("同批多调用取证");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
-            // 前文：user + 声明(2 调用) + 结果×2 + back 声明 + back 结果 + 结论轮回复 = 7 条
-            Assert.Equal(7, session.Context.GetMessageCount());
-            // start 的真实结果保留（非「宿主中断」占位）——§十一 起回执只留结构化头
-            Assert.Contains("\"tool\":\"timeback-start\"", ToolResultText(session, 0));
-            Assert.DoesNotContain("宿主中断", ToolResultText(session, 1));
-            Assert.True(HasMessage(session, LlmRole.Tool, "结论：多调用"));
+            // user + sys 摘要 + 结论轮回复 = 3 条（声明与三份结果整段移出）
+            Assert.Equal(3, session.Context.GetMessageCount());
+            Assert.True(HasMessage(session, LlmRole.User, "结论：多调用"));
+            // 域内两个 info 调用计入台账——摘要情报行给次数（明细在归档）
+            Assert.True(HasMessage(session, LlmRole.User, "工具使用 2 次"));
         }
 
         /// <summary>
@@ -839,11 +827,20 @@ namespace CatHome4.Core.Tests
         /// 工具台账——域内**用过的每个工具**逐条登记（宿主记录；含只读与被拒——莎 2026-10-09 定：谨慎口径，记全），
         /// 唯域机制自用两件（start / back）不入账；back 回执附于 findings 之前。
         /// </summary>
+        /// <summary>
+        /// 摘要情报行 + 台账归属（A331）——摘要给整段回收口径（条数 / 节约 token / 工具使用数）；
+        /// 台账明细（含只读与被拒、DENY 单列）归归档首行 meta：摘要只留次数，明细不挤前文。
+        /// </summary>
         [Fact]
-        public void Back_ReceiptCarriesWriteLog()
+        public void Back_SummaryCarriesCounts_ArchiveCarriesTools()
         {
             MockLlm llm = new MockLlm();
+            string archiveDir = Path.Combine(Path.GetTempPath(), "cat4tb_writelog_" + Guid.NewGuid().ToString("N"));
             CH4.ChatSession session = CreateSession(llm);
+            CH4.ChatSession.TimebackArchiveDirProvider = delegate (string catKey)
+            {
+                return archiveDir;
+            };
             llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-start", "s1", "{\"type\":\"text_search\",\"purpose\":\"台账验证\"}"));
             session.PostUserMessage("开锚");
             PumpUntilIdle(session);
@@ -856,20 +853,21 @@ namespace CatHome4.Core.Tests
             llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-back", "s4", "{\"findings\":\"成果：台账验证\\n未竟：（无）\"}"));
             session.PostUserMessage("收域");
             PumpUntilIdle(session);
-            string receipt = ToolResultText(session, 1);
-            // 情报行——返回体正文自带裁剪读数（条数 / 节约 token / 工具使用数）
-            Assert.Contains("📉 释放 ", receipt);
-            Assert.Contains("域内节约 ", receipt);
-            Assert.Contains("工具使用 2 次（详见下表）", receipt);
-            // 台账头声明全量口径（含只读与被拒）
-            Assert.Contains("本域工具台账 · 宿主记录 · 2 条 · 含只读与被拒", receipt);
-            // 被拒工具（host-reload 撞 C5）入账并记 DENY（拒与败分列）
-            Assert.Contains("host-reload", receipt);
-            Assert.Contains("DENY", receipt);
-            // 只读工具（time）同样入账——全量口径（原「只读不入账」已退役）
-            Assert.Contains("time · ", receipt);
-            // 机制自用两件不入账——台账里不出现 back 自身
-            Assert.DoesNotContain("timeback-back · ", receipt);
+            // 摘要情报行——整段回收口径（条数 / 节约 token / 工具使用数）
+            string summary = SummaryText(session);
+            Assert.Contains("📉 整段回收 ", summary);
+            Assert.Contains("域内节约 ", summary);
+            Assert.Contains("工具使用 2 次", summary);
+            // 台账明细归归档——被拒工具记 DENY（拒与败分列）· 只读工具同样入账 · 机制自用两件不入账
+            string[] files = Directory.GetFiles(archiveDir, "*.jsonl");
+            Assert.Single(files);
+            string meta = File.ReadAllLines(files[0])[0];
+            Assert.Contains("host-reload", meta);
+            Assert.Contains("DENY", meta);
+            Assert.Contains("time · ", meta);
+            Assert.DoesNotContain("timeback-back · ", meta);
+            CH4.ChatSession.TimebackArchiveDirProvider = null;
+            Directory.Delete(archiveDir, true);
         }
 
         /// <summary>
@@ -886,10 +884,11 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 被删区间的视图块转 gap——人可见面保住查证过程（且落在 Rebuild 不清的容器）。
+        /// 被回收区间的视图块（A331）——视图层**原样保留**：两张 timeback 卡与域内工具卡照旧在对话区，
+        /// 摘要以一条 systemautomessage 条目额外插入（单块追加帧，不做全量重绘）。
         /// </summary>
         [Fact]
-        public void DeletedRange_ViewConvertedToGap()
+        public void DeletedRange_ViewKeepsCardsAppendsSummary()
         {
             MockLlm llm = new MockLlm();
             CH4.ChatSession session = CreateSession(llm);
@@ -898,8 +897,11 @@ namespace CatHome4.Core.Tests
             llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-back", "t2", "{\"findings\":\"结论：视图验证\"}"));
             session.PostUserMessage("开始取证");
             PumpUntilIdle(session);
-            // 被删的 info 工具卡内容仍在视图层（转 gap 文本）
-            Assert.True(ViewHas(session, "info"));
+            // timeback 两张卡仍留在视图层
+            Assert.True(ViewHas(session, "timeback-start"));
+            Assert.True(ViewHas(session, "timeback-back"));
+            // 摘要额外插入——域编号 + findings 在人可见面
+            Assert.True(ViewHas(session, "timeback #1 域已闭合"));
             Assert.True(ViewHas(session, "结论：视图验证"));
         }
 
@@ -933,14 +935,15 @@ namespace CatHome4.Core.Tests
             // [断言3] 首行 meta（记录字段）+ 次行 info 快照 + 其后被删前文消息
             Assert.Contains("\"t\":\"timeback\"", lines[0]);
             Assert.Contains("归档验证", lines[0]);
-            Assert.Contains("\"n\":3", lines[0]);
+            Assert.Contains("\"n\":7", lines[0]);
             Assert.Contains("\"findings\":\"结论：A\"", lines[0]);
             Assert.Contains("快照:tb-session", lines[1]);
-            // 被删前文 3 条 = 域规范卡（§十一）+ info 声明 + 其结果
-            Assert.True(lines.Length >= 5);
+            // 被删前文 7 条 = start 声明 + start 结果 + 域规范卡（§十一）+ info 声明 + 其结果 + back 声明 + back 结果
+            Assert.True(lines.Length >= 9);
             Assert.Contains("\"t\":\"m\"", lines[2]);
             Assert.Contains("\"t\":\"m\"", lines[3]);
             Assert.Contains("\"t\":\"m\"", lines[4]);
+            Assert.Contains("\"t\":\"m\"", lines[8]);
             Directory.Delete(archiveDir, true);
         }
 
@@ -1039,11 +1042,11 @@ namespace CatHome4.Core.Tests
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
             Assert.False(session.TimebackActive);
-            // start 回执（保留）在，状态提示 + 域规范卡（均在区间内）随回收删除
-            Assert.Contains("\"tool\":\"timeback-start\"", ToolResultText(session, 0));
+            // 状态提示 + 域规范卡随前文整段收拢移出；视图层保留两张 timeback 卡（只增不改）
             Assert.False(HasMessage(session, LlmRole.User, "你处在 timeback 中"));
             Assert.False(HasMessage(session, LlmRole.User, "域规范"));
-            Assert.True(HasMessage(session, LlmRole.Tool, "结论：计数取证"));
+            Assert.True(ViewHas(session, "timeback-start"));
+            Assert.True(HasMessage(session, LlmRole.User, "结论：计数取证"));
             LlmMessage[] all = session.Context.GetMessages();
             // 区间内容已删——判据取调用声明（back 回执的工具台账正文提及工具名不算残留）
             for (int i = 0; i < all.Length; i = i + 1)
@@ -1169,7 +1172,7 @@ namespace CatHome4.Core.Tests
         }
         /// <summary>
         /// A106 批内次序——同一批内 back 在数组前位、start 在数组后位时规范化为「先开后收」：
-        /// back 不再误报 NO_SCOPE，同批区间为空不删（批是原子时间点，批内序由宿主定）。
+        /// back 不再误报 NO_SCOPE；A331 起同批整段（声明 + 三结果）收拢为一条 sys 摘要。
         /// </summary>
         [Fact]
         public void BatchOrder_BackStripsAfterSiblings_SameBatchOrderNormalized()
@@ -1184,12 +1187,13 @@ namespace CatHome4.Core.Tests
             session.PostUserMessage("乱序开收");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
-            // back 作为结论返回（非 NO_SCOPE）；同批无跨批区间 → 不删；作用域关闭
-            Assert.Contains("结论：乱序开收", ToolResultText(session, 0));
-            Assert.DoesNotContain("NO_SCOPE", ToolResultText(session, 0));
+            // back 作为结论返回（非 NO_SCOPE）→ 随整段收拢落进 sys 摘要；作用域关闭
+            string summary = SummaryText(session);
+            Assert.Contains("结论：乱序开收", summary);
+            Assert.DoesNotContain("NO_SCOPE", summary);
             Assert.False(session.TimebackActive);
-            // user + 声明 + 三结果 + 结论回复 = 6 条
-            Assert.Equal(6, session.Context.GetMessageCount());
+            // user + 摘要 + 结论回复 = 3 条（声明与三份结果整段移出）
+            Assert.Equal(3, session.Context.GetMessageCount());
         }
         /// <summary>
         /// A106 批内次序——back 与 sibling 工具同批（back 在数组前位）：回收区间仍以本批声明为上界，
@@ -1211,11 +1215,14 @@ namespace CatHome4.Core.Tests
             session.PostUserMessage("批内 sibling 取证");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
-            // 跨批查证区间（域规范卡 + 被拒 sibling 声明 + 结果）删除 → items:3
-            Assert.Contains("\"items\":3", ToolResultText(session, 1));
-            // 同批 sibling 结果保留（back 后置执行 → 区间上界仍为本批声明）
-            Assert.Contains("TIMEBACK_PROFILE", ToolResultText(session, 2));
-            Assert.True(HasMessage(session, LlmRole.Tool, "结论：批内 sibling"));
+            // A331——整段收拢：同批 sibling 的声明与结果同样在区间内，一并移出前文，只留 sys 摘要
+            Assert.True(HasMessage(session, LlmRole.User, "结论：批内 sibling"));
+            Assert.True(HasMessage(session, LlmRole.User, "整段回收"));
+            LlmMessage[] collapsed = session.Context.GetMessages();
+            for (int i = 0; i < collapsed.Length; i = i + 1)
+            {
+                Assert.DoesNotContain("timeback", collapsed[i].ToolCallsJson == null ? "" : collapsed[i].ToolCallsJson);
+            }
             Assert.False(session.TimebackActive);
         }
         /// <summary>
@@ -1239,53 +1246,66 @@ namespace CatHome4.Core.Tests
             Assert.True(session.TimebackActive);
         }
         /// <summary>
-        /// A165 契约 H——timeback 回收**不触碰视图层**：持久区只增不改，回收只作用于送入 LLM 的前文；
-        /// 视图层不再产 `void` 块（移出语义整体退役）。
+        /// A331 视图层**原样保留**——timeback 卡与域内工具卡照旧留在对话区（不重绘、不移出），
+        /// 摘要以一条 systemautomessage 条目额外插入（单块追加帧）。
+        /// `void`（A165 v1 废弃段）仍不复用——摘要块是正经块型，不是废弃标记。
         /// </summary>
         [Fact]
-        public void Back_DoesNotTouchViewBlocks()
+        public void Back_KeepsViewBlocksAppendsSummary()
         {
             MockLlm llm = new MockLlm();
             CH4.ChatSession session = CreateSession(llm);
-            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-start", "t1", "{\"type\":\"text_search\",\"purpose\":\"视图不受影响验证\"}"));
+            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-start", "t1", "{\"type\":\"text_search\",\"purpose\":\"视图保留验证\"}"));
             llm.ToolCallsQueue.Enqueue(BuildToolCalls("info", "f1", "{}"));
-            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-back", "t2", "{\"findings\":\"结论：视图不受影响\"}"));
-            session.PostUserMessage("视图不受影响验证");
+            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-back", "t2", "{\"findings\":\"结论：视图保留\"}"));
+            session.PostUserMessage("视图保留验证");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
             CH4.ViewBlock[] blocks = session.GetViewBlocks();
             int voidCount = 0;
+            int summaryCount = 0;
             for (int i = 0; i < blocks.Length; i = i + 1)
             {
+                string payload = blocks[i].Payload == null ? "" : blocks[i].Payload;
                 if (blocks[i].RenderType == "void")
                 {
                     voidCount = voidCount + 1;
                 }
+                if (blocks[i].RenderType == "systemautomessage" && payload.Contains("timeback #1 域已闭合", StringComparison.Ordinal))
+                {
+                    summaryCount = summaryCount + 1;
+                }
             }
+            // 废弃段不复用；摘要额外插入恰一条
             Assert.Equal(0, voidCount);
-            // 回收仍在前文生效——区间内容已从送入 LLM 的前文移除，结论保留
-            Assert.True(HasMessage(session, LlmRole.Tool, "结论：视图不受影响"));
+            Assert.Equal(1, summaryCount);
+            // 视图层原样保留——timeback 两张卡仍在对话区
+            Assert.True(ViewHas(session, "timeback-start"));
+            Assert.True(ViewHas(session, "timeback-back"));
+            // 前文同口径——结论落在摘要里
+            Assert.True(HasMessage(session, LlmRole.User, "结论：视图保留"));
         }
         /// <summary>
-        /// A165 契约 H——同批 sibling 结果卡**留在视图层**：视图层与真实前文并列，
-        /// 前文侧回收只影响前文，不驱动视图（不再有「移出 / 废弃段」概念）。
+        /// A331 sibling 卡在视图层保留——视图层只增不改：sibling 卡照旧在对话区，摘要另插一条；
+        /// 前文面才是整段回收（sibling 的结果随区间离开前文）。
         /// </summary>
         [Fact]
-        public void Back_KeepsSiblingResultCardInView()
+        public void Back_KeepsSiblingCardAppendsSummary()
         {
             MockLlm llm = new MockLlm();
             CH4.ChatSession session = CreateSession(llm);
             string batch = BuildToolCallsBatch(
                 new string[] { "timeback-start", "info" },
                 new string[] { "t1", "r1" },
-                new string[] { "{\"type\":\"text_search\",\"purpose\":\"sibling 保留\"}", "{}" });
+                new string[] { "{\"type\":\"text_search\",\"purpose\":\"sibling 收拢\"}", "{}" });
             llm.ToolCallsQueue.Enqueue(batch);
             llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-back", "t2", "{\"findings\":\"结论：sibling\"}"));
-            session.PostUserMessage("sibling 保留");
+            session.PostUserMessage("sibling 收拢");
             PumpUntilIdle(session);
             Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
             CH4.ViewBlock[] blocks = session.GetViewBlocks();
             int voidCount = 0;
+            int summaryCount = 0;
             bool anchorCardKept = false;
             bool siblingCardKept = false;
             for (int i = 0; i < blocks.Length; i = i + 1)
@@ -1294,6 +1314,10 @@ namespace CatHome4.Core.Tests
                 if (blocks[i].RenderType == "void")
                 {
                     voidCount = voidCount + 1;
+                }
+                if (blocks[i].RenderType == "systemautomessage" && candidatePayload.Contains("timeback #1 域已闭合", StringComparison.Ordinal))
+                {
+                    summaryCount = summaryCount + 1;
                 }
                 if (blocks[i].RenderType == "toolcard" && candidatePayload.Contains("\"timeback-start\"", StringComparison.Ordinal))
                 {
@@ -1305,8 +1329,65 @@ namespace CatHome4.Core.Tests
                 }
             }
             Assert.Equal(0, voidCount);
+            // 视图层原样保留——锚卡与 sibling 卡都还在对话区，摘要另插一条
             Assert.True(anchorCardKept);
             Assert.True(siblingCardKept);
+            Assert.Equal(1, summaryCount);
+        }
+        /// <summary>
+        /// A331 同批 tail 吞并——back 与其它工具同批时，sibling 的结果与 back 结果连续排列；
+        /// 只删到 back 结果会留下「无对应 tool_calls 的孤立 tool 结果」（上游 API 直接 400）。
+        /// 判据：整段回收后前文零 tool 消息 · 摘要条数含 tail · 视图层保留（back 卡不移出）。
+        /// </summary>
+        [Fact]
+        public void Back_SwallowsSameBatchTailResults()
+        {
+            MockLlm llm = new MockLlm();
+            CH4.ChatSession session = CreateSession(llm);
+            llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-start", "t1", "{\"type\":\"text_search\",\"purpose\":\"同批 tail\"}"));
+            string batch = BuildToolCallsBatch(
+                new string[] { "timeback-back", "info", "time" },
+                new string[] { "b1", "r1", "r2" },
+                new string[] { "{\"findings\":\"结论：同批 tail\"}", "{}", "{}" });
+            llm.ToolCallsQueue.Enqueue(batch);
+            session.PostUserMessage("同批 tail 收拢");
+            PumpUntilIdle(session);
+            Assert.True(session.IsIdle, "phase=" + session.Phase.ToString());
+            LlmMessage[] all = session.Context.GetMessages();
+            int toolCount = 0;
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                if (all[i].Role == LlmRole.Tool)
+                {
+                    toolCount = toolCount + 1;
+                }
+            }
+            // 判据一：同批 tail 结果随整段移出——前文零 tool 消息（留下即孤立结果）
+            Assert.Equal(0, toolCount);
+            // 判据二：摘要在场，条数含 tail（start 声明 + start 结果 + back 声明 + 三条结果）
+            string summary = SummaryText(session);
+            // 判据二：摘要在场，条数含 tail——start 声明 + start 结果 + 域规范卡（start 批后注入）+ back 声明 + 三条结果
+            Assert.True(summary.Contains("整段回收 7 条", StringComparison.Ordinal), summary);
+            Assert.Contains("结论：同批 tail", summary);
+            // 判据三：视图层同口径——三张卡全部移出，摘要块恰一条
+            int summaryCards = 0;
+            bool tailCardKept = false;
+            CH4.ViewBlock[] blocks = session.GetViewBlocks();
+            for (int i = 0; i < blocks.Length; i = i + 1)
+            {
+                string payload = blocks[i].Payload == null ? "" : blocks[i].Payload;
+                if (blocks[i].RenderType == "systemautomessage" && payload.Contains("timeback #1 域已闭合", StringComparison.Ordinal))
+                {
+                    summaryCards = summaryCards + 1;
+                }
+                if (blocks[i].RenderType == "toolcard" && payload.Contains("\"timeback-back\"", StringComparison.Ordinal))
+                {
+                    tailCardKept = true;
+                }
+            }
+            Assert.Equal(1, summaryCards);
+            // 视图层原样保留——back 卡仍在对话区，摘要另插一条
+            Assert.True(tailCardKept);
         }
         /// <summary>
         /// A229 timeback 未闭合自动拉起——域未回收 = 本轮未结束：轮末注入固定提示拉起（优先于 Note）；

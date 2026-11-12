@@ -543,6 +543,28 @@ namespace CH4
             AppendLine(BuildBlockLine(block));
             EmitBlock(block);
         }
+        /// <summary>
+        /// 追加系统注入摘要条目——非真实前文派生（`msgIndex = -1`），走单块追加帧即时上屏（**不做全量重绘**）。
+        /// 用途（A331）：timeback 闭合时前文整段收拢，视图层原样保留，摘要以本条目额外插入。
+        /// 与 `OnSystemMessage` 的分工：那条是真实前文消息的视图投影（带索引）；本件是纯呈现层条目。
+        /// </summary>
+        /// <param name="text">摘要正文（含 [systemauto] 行头前缀）</param>
+        /// <param name="source">来源族名（前端头行显示）</param>
+        /// <param name="timestamp">创建时间戳（Unix 毫秒——与消息条目同坐标系）</param>
+        public void AppendSystemBlock(string text, string source, long timestamp)
+        {
+            if (text == null || text.Length == 0)
+            {
+                return;
+            }
+            Dictionary<string, object> payload = new Dictionary<string, object>();
+            payload["text"] = text;
+            payload["source"] = source == null ? "" : source;
+            ViewBlock block = NewBlock("systemautomessage", JsonUtil.Serialize(payload), timestamp, -1);
+            _blocks.Add(block);
+            AppendLine(BuildBlockLine(block));
+            EmitBlock(block);
+        }
 
         /// <summary>文件名清洗——Windows 非法文件名字符替换为下划线并去首尾空白（显示名可含中文与空格）</summary>
         /// <param name="name">原始名（猫显示名 / 猫 key）</param>
@@ -963,6 +985,7 @@ namespace CH4
             _pendingTools.Clear();
             Rewrite();
         }
+
         /// <summary>丢弃时间戳不早于界限的条目——截断用（保留面 = 界限之前）。</summary>
         /// <param name="list">条目容器（原地删）</param>
         /// <param name="cutoff">界限（时间戳 ≥ 该值即丢弃）</param>

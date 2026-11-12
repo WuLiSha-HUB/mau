@@ -64,8 +64,11 @@ namespace CH4
         /// <summary>延迟族——restart 宿主重启回执来源。</summary>
         internal const string SysKindRestart = "restart";
 
-        /// <summary>系统注入族名集合——sys 路径来源值域（systemauto + 延迟族）。</summary>
-        internal static readonly string[] SysKindFamily = new string[] { SysKindSystemAuto, SysKindSleep, SysKindTimer, SysKindDelay, SysKindRestart };
+        /// <summary>系统注入族名——timeback 域收拢摘要（A331：整段回收后留在前文的唯一域痕迹）。</summary>
+        internal const string SysKindTimeback = "timeback";
+
+        /// <summary>系统注入族名集合——sys 路径来源值域（systemauto + 延迟族 + timeback 收拢摘要）。</summary>
+        internal static readonly string[] SysKindFamily = new string[] { SysKindSystemAuto, SysKindSleep, SysKindTimer, SysKindDelay, SysKindRestart, SysKindTimeback };
         /// <summary>系统注入行头前缀——固定标记（判据规范见 `L1/Discipline.md` §三：user 消息内容以该前缀开头 = 系统注入）。</summary>
         internal const string SysInjectPrefix = "[systemauto]";
         /// <summary>来源标记——人工输入（视图层不写 src 字段；缺省即人工）。</summary>
@@ -2930,6 +2933,11 @@ namespace CH4
                 // A128——终态卡已随各工具完成即时回填（FlushToolCard 幂等，此处兜底：结果定稿 + 未推过的补齐）
                 FlushToolCard(dog);
                 AppendMessage(_context.AddToolResult(dog.ToolCallId, dog.Name, dog.Result));
+                // A331——timeback 整段回收上界：back 结果回填的确切时刻记录索引（回收区间含本条）
+                if (dog.Name == "timeback-back" && _timebackScope != null)
+                {
+                    _timebackScope.BackResultIndex = _context.GetMessageCount() - 1;
+                }
                 NoteTimebackEvent();
                 NoteTimebackWrite(dog.Name, dog.ArgsJson, dog.Result);
                 _viewStore.OnToolResult(LastMessage(), _context.GetMessageCount() - 1, dog.ElapsedMs(), dog.QueueMs(), dog.RunMs());

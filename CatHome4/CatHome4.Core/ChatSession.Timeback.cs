@@ -7,20 +7,19 @@ using Mau.Runtime;
 namespace CH4
 {
     /// <summary>
-    /// 宿主会话实体——timeback 上下文作用域分部（design-ch4-timeback §2 / §三 · 2026-09-28 语义重设 · 2026-10-09 拆两名）。
+    /// 宿主会话实体——timeback 上下文作用域分部（design-ch4-timeback §2 / §三 · 2026-09-28 语义重设 · 2026-10-09 拆两名 · 2026-11-12 A331 整段回收）。
     /// 工具面：timeback-start（开锚）· timeback-back（回卷回收）——原单工具 timeback（action=start|back）拆分，功能不变。
-    /// 语义（莎定）：**锚点 = start 的 tool_calls 声明本身；回收 = back 的返回值**。
-    ///   前文形态：[start 声明][start 结果] [查证过程…] [back 声明][back 结果 = findings]
-    ///   回收动作：删除「start 结果之后、back 声明之前」的全部消息——两次调用对与结论原样保留。
-    /// 由此收益：历史里不新增注入消息（无连续 user）、无绕点搜索、无轮末特判、无「劈开工具对」风险；
-    /// 回卷后序列天然合法，本轮照常续跑（LLM 直接从 back 的工具返回继续）。
+    /// 语义（莎 2026-11-12 定）：**闭合 = 整段收拢**——`[start 声明][start 结果][域内过程…][back 声明][back 结果]` 全部离开前文，
+    ///   原位只留**一条** sys 摘要（`SysKindTimeback`：实测条数 / token / 工具次数 + findings + 回读规范）。
+    ///   于是前文里「同时只存在一个 start 卡 + 一个未闭合的域」：域开则整段在，域闭则整段缩成一行交代。
+    /// 由此收益：会话内不留同形重复（域越用越干净）；整段移出后序列天然合法（互配的声明与结果一起走），本轮照常续跑。
     /// 用途（2026-10-03 莎裁）：仅两个域限定工具解锁——主干识图（image-inject）· 浏览网页（browser-*）；域内不做工作、不写计划。
     /// findings 口径（A205 · 2026-10-06 莎定）：**只写「成果在哪」，不写「结论是什么」**——域内不下判断，主干按位置回读、以回读到的真实内容为准（治域内复述致幻觉）。
-    /// 思考净化（2026-10-09 莎定）：回收时把 **back 声明**的 `ReasoningContent` 换成占位句——它与 findings 同源（回域时的断言），
-    ///   且不在 findings 治理面（模型自然输出）；start 声明的思考（工具需求生成过程）保留。原文留视图层与归档。
+    /// 思考净化（2026-10-09 立 / A331 退役）：原机制把 back 声明的思考换占位句；整段回收后该声明本身已离开前文，净化无对象——原文留视图层历史与归档。
     /// 锁定：作用域存活期间 Note / sleep / timer 不可用（ERR|TIMEBACK_LOCKED——与区间删除语义冲突）。
-    /// 视图层：删除区间对应的前文派生块合并为一个废弃块（Rebuild 不清——跨宿主重启仍可回看）。
-    /// 归档（A104）：全局计数（Data/runtime/timeback/count.json）+ 每次回收一个作用域文件（&lt;编号&gt;-&lt;时间戳&gt;.jsonl）。
+    /// 视图层（A331）：**原样保留**（A165 v2「持久即持久」不松绑）——摘要以 `systemautomessage` 条目额外插入，
+    ///   走单块追加帧即时上屏，**不做全量重绘**；区间内的 timeback 卡与过程卡照旧在对话区，前端 `tbScopeMark` 按 start / back 行着色。
+    /// 归档（A104）：全局计数（Data/runtime/timeback/count.json）+ 每次回收一个作用域文件（&amp;lt;编号&amp;gt;-&amp;lt;时间戳&amp;gt;.jsonl）——整段全文在内。
     /// </summary>
     internal sealed partial class ChatSession
     {
@@ -63,8 +62,11 @@ namespace CH4
             /// <summary>开锚时的已知前文长度快照——回收时对比算净增（请求级真实 usage 值，零估算）。</summary>
             public long TokensAtOpen;
 
-            /// <summary>本次回收的释放条数——back 时刻预算（区间上下界已定，精确可算）；随返回值送出，并与批后实际删除数对账。</summary>
-            public int PendingReleased;
+            /// <summary>本次回收的整段条数预算——back 时刻可算（`[start 声明 .. back 结果]` = BackDeclIndex − StartDeclIndex + 2）；随返回值送出，并与批后实际删除数对账。</summary>
+            public int PendingCollapsed;
+
+            /// <summary>back 结果消息索引——批后段结果回填时刻记录（A331：回收区间上界 = 本条，含 back 结果本身）。</summary>
+            public int BackResultIndex = -1;
             /// <summary>
             /// 本域工具台账——宿主记录（域内**用过的每个工具**逐条登记：工具名 · 目标标识 · 成败；含只读与被拒）。
             /// 客观事实面：从实际执行流水提取（不由 LLM 自述）；back 回执附于 findings 之前，主干据此抽样核对。
@@ -279,9 +281,9 @@ namespace CH4
             }
             _timebackScope.PendingFindings = findings;
             _timebackScope.BackDeclIndex = _context.GetMessageCount() - 1;
-            // 释放条数预算——区间上下界此刻已定（[start 结果之后 .. back 声明之前]），精确可算；
+            // 整段回收条数预算——区间上下界此刻已定（[start 声明 .. back 结果]，back 结果紧随声明 = +1 条）；
             // 该值随返回值送出，并与批后实际删除数对账（归档记实际）
-            _timebackScope.PendingReleased = CountTimebackReleased(_timebackScope);
+            _timebackScope.PendingCollapsed = CountTimebackCollapsed(_timebackScope);
             long tokensNow = ContextTokensKnown;
             Dictionary<string, object> fields = new Dictionary<string, object>();
             fields["anchor"] = _timebackScope.StartDeclIndex;
@@ -290,9 +292,8 @@ namespace CH4
             fields["tokens"] = tokensNow;
             fields["grew"] = tokensNow - _timebackScope.TokensAtOpen;
             fields["tools"] = _timebackScope.WriteLog.Count;
-            // 情报行——裁剪读数以自然语言进正文（条数 / token / 写入三项皆宿主实测），令**返回体自足**：
-            // 不必回解结构头即可读到准确情报；表体（工具台账）紧随其后。
-            string infoLine = "📉 释放 " + _timebackScope.PendingReleased.ToString() + " 条前文 · 域内节约 "
+            // 情报行——整段回收口径（A331）：闭合后前文不留任何域痕迹，只留一条 sys 摘要
+            string infoLine = "📉 整段回收 " + _timebackScope.PendingCollapsed.ToString() + " 条前文（含 start / back 两张卡）· 域内节约 "
                 + (tokensNow - _timebackScope.TokensAtOpen).ToString() + "token · 工具使用 "
                 + _timebackScope.WriteLog.Count.ToString() + " 次";
             if (_timebackScope.WriteLog.Count > 0)
@@ -300,42 +301,33 @@ namespace CH4
                 infoLine = infoLine + "（详见下表）";
             }
             // 台账附于 findings 之前——头 = 宿主事实（从执行流水提取，不可编），体 = LLM 自述；主干据此抽样核对
-            return ToolMetaHead.With("timeback-back", true, _timebackScope.Id.ToString(), _timebackScope.PendingReleased, fields, infoLine + "\n" + BuildTimebackWrites() + findings + Environment.NewLine + Environment.NewLine + TimebackCard.Readback(_timebackScope.Type));
+            return ToolMetaHead.With("timeback-back", true, _timebackScope.Id.ToString(), _timebackScope.PendingCollapsed, fields, infoLine + "\n" + BuildTimebackWrites() + findings + Environment.NewLine + Environment.NewLine + TimebackCard.Readback(_timebackScope.Type));
         }
 
         /// <summary>
-        /// 释放条数预算——按当前前文算「[start 结果之后 .. back 声明之前]」的消息条数。
-        /// back 时刻区间上下界已定，故返回值给出的条数与批后实际删除数同源可对账（归档记实际，不一致记 L2）。
+        /// 整段回收条数预算——`[start 声明 .. back 结果]` 的条数（A331 整段口径）。
+        /// back 时刻 back 结果尚未回填，按结构推定：`BackDeclIndex − StartDeclIndex + 2`
+        /// （start 声明 + 中间过程 + back 声明 + back 结果各占 1 条，故 +2 起算）。
+        /// 批后按实际删除数与它对账（不一致记 L2——结构推定失败的可见信号）。
         /// </summary>
         /// <param name="scope">作用域</param>
-        /// <returns>释放条数（无可删区间 = 0）</returns>
-        private int CountTimebackReleased(TimebackScope scope)
+        /// <returns>整段条数（索引异常 = 0）</returns>
+        private int CountTimebackCollapsed(TimebackScope scope)
         {
-            LlmMessage[] all = _context.GetMessages();
-            int keepEnd = scope.StartDeclIndex;
-            while (keepEnd + 1 < all.Length && all[keepEnd + 1].Role == LlmRole.Tool)
-            {
-                keepEnd = keepEnd + 1;
-            }
-            int from = keepEnd + 1;
-            int to = scope.BackDeclIndex - 1;
-            if (from > to || from >= all.Length)
+            if (scope.BackDeclIndex < scope.StartDeclIndex)
             {
                 return 0;
             }
-            if (to >= all.Length)
-            {
-                to = all.Length - 1;
-            }
-            return to - from + 1;
+            return scope.BackDeclIndex - scope.StartDeclIndex + 2;
         }
 
         /// <summary>
-        /// 批后回收执行——工具批结果全部回填后调用（design §12.2）：
-        /// ① 前文删除「start 结果之后、back 声明之前」的全部消息（两次调用对与结论保留）；back 声明的思考换成占位句（净化 · 2026-10-09）
-        /// ② 视图层移出「**锚定声明之后**、back 声明（含）」的块 → 合并为一个废弃块（`void`；timeback 自己的卡保留在对话流）
-        /// ③ 归档一次成档（A104：首行 meta + 该猫 info 快照 + 被删前文消息）→ 关闭作用域。本轮照常续跑（不置工具主动 done、不注入消息）。
-        /// 前文无可删区间（同批 start+back / 索引异常）时跳过 ①，② 仍执行（锚定批的 sibling 结果卡照归废弃段）。
+        /// 批后回收执行——工具批结果全部回填后调用（design §12.2；A331 整段回收 · 2026-11-12 莎裁）：
+        /// ① 前文整段移出 `[start 声明 .. back 结果]`（两张工具卡 + 域内全部过程），原位插入**一条** sys 摘要
+        ///    （`SysKindTimeback` · 宿主实测数字 + findings + 回读规范）——它是留在前文的唯一域痕迹
+        /// ② 视图层原样保留——摘要以 systemautomessage 条目额外插入（单块追加帧，不做全量重绘）
+        /// ③ 归档一次成档（A104：首行 meta + 该猫 info 快照 + 被删前文消息）→ 关闭作用域。本轮照常续跑（不置工具主动 done）。
+        /// 区间索引异常（越界 / 空）时不删、不注入，仅出声；作用域照常关闭（不留在活跃态）。
         /// </summary>
         private void ApplyTimebackBack()
         {
@@ -345,17 +337,31 @@ namespace CH4
                 return;
             }
             LlmMessage[] all = _context.GetMessages();
-            // 保留终点 = start 声明 + 其完整结果块（同批多调用时结果不止一条——逐条数到非 tool 为止）
-            int keepEnd = scope.StartDeclIndex;
-            while (keepEnd + 1 < all.Length && all[keepEnd + 1].Role == LlmRole.Tool)
+            // [段0] 区间定界——下界 = start 声明；上界 = back 结果（未记录时退到 back 声明，仍含其本身）
+            int from = scope.StartDeclIndex;
+            int to = scope.BackDeclIndex;
+            if (scope.BackResultIndex >= scope.BackDeclIndex)
             {
-                keepEnd = keepEnd + 1;
+                to = scope.BackResultIndex;
             }
-            int from = keepEnd + 1;
-            int to = scope.BackDeclIndex - 1;
-            int removed = 0;
-            List<LlmMessage> removedMessages = new List<LlmMessage>();
-            // [段0] 现场采集——info 快照取删除之前（归档第二行记录回收动作发生时的状态）
+            if (from < 0)
+            {
+                from = 0;
+            }
+            if (to >= all.Length)
+            {
+                to = all.Length - 1;
+            }
+            // [段0b] 同批 tail 吞并——back 与其它工具同批时，那些声明与 back 同属一条 assistant 消息；
+            // 只删到 back 结果会把它们的结果留在前文 → 孤立 tool 结果（无对应 tool_calls，API 400）。
+            // 批与批之间必有 assistant 消息，故向后连续的 tool 消息必属同批，一并纳入区间
+            int tailExtra = 0;
+            while (to + 1 < all.Length && all[to + 1].Role == LlmRole.Tool)
+            {
+                to = to + 1;
+                tailExtra = tailExtra + 1;
+            }
+            // 现场采集——info 快照取删除之前（归档第二行记录回收动作发生时的状态）
             string infoJson = CollectTimebackInfo();
             long nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             long seconds = (nowMs - scope.StartAtMs) / 1000;
@@ -363,76 +369,61 @@ namespace CH4
             {
                 seconds = 0;
             }
-            // [段1] 前文删除——保留 [0..保留终点] + [back 声明..尾]（同批 start+back 时区间为空）
+            int removed = 0;
+            List<LlmMessage> removedMessages = new List<LlmMessage>();
+            string summaryText = "";
+            bool collapsed = false;
+            // [段1] 前文整段回收——[0..from-1] + [sys 摘要] + [to+1..尾]（区间含 start / back 两张工具卡）
             if (from <= to && from < all.Length)
             {
-                if (to >= all.Length)
-                {
-                    to = all.Length - 1;
-                }
-                int secondStart = scope.BackDeclIndex;
-                if (secondStart < keepEnd + 1)
-                {
-                    secondStart = keepEnd + 1;
-                }
-                List<LlmMessage> keep = new List<LlmMessage>();
-                for (int i = 0; i <= keepEnd && i < all.Length; i = i + 1)
-                {
-                    keep.Add(all[i]);
-                }
-                for (int i = secondStart; i < all.Length; i = i + 1)
-                {
-                    // back 声明——思考净化（莎 2026-10-09 定）：该思考是对域内工作的断言，不是工具事实；
-                    // 换成占位句，原文留视图层与归档（start 声明的思考 = 工具需求生成过程，保留）
-                    if (i == scope.BackDeclIndex)
-                    {
-                        keep.Add(WithTimebackBackReasoningCleared(all[i]));
-                        continue;
-                    }
-                    keep.Add(all[i]);
-                }
-                // 被删前文快照——归档文件的正文（删除前按原序取值）
-                for (int i = from; i <= to && i < all.Length; i = i + 1)
+                for (int i = from; i <= to; i = i + 1)
                 {
                     removedMessages.Add(all[i]);
                 }
-                removed = all.Length - keep.Count;
-                // [段2] 前文落盘——区间删除重写（append-only 的合法例外）
-                _context.ReplaceMessages(keep.ToArray());
-                LlmMessage[] toSave = _context.GetMessages();
-                _store.Rewrite(toSave);
+                removed = removedMessages.Count;
+                summaryText = BuildSysInjectText(TimebackCard.Summary(
+                    scope.Type, scope.Purpose, scope.Id, removed, ContextTokensKnown - scope.TokensAtOpen,
+                    scope.WriteLog.Count, seconds, scope.PendingFindings));
+                List<LlmMessage> next = new List<LlmMessage>();
+                for (int i = 0; i < from; i = i + 1)
+                {
+                    next.Add(all[i]);
+                }
+                // 摘要就地占位——角色 user（sys 路径同形）。与相邻 user 并列合法：同注入点多条一并入前文是既有常态
+                // （FlushPendingIntoRound 逐条 AppendInjection），不额外合并——合并会让视图层净减量与前文对不上
+                next.Add(CreateTimebackSummaryMessage(summaryText));
+                for (int i = to + 1; i < all.Length; i = i + 1)
+                {
+                    next.Add(all[i]);
+                }
+                // [段2] 前文落盘——区间回收重写（append-only 的合法例外）
+                _context.ReplaceMessages(next.ToArray());
+                _store.Rewrite(_context.GetMessages());
+                collapsed = true;
             }
             else
             {
-                if (from <= to)
-                {
-                    // 索引超界（前文被外部改动）——不删，仅出声
-                    LogStore.Add("CatHome4", 2, "timeback 回收区间越界（from " + from.ToString() + " / to " + to.ToString() + " / len " + all.Length.ToString() + "）——本次未删", "TIMEBACK");
-                }
-                // [段1b] back 声明思考净化——未走删除路径（同批开收 / 区间为空 / 索引越界）时索引未变，就地处理
-                LlmMessage[] current = _context.GetMessages();
-                if (scope.BackDeclIndex >= 0 && scope.BackDeclIndex < current.Length)
-                {
-                    LlmMessage clearedDecl = WithTimebackBackReasoningCleared(current[scope.BackDeclIndex]);
-                    if (!string.Equals(clearedDecl.ReasoningContent, current[scope.BackDeclIndex].ReasoningContent, StringComparison.Ordinal))
-                    {
-                        current[scope.BackDeclIndex] = clearedDecl;
-                        _context.ReplaceMessages(current);
-                        _store.Rewrite(_context.GetMessages());
-                    }
-                }
+                // 索引越界（前文被外部改动 / 空区间）——不删，仅出声
+                LogStore.Add("CatHome4", 2, "timeback 回收区间越界（from " + from.ToString() + " / to " + to.ToString() + " / len " + all.Length.ToString() + "）——本次未删", "TIMEBACK");
             }
-            // [段3] 视图层——不动（A165 v2 契约：持久即持久，移出 / 废弃面退役；回收只作用于送入 LLM 的前文）
+            // [段3] 视图层——**原样保留**（A165 v2「持久即持久」契约不松绑）；摘要以一条 systemautomessage 条目
+            // **额外插入**（非前文派生 · `msgIndex = -1` · 走单块追加帧即时上屏，**不做全量重绘**）。
+            // 区间内的 timeback 卡与过程卡照旧留在对话区，前端 tbScopeMark 仍按 start / back 行着色
+            if (collapsed)
+            {
+                _viewStore.AppendSystemBlock(summaryText, SysKindTimeback, nowMs);
+            }
             // [段4] 归档——一次回收一个文件（A104）：首行 meta + 该猫 info 快照 + 被删前文消息
             bool archived = WriteTimebackArchiveFile(scope, removed, removedMessages, infoJson, nowMs, seconds);
-            // [段5] 释放条数对账——back 返回值给出的预算 vs 批后实际删除数（归档记实际；不一致必须出声）
-            if (removed != scope.PendingReleased)
+            // [段5] 条数对账——预算（back 时刻的结构推定）+ 同批 tail 吞并数 vs 批后实际删除数
+            // （剔除 tail 后仍不一致 = 区间被外部改动 / 结构推定失效——必须出声）
+            if (removed != scope.PendingCollapsed + tailExtra)
             {
-                LogStore.Add("CatHome4", 2, "timeback #" + scope.Id.ToString() + " 释放条数对账不一致（预算 " + scope.PendingReleased.ToString() + " / 实际 " + removed.ToString() + "）", "TIMEBACK");
+                LogStore.Add("CatHome4", 2, "timeback #" + scope.Id.ToString() + " 整段条数对账不一致（预算 " + scope.PendingCollapsed.ToString() + " + 同批 " + tailExtra.ToString() + " / 实际 " + removed.ToString() + "）", "TIMEBACK");
             }
             // [段6] 作用域关闭——活跃期结束（TimebackActive 回 false；Note / sleep / timer 解锁）
             _timebackScope = null;
-            LogStore.Add("CatHome4", 1, "timeback #" + scope.Id.ToString() + " 已回收 " + removed.ToString() + " 条（" + seconds.ToString() + " 秒 / 锚点 " + scope.StartDeclIndex.ToString() + "）", "TIMEBACK");
+            LogStore.Add("CatHome4", 1, "timeback #" + scope.Id.ToString() + " 已整段回收 " + removed.ToString() + " 条（" + seconds.ToString() + " 秒 / 锚点 " + scope.StartDeclIndex.ToString() + "）", "TIMEBACK");
             if (!archived)
             {
                 LogStore.Add("CatHome4", 2, "timeback #" + scope.Id.ToString() + " 归档落档失败（运行不受影响）", "TIMEBACK");
@@ -444,6 +435,26 @@ namespace CH4
             {
                 browserLifecycle.CloseCat(_catKey);
             }
+        }
+        /// <summary>
+        /// 构造 timeback 收拢摘要消息——sys 路径的**就地插入**形态（非入队）：全字段初始化
+        /// （struct 默认字段为 null，序列化判空会 NRE）+ 当前时刻。
+        /// 与 `PostSystemMessage` 的分工：那条走队列在轮边界取尽；本件取代被回收区间的**原位**，时序必须落在域的位置上。
+        /// </summary>
+        /// <param name="text">摘要正文（已含 [systemauto] 行头前缀）</param>
+        /// <returns>user 角色消息</returns>
+        private static LlmMessage CreateTimebackSummaryMessage(string text)
+        {
+            LlmMessage msg = new LlmMessage();
+            msg.Role = LlmRole.User;
+            msg.Content = text;
+            msg.ToolCallId = "";
+            msg.ToolName = "";
+            msg.ToolCallsJson = "";
+            msg.ReasoningContent = "";
+            msg.ImagesJson = "";
+            msg.CreatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            return msg;
         }
 
         /// <summary>
@@ -500,7 +511,7 @@ namespace CH4
             record.N = removed;
             record.Tokens = ContextTokensKnown;
             record.Grew = ContextTokensKnown - scope.TokensAtOpen;
-            record.Released = scope.PendingReleased;
+            record.Released = scope.PendingCollapsed;
             record.Findings = scope.PendingFindings;
             record.Writes = scope.WriteLog;
             string path = "";
@@ -919,27 +930,6 @@ namespace CH4
                 return;
             }
             LogStore.Add("CatHome4", 1, "timeback #" + scope.Id.ToString() + " 域规范卡注入（" + scope.Type + "）", "TIMEBACK");
-        }
-
-        /// <summary>back 声明思考占位句——回收时替换原思考内容（莎 2026-10-09 定；原文留视图层与归档）。</summary>
-        private const string TimebackBackReasoningPlaceholder = "原思考内容已因锚回收被清除";
-
-        /// <summary>
-        /// back 声明思考净化——把该条 assistant 消息的 ReasoningContent 换成占位句（其余字段原样）。
-        /// 判据（莎 2026-10-09 定）：back 声明是回收动作本身，其思考是对域内工作的「断言」而非工具事实——
-        /// 回收即净化，防止后续轮次把它当事实引用（判例：timeback 域内空转致 findings 幻觉 · ReasoningContent 为真污染载体）；
-        /// start 声明的思考是「工具需求生成过程」，属正常推理，保留。原文留视图层与归档，不做全局改写。
-        /// </summary>
-        /// <param name="m">前文消息（非 assistant 或思考为空时原样返回）</param>
-        /// <returns>净化后的消息副本（struct 值语义——调用方须换入数组）</returns>
-        private static LlmMessage WithTimebackBackReasoningCleared(LlmMessage m)
-        {
-            if (m.Role != LlmRole.Assistant || m.ReasoningContent == null || m.ReasoningContent.Length == 0)
-            {
-                return m;
-            }
-            m.ReasoningContent = TimebackBackReasoningPlaceholder;
-            return m;
         }
     }
 }
