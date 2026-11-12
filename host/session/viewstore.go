@@ -401,6 +401,70 @@ func dropBlocksFrom(list []*ViewBlock, cutoff int64) []*ViewBlock {
 	return kept
 }
 
+// CopyFrom 视图层播种——fork（session.fork）：把源视图存储的保留面（≤ 切点）复制进本存储，与新猫播种前文同步。
+//
+// 保留口径与 TruncateFrom 同源：前文派生条目（MsgIndex ≥ 0）保留索引 ≤ msgIndex 者；被丢弃区间的最小时间戳
+// 作界限，非前文派生条目（-1）只保留界限之前的（时间戳单调化保证全局严格递增）。
+// 条目按引用搬入（只读沿用，不复制对象）；注入报告为普通块随面搬入（MsgIndex=-1 不参与索引判定，天然保留）；
+// 待配对工具清空（播种后由新前文重新配对）；lastTs 取保留面最大时间戳后写盘。源存储不受影响（单向复制）。
+// round 不随播种（新会话起点由调用方设定——与 C# 基准同口径）。
+// nil 源与自身复制按空操作返回（Go 侧防护：自身复制会先清空再搬空；C# 基准无此判定）。
+func (v *ViewStore) CopyFrom(source *ViewStore, msgIndex int) {
+	if source == nil || source == v {
+		return
+	}
+	// 源快照——两存储各持一把锁，先取一次全量快照，搬迁期间的源面变动不进本轮
+	source.mu.Lock()
+	srcBlocks := append([]*ViewBlock(nil), source.blocks...)
+	srcGapTexts := append([]*ViewBlock(nil), source.gapTexts...)
+	srcRoundSums := append([]*ViewBlock(nil), source.roundSums...)
+	srcErrors := append([]*ViewBlock(nil), source.errors...)
+	srcRetries := append([]*ViewBlock(nil), source.retries...)
+	source.mu.Unlock()
+
+	dropMinTs := int64(-1)
+	blocks := make([]*ViewBlock, 0, len(srcBlocks))
+	for _, block := range srcBlocks {
+		if block.MsgIndex > msgIndex {
+			if dropMinTs < 0 || block.Timestamp < dropMinTs {
+				dropMinTs = block.Timestamp
+			}
+			continue
+		}
+		blocks = append(blocks, block)
+	}
+	v.mu.Lock()
+	v.blocks = blocks
+	v.gapTexts = copyBlocksBefore(srcGapTexts, dropMinTs)
+	v.roundSums = copyBlocksBefore(srcRoundSums, dropMinTs)
+	v.errors = copyBlocksBefore(srcErrors, dropMinTs)
+	v.retries = copyBlocksBefore(srcRetries, dropMinTs)
+	v.pendingTools = nil
+	maxTs := int64(0)
+	for _, list := range [][]*ViewBlock{v.blocks, v.gapTexts, v.roundSums, v.errors, v.retries} {
+		for _, block := range list {
+			if block.Timestamp > maxTs {
+				maxTs = block.Timestamp
+			}
+		}
+	}
+	v.lastTs = maxTs
+	v.mu.Unlock()
+	v.Rewrite()
+}
+
+// copyBlocksBefore 保留时间戳早于界限的条目——播种用（复制引用，不改对象）。cutoff < 0 = 无被丢弃区间（全保留）。
+func copyBlocksBefore(source []*ViewBlock, cutoff int64) []*ViewBlock {
+	kept := make([]*ViewBlock, 0, len(source))
+	for _, block := range source {
+		if cutoff >= 0 && block.Timestamp >= cutoff {
+			continue
+		}
+		kept = append(kept, block)
+	}
+	return kept
+}
+
 // AuditEntries 对账哨兵——按索引存在性与角色一致性核对（不一致出声；不修改任何条目）。
 func (v *ViewStore) AuditEntries(messages []Message, sample int) int {
 	v.mu.Lock()

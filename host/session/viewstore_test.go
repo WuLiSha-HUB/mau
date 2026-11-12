@@ -319,3 +319,90 @@ func TestViewStoreAppendTailMissingText(t *testing.T) {
 		t.Fatalf("载入后工具卡不符: %+v", card)
 	}
 }
+
+// TestViewStoreCopyFrom 视图层播种（fork）——源保留面（≤ 切点）单向复制 + 界限口径 + 落盘往返。
+func TestViewStoreCopyFrom(t *testing.T) {
+	source := NewViewStore(filepath.Join(t.TempDir(), "fork-src.view.jsonl"))
+	source.OnUserMessage(Message{Role: RoleUser, Content: "一", CreatedAt: 100}, 0, "")
+	source.AppendGapText("间隙", 120)
+	source.OnAssistantText(Message{Role: RoleAssistant, Content: "答", CreatedAt: 130}, 1, 5)
+	source.OnUserMessage(Message{Role: RoleUser, Content: "二", CreatedAt: 200}, 2, "")
+	source.AppendRoundSummary(`{"data":{"prompt":1}}`, 210)
+	source.AppendError("ERR|X|boom", 220)
+	source.SetInjectReport(`{"status":"ok"}`)
+	source.registerPendingTools(`[{"id":"a","function":{"name":"text-read","arguments":"{}"}}]`, 230)
+	if got := len(source.Blocks()); got != 7 {
+		t.Fatalf("源面应 7 块（注入报告 + 3 前文派生 + gap + roundsum + error），实得 %d", got)
+	}
+
+	targetPath := filepath.Join(t.TempDir(), "fork-dst.view.jsonl")
+	target := NewViewStore(targetPath)
+	target.CopyFrom(source, 1)
+	blocks := target.Blocks()
+	if len(blocks) != 4 {
+		t.Fatalf("播种面应 4 块（注入报告 + user / gap / text），实得 %d: %+v", len(blocks), blocks)
+	}
+	want := []string{viewInjectReportType, TypeUser, TypeGapText, TypeText}
+	for i, typ := range want {
+		if blocks[i].RenderType != typ {
+			t.Fatalf("第 %d 块类型不符：%s（期望 %s）", i, blocks[i].RenderType, typ)
+		}
+	}
+	if blocks[1].MsgIndex != 0 || blocks[3].MsgIndex != 1 {
+		t.Fatalf("前文派生索引应原样沿用: %+v", blocks)
+	}
+	if got := target.GetInjectReport(); got != `{"status":"ok"}` {
+		t.Fatalf("注入报告应随面搬入: %s", got)
+	}
+	// 界限口径——被丢弃区间起点（200）之后的非前文派生条目全部丢弃
+	for _, block := range blocks {
+		if block.RenderType == TypeRoundSum || block.RenderType == TypeError {
+			t.Fatalf("界限之后的非前文派生条目不应搬入: %+v", block)
+		}
+	}
+	// 源面不受影响——单向复制（块数 / 待配对 / lastTs 均不动）
+	if got := len(source.Blocks()); got != 7 || len(source.pendingTools) != 1 || source.lastTs != 220 {
+		t.Fatalf("播种应单向：源面块 %d / 待配对 %d / lastTs %d", got, len(source.pendingTools), source.lastTs)
+	}
+	// 播种面待配对清空 + lastTs 取保留面最大时间戳
+	if len(target.pendingTools) != 0 {
+		t.Fatalf("播种面待配对工具应清空: %d", len(target.pendingTools))
+	}
+	if target.lastTs != 130 {
+		t.Fatalf("lastTs 应取保留面最大时间戳（130），实得 %d", target.lastTs)
+	}
+	target.AppendGapText("播种后新条目", 130)
+	if got := target.Blocks()[4].Timestamp; got != 131 {
+		t.Fatalf("播种后建条应单调接续（131），实得 %d", got)
+	}
+	// 落盘往返——播种面可读回
+	reloaded := NewViewStore(targetPath)
+	reloaded.Load()
+	if got := reloaded.Blocks(); len(got) != 5 {
+		t.Fatalf("播种面落盘应读回 5 块，实得 %d", len(got))
+	}
+}
+
+// TestViewStoreCopyFromEdges 播种边界——nil 源 / 自身复制空操作；无被丢弃区间时非前文派生条目全保留。
+func TestViewStoreCopyFromEdges(t *testing.T) {
+	vs := NewViewStore(filepath.Join(t.TempDir(), "fork-edge.view.jsonl"))
+	vs.OnUserMessage(Message{Role: RoleUser, Content: "一", CreatedAt: 10}, 0, "")
+	vs.AppendError("ERR|X|boom", 20)
+	vs.CopyFrom(nil, 0)
+	if got := len(vs.Blocks()); got != 2 {
+		t.Fatalf("nil 源应空操作，实得 %d 块", got)
+	}
+	vs.CopyFrom(vs, 0)
+	if got := len(vs.Blocks()); got != 2 {
+		t.Fatalf("自身复制应空操作（不得自清空），实得 %d 块", got)
+	}
+
+	other := NewViewStore(filepath.Join(t.TempDir(), "fork-edge2.view.jsonl"))
+	other.OnUserMessage(Message{Role: RoleUser, Content: "一", CreatedAt: 10}, 0, "")
+	other.AppendError("ERR|X|boom", 20)
+	seed := NewViewStore(filepath.Join(t.TempDir(), "fork-edge3.view.jsonl"))
+	seed.CopyFrom(other, 0)
+	if got := len(seed.Blocks()); got != 2 {
+		t.Fatalf("切点覆盖全部前文派生条目时应全保留，实得 %d 块", got)
+	}
+}
