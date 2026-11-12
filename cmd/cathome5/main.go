@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.23.3"
+var version = "0.23.4"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -235,6 +235,8 @@ func main() {
 	})
 	logs.Add("CatHome5", observe.LevelInfo,
 		"toolset.boot | 组 "+itoa(len(toolRT.Groups))+" | 跳过 "+itoa(len(toolRT.Skipped)), "TOOL", "", "", 0, frame.Current(), false)
+	// [段9d-0] info 的 db 段数据源回填——会话层先于机制面构造，服务实例此处才存在（闭包按调用时刻读取）
+	wiring.DBSvc = toolRT.DBSvc
 	// [段9d-1] 库级授权登记——默认猫全放，其余按 cat.cfg dbLibs 白名单（空集合 = 无库权限）
 	if toolRT.DBSvc != nil {
 		dbLibs := []string{}

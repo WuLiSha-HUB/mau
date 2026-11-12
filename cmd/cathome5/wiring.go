@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"cathome5/host/llm"
 	"cathome5/host/session"
 	"cathome5/host/toolpool"
+	maudb "cathome5/mau/db"
 )
 
 // sessionWiring 是会话装配结果——宿主主流程需要的全部句柄。
@@ -31,6 +33,11 @@ type sessionWiring struct {
 	LLMStore *config.LlmAPIStore
 	// CatCfg 本猫配置（dbLibs 等库级授权字段的数据源）
 	CatCfg *config.CatCfg
+	// DBSvc 条目库服务（info 的 db 段数据源）——nil = 服务未绑定，info 如实出声
+	//
+	// 装配顺序：会话层先于机制面构造（机制面要用会话句柄），故本字段在 buildToolRuntime
+	// 之后由 main 回填；info 数据源闭包按调用时刻读取，回填即生效。
+	DBSvc *maudb.Service
 }
 
 // wireSession 装配默认会话——cat.cfg + 前文 + 视图 + 工具面 + LLM 客户端。
@@ -135,9 +142,9 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	// 非内置执行体——P3-c 未接 OA/积木执行面：显式 nil → 诚实 ERR（不静默降级）
 	sess.SetToolExecutor(nil)
 
-	// 环境自省——info 内置工具数据源（只给可计算段，不造值）
+	// 环境自省——info 内置工具数据源（只给可计算段，不造值）；db 段数据源按调用时刻读取（装配期回填）
 	sess.SetInfoProvider(func() string {
-		return buildInfoJSON(sess, workspace, catID, wiring.DisplayName)
+		return buildInfoJSON(sess, workspace, catID, wiring.DisplayName, wiring.DBSvc)
 	})
 	return wiring
 }
@@ -175,8 +182,8 @@ func resolveCacheIsolationKey(store *config.Store, schema *config.Schema, catID 
 	return catID
 }
 
-// buildInfoJSON 构建 info 内置工具返回块——只输出可计算段（时间 / LLM / 根表 / 前文长度 / 包挂载）。
-func buildInfoJSON(sess *session.Session, workspace *config.WorkspaceConfig, catID, displayName string) string {
+// buildInfoJSON 构建 info 内置工具返回块——只输出可计算段（时间 / LLM / 根表 / 前文长度 / 库清单 / 工具面）。
+func buildInfoJSON(sess *session.Session, workspace *config.WorkspaceConfig, catID, displayName string, dbSvc *maudb.Service) string {
 	var roots []string
 	if workspace != nil {
 		for _, root := range workspace.Roots {
@@ -192,6 +199,74 @@ func buildInfoJSON(sess *session.Session, workspace *config.WorkspaceConfig, cat
 		`  "llm": {"cat": ` + session.JSONString(catID) + `, "name": ` + session.JSONString(displayName) + `},` + "\n" +
 		`  "roots": [` + strings.Join(roots, ",") + `],` + "\n" +
 		`  "tokens": {"context": ` + strconv.FormatInt(sess.ContextTokensKnown(), 10) + `},` + "\n" +
+		`  "db": ` + buildInfoDBBlock(catID, dbSvc, workspace) + `,` + "\n" +
 		`  "tools": {"declared": ` + strconv.Itoa(len(sess.ToolSpecs())) + `}` + "\n" +
 		"}"
+}
+
+// buildInfoDBBlock 构建 info 的 db 段——授权库清单（对齐 C# `Program.cs` [段8b]）。
+//
+// 判据取 ListLibs（按 catID 授权过滤 + 摘要自证全集）：服务未绑定 / 读失败都写进 reason，
+// 不静默省略该段。rootVisible 判受控根表里是否存在 id 等于 db 的根（大小写不敏感），
+// 库根被裁剪成不可见时该值即 false——它就是「库权限与根表是否对得上」的自证字段。
+func buildInfoDBBlock(catID string, dbSvc *maudb.Service, workspace *config.WorkspaceConfig) string {
+	var b strings.Builder
+	b.WriteString(`{"ok": `)
+	if dbSvc == nil {
+		b.WriteString(`false, "reason": `)
+		b.WriteString(session.JSONString("数据库服务未绑定"))
+	} else {
+		result := dbSvc.ListLibs(catID)
+		b.WriteString(strconv.FormatBool(result.OK))
+		if result.OK {
+			b.WriteString(`, "summary": `)
+			b.WriteString(session.JSONString(result.Message))
+			if libs := dbLibsPayload(result.Data); libs != "" {
+				b.WriteString(`, "libs": `)
+				b.WriteString(libs)
+			}
+		} else {
+			b.WriteString(`, "reason": `)
+			b.WriteString(session.JSONString(strings.TrimSpace(result.Code + " " + result.Message)))
+		}
+	}
+	b.WriteString(`, "rootVisible": `)
+	b.WriteString(strconv.FormatBool(hasDBRoot(workspace)))
+	b.WriteString("}")
+	return b.String()
+}
+
+// dbLibsPayload 从 ListLibs 载荷里取 libs 数组原文——缺失 / 非数组返回空串（该键不输出）。
+//
+// 载荷由库服务自造（`mau/db` objectJSON），此处只做形态校验；解析失败出声不静默吞
+// （该键静默消失与「库里没库」在回执上不可区分）。
+func dbLibsPayload(data string) string {
+	if strings.TrimSpace(data) == "" {
+		return ""
+	}
+	var payload struct {
+		Libs json.RawMessage `json:"libs"`
+	}
+	if err := json.Unmarshal([]byte(data), &payload); err != nil {
+		session.Logf("CatHome5", 2, "info.db | 库清单载荷解析失败: "+err.Error(), session.LogCategoryTool)
+		return ""
+	}
+	libs := strings.TrimSpace(string(payload.Libs))
+	if len(libs) < 2 || libs[0] != '[' || libs[len(libs)-1] != ']' {
+		return ""
+	}
+	return libs
+}
+
+// hasDBRoot 受控根表里是否有 db 根（大小写不敏感——根 id 小写归一前的旧配置也认）。
+func hasDBRoot(workspace *config.WorkspaceConfig) bool {
+	if workspace == nil {
+		return false
+	}
+	for _, root := range workspace.Roots {
+		if strings.EqualFold(root.ID, "db") {
+			return true
+		}
+	}
+	return false
 }
