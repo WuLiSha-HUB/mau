@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.25.0"
+var version = "0.26.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -50,11 +50,28 @@ func main() {
 	corpusFlag := flag.String("corpus", "", "语料根覆盖（等价 CAT5_CORPUS；缺省从 exe 目录 / workspace 的 mau 根推导）")
 	pushFlag := flag.String("majordomopush", "", "宿主启动回执注入串（重启链 T6——一次性 system 消息投给 Majordomo 会话）")
 	versionFlag := flag.Bool("version", false, "打印版本后退出")
+	runFlag := flag.String("run", "", "单指令模式：执行一条指令后退出（非交互——不监听端口）")
 	flag.Parse()
 	if *versionFlag {
 		fmt.Println("cathome5 " + version)
 		return
 	}
+	// [段0b] 参数面校验——非交互模式零容忍（调用方是程序，必须拿到失败退出码；对齐 C# ValidateHostArgs）
+	runProvided := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "run" {
+			runProvided = true
+		}
+	})
+	if runProvided && strings.TrimSpace(*runFlag) == "" {
+		fmt.Println("参数错误：--run 缺值（需指令）。")
+		os.Exit(1)
+	}
+	if runProvided && strings.TrimSpace(*pushFlag) != "" {
+		fmt.Println("参数错误：--majordomopush 仅用于常驻交互启动（不可与 --run 同用）。")
+		os.Exit(1)
+	}
+	nonInteractive := runProvided
 
 	// [段1] 区与端口段——显式覆盖优先
 	if *areaFlag != "" {
@@ -68,6 +85,11 @@ func main() {
 	}
 	dataRoot, rootDegrades := config.ResolveDataRoot()
 	configDir := filepath.Join(dataRoot, "config")
+	// 非交互模式输出双写落盘（外壳件 3——对齐 C# EnableCmdCapture）：保留 stdout，增落盘副本
+	var cmdCaptureFile *cmdCapture
+	if nonInteractive {
+		cmdCaptureFile = enableCmdCapture(dataRoot)
+	}
 
 	// [段3] 早期诊断 sink（配置与观测就绪前的基础落点）
 	sink := newBootSink()
@@ -122,7 +144,7 @@ func main() {
 				"运行目录不可写："+runDir+"（"+errText+"）", "检查数据根权限或改用可写位置（CH4_DATA_ROOT）", "S3")
 		}
 	}
-	logs.SetConsoleSink(func(line string) { fmt.Println(line) })
+	logs.SetConsoleSink(func(line string) { outln(line) })
 	sink.Add("S3", "运行目录 | "+runDir)
 
 	// [段7] 降级登记——数据根 / schema / 受控根
@@ -427,29 +449,61 @@ func main() {
 		dataRoot, listenPort, band.Area, *pageFlag, func(level int, message, category string) {
 			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
 		})
+	// 自启面（外壳件 2）——仅交互模式启用（非交互探针不得改写 HKCU Run）；托盘切换经 channel 回主线程执行
+	var autoStart autoStartPoller
+	var trayToggle chan struct{}
+	if !nonInteractive {
+		if note := autoStart.init(store, schema); note != "" {
+			level := observe.LevelInfo
+			if strings.Contains(note, "失败") {
+				level = observe.LevelWarn
+			}
+			logs.Add("CatHome5", level, note, "AUTOSTART", "", "", 0, frame.Current(), false)
+		}
+		trayToggle = make(chan struct{}, 1)
+	}
 	restartCh := make(chan struct{}, 1)
 	tickStop := make(chan struct{})
 	tickerDone := make(chan struct{})
-	go func() {
-		defer close(tickerDone)
-		ticker := time.NewTicker(100 * time.Millisecond)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-tickStop:
-				return
-			case <-ticker.C:
-				toolRT.Runner.Tick()
-				wiring.Session.Pump()
-				// 按猫新会话请求（cat.new-session）——仅 Idle 时执行（轮内不重建）
-				router.ConsumePendingNewSession()
-				// 重启闸门（T3/T4）——通过后接力已拉起，主循环走退出通道
-				if gate.Tick() {
-					restartCh <- struct{}{}
+	if nonInteractive {
+		// --run 模式不启 ticker——单指令驱动在主 goroutine 串行推进（见 [段12g-1]）
+		close(tickerDone)
+	} else {
+		go func() {
+			defer close(tickerDone)
+			ticker := time.NewTicker(100 * time.Millisecond)
+			defer ticker.Stop()
+			ticks := 0
+			for {
+				select {
+				case <-tickStop:
+					return
+				case <-trayToggle:
+					handleAutoStartToggle(store, schema, logs)
+				case <-ticker.C:
+					toolRT.Runner.Tick()
+					wiring.Session.Pump()
+					// 按猫新会话请求（cat.new-session）——仅 Idle 时执行（轮内不重建）
+					router.ConsumePendingNewSession()
+					// 重启闸门（T3/T4）——通过后接力已拉起，主循环走退出通道
+					if gate.Tick() {
+						restartCh <- struct{}{}
+					}
+					// 自启配置轮询（5 s 粒度——覆盖 config-* / 前端写路径；C# CheckAutoStartPoll 同义）
+					ticks++
+					if ticks%50 == 0 {
+						if note := autoStart.poll(store, schema); note != "" {
+							level := observe.LevelInfo
+							if strings.Contains(note, "失败") {
+								level = observe.LevelWarn
+							}
+							logs.Add("CatHome5", level, note, "AUTOSTART", "", "", 0, frame.Current(), false)
+						}
+					}
 				}
 			}
-		}
-	}()
+		}()
+	}
 
 	// [段12g] 重启回执注入（T6）——上一宿主经 --majordomopush 传来的部署结论（一次性 system 消息）
 	if push := strings.TrimSpace(*pushFlag); push != "" {
@@ -458,6 +512,36 @@ func main() {
 		} else {
 			logs.Add("CatHome5", observe.LevelInfo, "宿主启动回执已登记（重启链 T6——注入 Majordomo 会话）", "RESTART", "", "", 0, frame.Current(), false)
 		}
+	}
+
+	// [段12g-1] 单指令模式（--run）——非交互：不监听端口 / 不拉前端测试 / 不起托盘；
+	// 投递一条指令 → 单 goroutine 驱动至全局 Idle → 输出 → 收尾退出（对齐 C# RunSingle）
+	if nonInteractive {
+		driver := runDriver{
+			router: router,
+			gate:   gate,
+			tick: func() {
+				toolRT.Runner.Tick()
+				wiring.Session.Pump()
+				router.ConsumePendingNewSession()
+			},
+			state: func() (string, int, int) {
+				runState, _, _ := wiring.Session.GetRunState()
+				return runState, wiring.Session.Context.Count(), len(wiring.Session.Views.Blocks())
+			},
+		}
+		exitCode := runSingleCommand(driver, *runFlag)
+		if cmdCaptureFile != nil {
+			outln("[CMD] 输出已落盘: " + cmdCaptureFile.Path())
+		}
+		// 收尾——不启 HTTP server / 前端测试服务（headless），只关外部子服务与观测写者
+		close(tickStop)
+		<-tickerDone
+		shutdownHost(toolRT, logs)
+		if cmdCaptureFile != nil {
+			cmdCaptureFile.Close()
+		}
+		os.Exit(exitCode)
 	}
 
 	var wg sync.WaitGroup
@@ -471,8 +555,33 @@ func main() {
 
 	startLine := fmt.Sprintf("CatHome5 宿主 | version=%s | area=%s | port=%d | dataRoot=%s | html=%s",
 		version, band.Area, listenPort, dataRoot, htmlRoot)
-	fmt.Println(startLine)
+	outln(startLine)
 	logs.Add("CatHome5", observe.LevelInfo, startLine, "SYS", "", "", 0, 0, false)
+	// [段12d-2] 托盘常驻（外壳件 1）——交互模式专属；失败记降级、宿主继续跑（托盘不可用不拖垮服务）
+	var tray *trayController
+	if !nonInteractive {
+		tray = &trayController{
+			exitCh:      make(chan struct{}, 1),
+			toggleCh:    trayToggle,
+			version:     version,
+			area:        band.Area,
+			dataRoot:    dataRoot,
+			panelURL:    "http://127.0.0.1:" + strconv.Itoa(listenPort) + "/",
+			autoStartOn: func() bool { return autoStartOn(store, schema) },
+			logf: func(level int, message, category string) {
+				logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
+			},
+		}
+		if started, err := startTray(tray); err != nil {
+			tray = nil
+			logs.Add("CatHome5", observe.LevelWarn, "托盘未启用："+err.Error(), "TRAY", "", "", 0, frame.Current(), false)
+			boot.Report("TRAY_UNAVAILABLE", observe.KindEnv, "外壳（托盘）", observe.StateUnavailable,
+				"托盘初始化失败："+err.Error(), "重启宿主重试；不影响宿主服务", "S6")
+		} else {
+			tray = started
+			logs.Add("CatHome5", observe.LevelInfo, "托盘已就绪（左键开面板 / 右键菜单）", "TRAY", "", "", 0, frame.Current(), false)
+		}
+	}
 	// [段12d] 前端测试服务附属——本区段端口未监听则拉起 html/tests/server.js（P3-e 最后一块）
 	// 对齐 C# StageS7「前端测试服务拉起」：已监听跳过（多实例保护）；依赖缺失 / 拉起失败记降级。
 	feResult := fetest.Ensure(fetest.Config{
@@ -504,12 +613,18 @@ func main() {
 		logs.Add("CatHome5", observe.LevelWarn, boot.BuildSummaryLine(), "SYS", "", "", 0, 0, false)
 	}
 
-	// [段13] 退出——信号 → 优雅关闭
+	// [段13] 退出——信号 / 托盘退出 / 重启交接 / HTTP 异常 → 优雅关闭
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	var trayExitCh <-chan struct{}
+	if tray != nil {
+		trayExitCh = tray.exitCh
+	}
 	select {
 	case sig := <-sigCh:
 		logs.Add("CatHome5", observe.LevelInfo, "收到退出信号："+sig.String(), "SYS", "", "", 0, 0, false)
+	case <-trayExitCh:
+		logs.Add("CatHome5", observe.LevelInfo, "收到托盘退出请求——优雅收尾", "TRAY", "", "", 0, frame.Current(), false)
 	case <-restartCh:
 		logs.Add("CatHome5", observe.LevelInfo, "重启交接完成——宿主收尾退出（接力者已接管部署）", "RESTART", "", "", 0, frame.Current(), false)
 	case err := <-errCh:
@@ -524,6 +639,11 @@ func main() {
 	close(tickStop)
 	<-tickerDone
 	wg.Wait()
+	shutdownHost(toolRT, logs)
+}
+
+// shutdownHost 宿主退出收尾——外部子服务关停 + 观测写者关闭（--run 与常驻共用）。
+func shutdownHost(toolRT *toolRuntime, logs *observe.LogStore) {
 	// 浏览器实例收尾——有头实例保活（人工登录窗口等待人的动作），其余 CDP Browser.close 清理
 	if toolRT.Browser != nil {
 		toolRT.Browser.Shutdown()
