@@ -122,10 +122,19 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	wiring.LLMStore = llmStore
 	pool := llm.NewPoolFromStore(llmStore)
 	// 轮末总结——开关取外观池条目（cat.cfg appearanceId 零值跟随默认外观）；LLM 配置取 apiConfigId → 端点池。
-	// 工单面（OA）在会话构造之后建立，由 main 回填（对齐 DBSvc 的回填口径）。
+	// 工单面（OA）与播报执行体（py / audio）在机制面构造之后建立，由 main 回填（对齐 DBSvc 的回填口径）。
 	sess.SetRoundSummary(config.ResolveRoundSummary(appearancePool, cfg.AppearanceID))
 	sess.SetRoundSummaryLlm(func() []string {
 		return resolveRoundSummaryLlm(llmStore, cfg.APIConfigID)
+	})
+	// 总结出声配置（A247）——外观池同一套生效解析：[启用标志, 音色槽位]（与 C# SummaryAudioProvider 同形）
+	sess.SetRoundSummaryAudioProvider(func(catKey string) []string {
+		enabled, voice := config.ResolveSummaryAudio(appearancePool, cfg.AppearanceID)
+		flag := "0"
+		if enabled {
+			flag = "1"
+		}
+		return []string{flag, voice}
 	})
 	client := &llm.Client{
 		Pool:            pool,

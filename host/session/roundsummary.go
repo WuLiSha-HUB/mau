@@ -1,8 +1,10 @@
 package session
 
 import (
+	"fmt"
 	"strings"
 	"sync"
+	"time"
 )
 
 // 本文件复现 C# 轮末总结服务——`ChatSession.PostRoundSummary` / `PumpRoundSummary` /
@@ -12,8 +14,9 @@ import (
 // → Pump 每帧 pumpRoundSummary 回收 → AppendRoundSummaryNote 落视图块（ts = roundsum ts + 1）。
 // 对端：语料 `mau:corpus/ch4/LLMSimpleRequest/llm_simple_request.mau`（五键载荷 → 回执 result）。
 //
-// 边界：总结自动出声（C# A247/A265 SpeakRoundSummary）未接线——音频面（audio.Join / audio.Enqueue）未落，
-// audioName 恒空 = 块 payload 不写 audio 字段（不承诺前端点播）。
+// 边界：出声面（A247/A265）经组合根注入的两件窄接口——配置提供者（启用标志 + 音色槽位）与执行体
+// （kokoro 合成 → audio.Join 拼接 → audio.Enqueue 入队）；会话层不依赖 py / audio 实现。
+// 非 ERR 总结先派生 audioName（与块 payload 同源），再交执行体后台播报；失败只记日志、不影响轮次。
 
 const (
 	// RoundSummaryOwnerID 轮末总结工单挂单方 ID——独立于工具工单（owner=1），避免 RemoveByOwner 互扰。
@@ -54,6 +57,18 @@ type roundSummaryState struct {
 	userBuf strings.Builder
 	// textBuf 本轮 text 缓冲（全部 text 按序：工具轮间隙文本与最终回复同收）
 	textBuf strings.Builder
+	// audioProvider 出声配置提供者——catKey → [启用标志（"1"/"0"）, 音色槽位值]（nil = 不出声）
+	audioProvider func(catKey string) []string
+	// speaker 播报执行体（组合根适配——会话层不依赖 py / audio 实现；nil = 不出声）
+	speaker RoundSummarySpeaker
+}
+
+// RoundSummarySpeaker 是轮末总结播报执行面（组合根适配——会话层不依赖音频 / py 实现）。
+//
+// 实现须自行异步（C# Task.Run 同语义）——本调用不得阻塞主线程。
+type RoundSummarySpeaker interface {
+	// Speak 合成并播放总结音频；失败由实现出声（不改变已落块的回执）。
+	Speak(catKey, displayName, voice, text, audioName string)
 }
 
 // SetRoundSummary 设置轮末总结开关——catcfg.apply 即时应用（值源 = 外观配置池条目）。
@@ -87,6 +102,24 @@ func (s *Session) SetRoundSummaryLlm(fn func() []string) {
 	rs := &s.roundSummary
 	rs.mu.Lock()
 	rs.llm = fn
+	rs.mu.Unlock()
+}
+
+// SetRoundSummaryAudioProvider 注入出声配置提供者——catKey → [启用标志（"1"/"0"）, 音色槽位值]。
+//
+// 未接线 / 启用标志非 "1" → 不出声（不静默放行、不误报成功——C# SummaryAudioProvider 同语义）。
+func (s *Session) SetRoundSummaryAudioProvider(fn func(catKey string) []string) {
+	rs := &s.roundSummary
+	rs.mu.Lock()
+	rs.audioProvider = fn
+	rs.mu.Unlock()
+}
+
+// SetRoundSummarySpeaker 注入播报执行体（组合根在 py / 音频服务就绪后调用；nil = 不出声）。
+func (s *Session) SetRoundSummarySpeaker(speaker RoundSummarySpeaker) {
+	rs := &s.roundSummary
+	rs.mu.Lock()
+	rs.speaker = speaker
 	rs.mu.Unlock()
 }
 
@@ -223,8 +256,72 @@ func (s *Session) pumpRoundSummary() {
 	if ts <= 0 {
 		ts = s.ViewTimestamp()
 	}
-	// audioName 恒空——总结自动出声未接线（音频面未落；不写 audio 字段即不承诺点播）
-	if s.Views != nil {
-		s.Views.AppendRoundSummaryNote(result, ts, "")
+	// A265——音频名与块 payload 同源：非 ERR 结果先派生名字（块先落盘、合成在后台，名字可预算）
+	audioName := ""
+	if !strings.HasPrefix(result, "ERR|") {
+		audioName = BuildSummaryAudioName(s.CatKey, ts)
 	}
+	if s.Views != nil {
+		s.Views.AppendRoundSummaryNote(result, ts, audioName)
+	}
+	// A247——总结自动出声（外观配置启用时；失败只记日志、不影响轮次）
+	if audioName != "" {
+		s.speakRoundSummary(result, audioName)
+	}
+}
+
+// speakRoundSummary 总结自动出声——外观配置启用时交执行体后台合成并播放（A247）。
+//
+// provider / speaker 任一未接线即不出声；text 空不播（C# SpeakRoundSummary 同判据）。
+func (s *Session) speakRoundSummary(text, audioName string) {
+	rs := &s.roundSummary
+	rs.mu.Lock()
+	provider := rs.audioProvider
+	speaker := rs.speaker
+	rs.mu.Unlock()
+	if provider == nil || speaker == nil || text == "" {
+		return
+	}
+	catKey := s.CatKey
+	cfg := provider(catKey)
+	if len(cfg) < 2 || cfg[0] != "1" {
+		return
+	}
+	speaker.Speak(catKey, s.resolveSpeakName(), cfg[1], text, audioName)
+}
+
+// resolveSpeakName 播报名解析——固定 key 走中文转义（majordomo 的 displayName 不可改，espeak 读英文不自然）；
+// 其余猫用 displayName（可改名调整读音），空则回落 catKey（C# ResolveSpeakName 同口径）。
+func (s *Session) resolveSpeakName() string {
+	if s.CatKey == "majordomo" {
+		return "大管家"
+	}
+	if s.DisplayName != "" {
+		return s.DisplayName
+	}
+	return s.CatKey
+}
+
+// BuildSummaryAudioName 总结音频单文件名（A265）——按轮次时间戳 + 猫 key 派生：
+// 块先落盘、合成在后台，名字必须可预算（视图层条目不改写）。
+func BuildSummaryAudioName(catKey string, ts int64) string {
+	local := time.UnixMilli(ts).Local()
+	millis := local.Nanosecond() / int(time.Millisecond)
+	stamp := local.Format("20060102_150405") + "_" + fmt.Sprintf("%03d", millis)
+	return "summary_" + stamp + "_" + safeNameSegment(catKey) + ".wav"
+}
+
+// safeNameSegment 文件名片段清洗——只留字母数字与下划线 / 连字符（猫 key 进文件名，禁路径分隔符与非法字符）；
+// 无可用字符 = "cat"（C# SafeNameSegment 同口径）。
+func safeNameSegment(raw string) string {
+	var sb strings.Builder
+	for _, c := range raw {
+		if (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_' || c == '-' {
+			sb.WriteRune(c)
+		}
+	}
+	if sb.Len() == 0 {
+		return "cat"
+	}
+	return sb.String()
 }

@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.26.5"
+var version = "0.26.6"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -274,6 +274,12 @@ func main() {
 	wiring.Session.SetToolOffice(&oaToolOffice{oa: toolRT.OA})
 	// 轮末总结工单面接线——SVC/LLMSimpleRequest（挂单方 #2；开关与 LLM 配置在 wireSession 已装配）
 	wiring.Session.SetRoundSummaryOffice(&oaRoundSummaryOffice{oa: toolRT.OA})
+	// 轮末总结播报面接线（A247/A265）——kokoro 合成 → audio.Join 拼接 → Enqueue 播放（失败只记日志）
+	wiring.Session.SetRoundSummarySpeaker(newSummarySpeaker(toolRT.Py, toolRT.Audio, func(key string) string {
+		return store.Resolve(schema, key).Value
+	}, func(level int, message string) {
+		logs.Add("CatHome5", level, message, "CHAT", "", "", 0, frame.Current(), false)
+	}))
 	// 浏览器生命周期接线——timeback 开锚预热（browser_vision）/ 域回收关闭（有头实例保活）
 	wiring.Session.Timeback.Browser = toolRT.Browser
 	// 图片注入路径规范化——`<rootId>:<rel>` → 绝对路径（与 text-* / cs-* 同一根解析实现）

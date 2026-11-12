@@ -156,8 +156,9 @@ func TestRoundSummaryPumpClosed(t *testing.T) {
 	if len(blocks) != 1 || blocks[0].RenderType != TypeRoundSummary {
 		t.Fatalf("落块不符: %+v", blocks)
 	}
-	if blocks[0].Payload != `{"text":"我把文件读完了"}` {
-		t.Fatalf("载荷不符（audioName 恒空不写 audio 字段）: %s", blocks[0].Payload)
+	wantName := BuildSummaryAudioName("cat", 2001)
+	if blocks[0].Payload != `{"text":"我把文件读完了","audio":"`+wantName+`"}` {
+		t.Fatalf("载荷不符（audio 名应与块 payload 同源）: %s", blocks[0].Payload)
 	}
 	if blocks[0].Timestamp != 2001 {
 		t.Fatalf("时间戳应为 pendingTs: %d", blocks[0].Timestamp)

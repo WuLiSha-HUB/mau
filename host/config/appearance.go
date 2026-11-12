@@ -69,24 +69,43 @@ func BuildAppearanceOptions(pool []AppearanceConfig) []AppearanceOption {
 	return out
 }
 
-// ResolveRoundSummary 解析猫的轮末总结生效值——appearanceId 零值跟随默认外观；
-// 显式绑定而条目已删 / 池空 = false（保守值，与 C# ResolveEffectiveRoundSummary 同口径）。
-func ResolveRoundSummary(pool []AppearanceConfig, appearanceID string) bool {
+// resolveEffectiveAppearance 解析猫的生效外观条目——appearanceId 零值跟随默认外观（池内 isDefault 条目）；
+// 显式绑定而条目已删 / 池空 = 未见（调用方按保守值处置，与 C# ResolveEffectiveAppearance 同口径）。
+func resolveEffectiveAppearance(pool []AppearanceConfig, appearanceID string) (AppearanceConfig, bool) {
 	target := ParseGUID(appearanceID)
 	if target == "" || IsZeroGUID(target) {
 		for _, cfg := range pool {
 			if cfg.IsDefault {
-				return cfg.RoundSummary
+				return cfg, true
 			}
 		}
-		return false
+		return AppearanceConfig{}, false
 	}
 	for _, cfg := range pool {
 		if cfg.AppearanceID == target {
-			return cfg.RoundSummary
+			return cfg, true
 		}
 	}
-	return false
+	return AppearanceConfig{}, false
+}
+
+// ResolveRoundSummary 解析猫的轮末总结生效值——无生效外观 = false（保守值）。
+func ResolveRoundSummary(pool []AppearanceConfig, appearanceID string) bool {
+	cfg, ok := resolveEffectiveAppearance(pool, appearanceID)
+	if !ok {
+		return false
+	}
+	return cfg.RoundSummary
+}
+
+// ResolveSummaryAudio 解析猫的总结自动出声配置——返回 [启用, 音色槽位]；
+// 无生效外观 = 保守关闭（不出声）；音色空 = 服务默认音色（与 C# AdminService.ResolveSummaryAudio 同口径）。
+func ResolveSummaryAudio(pool []AppearanceConfig, appearanceID string) (bool, string) {
+	cfg, ok := resolveEffectiveAppearance(pool, appearanceID)
+	if !ok {
+		return false, ""
+	}
+	return cfg.SummaryAudio, cfg.TtsStyle
 }
 
 // SortAppearancePool 按 C# Guid.CompareTo 语义排序（a → b → c → 尾 8 字节；前三段按有符号整数比较）。
