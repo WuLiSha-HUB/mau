@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.26.1"
+var version = "0.26.2"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -272,6 +272,8 @@ func main() {
 	}
 	// 工具工单面接线——非内置工具 Post → 组 Flow 认领执行 → 100ms Tick 收回执
 	wiring.Session.SetToolOffice(&oaToolOffice{oa: toolRT.OA})
+	// 轮末总结工单面接线——SVC/LLMSimpleRequest（挂单方 #2；开关与 LLM 配置在 wireSession 已装配）
+	wiring.Session.SetRoundSummaryOffice(&oaRoundSummaryOffice{oa: toolRT.OA})
 	// 浏览器生命周期接线——timeback 开锚预热（browser_vision）/ 域回收关闭（有头实例保活）
 	wiring.Session.Timeback.Browser = toolRT.Browser
 	// 图片注入路径规范化——`<rootId>:<rel>` → 绝对路径（与 text-* / cs-* 同一根解析实现）

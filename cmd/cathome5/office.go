@@ -67,6 +67,61 @@ func (a *oaToolOffice) State(officeID int64) session.ToolOfficeState {
 	return state
 }
 
+// oaRoundSummaryOffice 把运行时 OA 适配为会话侧轮末总结工单面（挂单方 #2——独立于工具工单）。
+type oaRoundSummaryOffice struct {
+	// oa 工单撮合器
+	oa *runtime.OA
+}
+
+// Post 上架一单（type=SVC / name=LLMSimpleRequest）。
+func (a *oaRoundSummaryOffice) Post(officeName string, timeoutFrames int64) int64 {
+	if a.oa == nil {
+		return 0
+	}
+	return a.oa.Post(session.RoundSummaryOwnerID, "SVC", officeName, timeoutFrames)
+}
+
+// SetStr 写工单载荷。
+func (a *oaRoundSummaryOffice) SetStr(officeID int64, key, value string) bool {
+	if a.oa == nil {
+		return false
+	}
+	return a.oa.SetStr(officeID, session.RoundSummaryOwnerID, key, value)
+}
+
+// State 读工单观测态（0=Open 1=Work 2=Closed 3=TimeOut；result 键存在即带回——C# 同判据不按状态）。
+func (a *oaRoundSummaryOffice) State(officeID int64) session.ToolOfficeState {
+	state := session.ToolOfficeState{}
+	if a.oa == nil {
+		return state
+	}
+	office := a.oa.GetOffice(officeID)
+	state.ClaimFrame = office.ClaimFrame
+	switch office.Status {
+	case runtime.OfficeOpen:
+		state.Status = 0
+	case runtime.OfficeWork:
+		state.Status = 1
+	case runtime.OfficeClosed:
+		state.Status = 2
+	case runtime.OfficeTimeout:
+		state.Status = 3
+	}
+	if value, ok := office.Result["result"]; ok {
+		state.Result = value
+		state.HasResult = true
+	}
+	return state
+}
+
+// RemoveByOwner 回收本挂单方全部工单。
+func (a *oaRoundSummaryOffice) RemoveByOwner() {
+	if a.oa == nil {
+		return
+	}
+	a.oa.RemoveByOwner(session.RoundSummaryOwnerID)
+}
+
 // toolRuntime 是机制面装配结果（OA / 帧序 Runner / 已注册组）。
 type toolRuntime struct {
 	// OA 工单撮合器

@@ -98,6 +98,8 @@ type Session struct {
 	apiRoleBackup bool
 	// modelOverride 会话级临时模型（空=跟随端点默认；不回写端点池配置）
 	modelOverride string
+	// roundSummary 轮末总结服务状态（开关 / 在途工单 / 本轮缓冲）
+	roundSummary roundSummaryState
 }
 
 // NewSession 建立会话实体（catKey 为空时先构造、SetCatKey 后补齐落盘面）。
@@ -267,6 +269,8 @@ func (s *Session) AppendInjection(content, source, imagesJSON, origin string) {
 			s.Views.OnSystemMessage(*msg, msgIndex, source, origin)
 		} else {
 			s.Views.OnUserMessage(*msg, msgIndex, origin)
+			// 轮末总结——本轮 user 文本入缓冲（全部 user 按序；sys 注入不计入）
+			s.appendRoundSummaryUser(text)
 		}
 	}
 }

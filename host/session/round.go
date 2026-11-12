@@ -326,6 +326,8 @@ func (s *Session) RequestPause() {
 
 // Pump 推进一帧——Idle 检查排队；Llm 轮询完成槽；工具批轮询；终态收尾。
 func (s *Session) Pump() {
+	// 轮末总结——在途工单回收（每帧；无在途零成本返回）
+	s.pumpRoundSummary()
 	r := s.roundState()
 	r.mu.Lock()
 	paused := r.paused
@@ -438,6 +440,8 @@ func (s *Session) resetRoundCounters() {
 	r.phaseStart = time.Time{}
 	r.mu.Unlock()
 	s.SetContextTokens(0)
+	// 轮末总结——本轮缓冲清零（全部 user / 全部 text 按序累积）
+	s.resetRoundSummaryBuffers()
 	s.enterPhase(PhaseLink)
 }
 
@@ -741,6 +745,8 @@ func (s *Session) pumpLlm() {
 		s.abortRoundError()
 		return
 	}
+	// 轮末总结——本轮 text 入缓冲（全部 text 按序：工具轮间隙文本与最终回复同收）
+	s.appendRoundSummaryText(resultText)
 	if reasoning != "" {
 		s.Timeback.NoteEvent()
 	}
@@ -897,9 +903,12 @@ func (s *Session) closeRound() {
 		return
 	}
 	s.phaseSettle()
+	sumTs := s.ViewTimestamp()
 	if s.Views != nil {
-		s.Views.AppendRoundSummary(s.BuildRoundSumJSON(), s.ViewTimestamp())
+		s.Views.AppendRoundSummary(s.BuildRoundSumJSON(), sumTs)
 	}
+	// 轮末总结——轮末调度总结服务（开关开 + 配置可用；块固定插在 roundsum 之后 = ts + 1）
+	s.PostRoundSummary(sumTs + 1)
 	r := s.roundState()
 	r.mu.Lock()
 	r.round = 0

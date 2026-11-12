@@ -148,6 +148,19 @@ func (s *LlmAPIStore) TryGet(id string) (LlmAPIConfig, bool) {
 	return LlmAPIConfig{}, false
 }
 
+// ResolveDefault 解析默认端点——IsDefault 标记条目；无默认返回 false（不做首条回落——C# 同判据）。
+func (s *LlmAPIStore) ResolveDefault() (LlmAPIConfig, bool) {
+	if s == nil {
+		return LlmAPIConfig{}, false
+	}
+	for _, cfg := range s.configs {
+		if cfg.IsDefault {
+			return cfg, true
+		}
+	}
+	return LlmAPIConfig{}, false
+}
+
 // Secret 取配置对应密钥（未命中空串）。
 func (s *LlmAPIStore) Secret(id string) string {
 	if s == nil {

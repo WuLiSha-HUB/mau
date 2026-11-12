@@ -297,6 +297,43 @@ func (o *OA) Cancel(officeID, owner int64) bool {
 	return valid
 }
 
+// RemoveByOwner 移除某挂单方的全部工单——挂单方回收时的清理面（C# OA.RemoveByOwner 平移）。
+//
+// 与 Cancel 的差别：Cancel 只撤销本人尚未被认领的 Open 单；本方法按挂单方身份整组移除（任何状态）。
+// 日志逐张出声（状态名按 C# OfficeState.ToString 口径）；返回移除张数。
+func (o *OA) RemoveByOwner(ownerID int64) int {
+	removed := make([]*Office, 0, 4)
+	o.mu.Lock()
+	for id, off := range o.offices {
+		if off.Owner == ownerID {
+			removed = append(removed, off)
+			delete(o.offices, id)
+			o.version++
+		}
+	}
+	o.mu.Unlock()
+	sortOffices(removed)
+	if o.Log != nil {
+		for _, off := range removed {
+			o.Log(0, "挂单方 #"+itoa(ownerID)+" 回收：释放工单 #"+itoa(off.ID)+"（状态 "+officeStateName(off.Status)+"）")
+		}
+	}
+	return len(removed)
+}
+
+// officeStateName 状态枚举名——日志口径对齐 C# OfficeState.ToString。
+func officeStateName(state OfficeState) string {
+	switch state {
+	case OfficeWork:
+		return "Work"
+	case OfficeClosed:
+		return "Closed"
+	case OfficeTimeout:
+		return "TimeOut"
+	}
+	return "Open"
+}
+
 // StatusOf 查询工单状态。
 func (o *OA) StatusOf(officeID int64) (OfficeState, bool) {
 	o.mu.Lock()

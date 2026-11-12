@@ -77,7 +77,8 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	sess := session.NewSession(catID, ctx, sessionStore, views)
 	sess.SetDisplayName(wiring.DisplayName)
 	// 桌宠种类——外观池解析（cat.cfg appearanceId 零值 = 跟随默认外观；池缺失 / 引用失效 = 空 = 无桌宠）
-	sess.SetPetKind(resolvePetKind(dataRoot, cfg.AppearanceID))
+	appearancePool := config.LoadAppearancePool(filepath.Join(dataRoot, "config", "appearance.json"))
+	sess.SetPetKind(resolvePetKind(appearancePool, cfg.AppearanceID))
 	wiring.Session = sess
 
 	// 工具面——授权集实时口径快照 → 声明面裁剪 → 会话快照优先（A221：重启不改面，仅 session.new 换新）
@@ -104,6 +105,12 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	}
 	wiring.LLMStore = llmStore
 	pool := llm.NewPoolFromStore(llmStore)
+	// 轮末总结——开关取外观池条目（cat.cfg appearanceId 零值跟随默认外观）；LLM 配置取 apiConfigId → 端点池。
+	// 工单面（OA）在会话构造之后建立，由 main 回填（对齐 DBSvc 的回填口径）。
+	sess.SetRoundSummary(config.ResolveRoundSummary(appearancePool, cfg.AppearanceID))
+	sess.SetRoundSummaryLlm(func() []string {
+		return resolveRoundSummaryLlm(llmStore, cfg.APIConfigID)
+	})
 	client := &llm.Client{
 		Pool:            pool,
 		APIConfigID:     cfg.APIConfigID,
@@ -153,8 +160,7 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 
 // resolvePetKind 解析猫的桌宠种类——cat.cfg appearanceId 零值 / 非法 = 跟随默认外观；
 // 池缺失或引用失效 = 空串（无桌宠——前端按空值不渲染，不回落默认素材）。
-func resolvePetKind(dataRoot, appearanceID string) string {
-	pool := config.LoadAppearancePool(filepath.Join(dataRoot, "config", "appearance.json"))
+func resolvePetKind(pool []config.AppearanceConfig, appearanceID string) string {
 	if len(pool) == 0 {
 		return ""
 	}
@@ -173,6 +179,28 @@ func resolvePetKind(dataRoot, appearanceID string) string {
 		}
 	}
 	return ""
+}
+
+// resolveRoundSummaryLlm 解析轮末总结 LLM 配置——返回 [endpoint, apikey, model]；不可用 nil。
+//
+// 语义对齐 C# ResolveRoundSummaryLlm（`CatHostService.Cats.cs:97-130`）：apiConfigId 非零 → 池内该条；
+// 零值 / 非法 → 默认标记条目（无默认不回落首条）；端点空 = 不可用（不静默放行）。
+func resolveRoundSummaryLlm(store *config.LlmAPIStore, apiConfigID string) []string {
+	if store == nil {
+		return nil
+	}
+	id := config.ParseGUID(apiConfigID)
+	var cfg config.LlmAPIConfig
+	ok := false
+	if id != "" && !config.IsZeroGUID(id) {
+		cfg, ok = store.TryGet(id)
+	} else {
+		cfg, ok = store.ResolveDefault()
+	}
+	if !ok || cfg.Endpoint == "" {
+		return nil
+	}
+	return []string{cfg.Endpoint, store.Secret(cfg.APIConfigID), cfg.DefaultModel}
 }
 
 // resolveCacheIsolationKey 缓存隔离键——llm.cache_isolation：cat=猫键 / off=空；其余按猫键。

@@ -83,3 +83,27 @@ func TestCompleteSummaryAndLog(t *testing.T) {
 		t.Fatalf("超时日志缺失: %v", logs)
 	}
 }
+
+// TestRemoveByOwner 挂单方回收——只移除本人名下工单（任何状态），他人工单不受影响，返回移除张数。
+func TestRemoveByOwner(t *testing.T) {
+	oa := NewOA(nil)
+	openID := oa.Post(2, "SVC", "LLMSimpleRequest", 2400)
+	workID := oa.Post(2, "SVC", "LLMSimpleRequest", 2400)
+	_ = oa.ClaimBatch(7, []int64{workID})
+	otherID := oa.Post(1, "TOOL", "text-read", 1200)
+	if removed := oa.RemoveByOwner(2); removed != 2 {
+		t.Fatalf("应移除 2 张，实得 %d", removed)
+	}
+	if _, ok := oa.StatusOf(openID); ok {
+		t.Fatal("Open 工单应被移除")
+	}
+	if _, ok := oa.StatusOf(workID); ok {
+		t.Fatal("Work 工单应被移除")
+	}
+	if _, ok := oa.StatusOf(otherID); !ok {
+		t.Fatal("他人工单不应被移除")
+	}
+	if removed := oa.RemoveByOwner(2); removed != 0 {
+		t.Fatalf("重复回收应为 0，实得 %d", removed)
+	}
+}
