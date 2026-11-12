@@ -4,19 +4,16 @@ import (
 	"net/http"
 	"strings"
 	"sync"
-	"time"
 
 	"cathome5/host/session"
+	"cathome5/mau/bricks"
 )
 
 // 本文件复现管理端「宿主重启」端点——POST /api/v1/host-restart。
 //
 // 契约对齐 `mau:CatHome4/CatHome4.Admin/AdminService.Handlers.cs:HandleHostRestartPost`：
-// 只登记请求 + 置停机态，本处不起进程（接力由主循环闸门在全局空闲后执行，闸门超时自动撤销）。
-// Go 侧差异（P5 外壳未接线）：闸门到点一律撤销并出声——停机态无上限会无限期拒收输入（A262 同因）。
-
-// restartGateWait 是闸门等待上限——判据持续不满足即撤销重启态。
-const restartGateWait = 30 * time.Second
+// 只登记请求 + 置停机态；接力由主循环闸门在全局空闲后执行（T3），闸门超时自动撤销并出声。
+// 执行面在 `cmd/cathome5/restart.go`（起部署继电器 → 观测收尾 → 退出），本文件只管登记面。
 
 // restartResponse 是 host-restart 回执（ok / mode / note 三键）。
 type restartResponse struct {
@@ -28,18 +25,24 @@ type restartResponse struct {
 	Note string `json:"note"`
 }
 
+// RestartRequest 是一次重启请求的载荷（mode / target / push 三字段）。
+type RestartRequest struct {
+	// Mode 档位（full / incr / host）
+	Mode string
+	// Target 目标运行区绝对路径（空 = 执行时按受控根 mauout5 解析）
+	Target string
+	// Push 重启后附加说明串（随部署报告一起注入本会话，可空）
+	Push string
+}
+
 // RestartState 是宿主重启请求登记面（停机态单一真相源）。
 type RestartState struct {
-	// mu 保护 mode / push / requested / timer
+	// mu 保护 request / requested
 	mu sync.Mutex
-	// mode 生效档位
-	mode string
-	// push 重启后附加说明串
-	push string
+	// request 当前请求载荷（requested=true 时有效）
+	request RestartRequest
 	// requested 是否处于停机态（true = 新需求一律拒收）
 	requested bool
-	// timer 闸门超时撤销定时器
-	timer *time.Timer
 	// logf 观测日志出口
 	logf func(level int, message string)
 }
@@ -63,36 +66,60 @@ func (s *RestartState) Requested() bool {
 	return s.requested
 }
 
-// Request 登记重启请求——置停机态 + 起闸门超时定时器。
-func (s *RestartState) Request(mode, push string) {
+// Request 登记重启请求——置停机态（重复登记以最后一次为准，出声覆盖）。
+func (s *RestartState) Request(mode, target, push string) {
 	if s == nil {
 		return
 	}
-	s.mu.Lock()
-	s.mode = mode
-	s.push = push
-	s.requested = true
-	if s.timer != nil {
-		s.timer.Stop()
+	if mode != "full" && mode != "incr" && mode != "host" {
+		mode = "host"
 	}
-	s.timer = time.AfterFunc(restartGateWait, func() { s.withdraw() })
+	s.mu.Lock()
+	s.request = RestartRequest{Mode: mode, Target: target, Push: push}
+	s.requested = true
 	s.mu.Unlock()
-	s.log(1, "管理面板请求宿主重启（mode="+mode+"）——等待全局空闲后执行")
+	s.log(1, "宿主重启请求已登记（mode="+mode+"）——本轮照常收尾（停机态拒收新输入），等待全局空闲")
 }
 
-// withdraw 撤销停机态并出声（执行面未接线时这是唯一出口——不留静默拒收）。
-func (s *RestartState) withdraw() {
+// RequestFromPayload 按请求载荷 JSON 登记（DataBox 全局盒 → 会话批次检测消费）。
+func (s *RestartState) RequestFromPayload(payload string) {
+	mode, target, push := bricks.DecodeRestartRequest(payload)
+	if mode == "" {
+		mode = "full"
+	}
+	s.Request(mode, target, push)
+}
+
+// Snapshot 取当前请求——requested=false 时返回零值。
+func (s *RestartState) Snapshot() (RestartRequest, bool) {
+	if s == nil {
+		return RestartRequest{}, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.requested {
+		return RestartRequest{}, false
+	}
+	return s.request, true
+}
+
+// Withdraw 撤销重启态——清停机理与请求载荷并出声（闸门超时 / 接力拉起失败的唯一出口）。
+//
+// 不清「人工队列」（跨重启保留）；调用方负责向会话注入失败回执（失败必须可见）。
+func (s *RestartState) Withdraw(reason string) {
+	if s == nil {
+		return
+	}
 	s.mu.Lock()
 	if !s.requested {
 		s.mu.Unlock()
 		return
 	}
-	mode := s.mode
+	mode := s.request.Mode
 	s.requested = false
-	s.timer = nil
+	s.request = RestartRequest{}
 	s.mu.Unlock()
-	s.log(2, "重启请求已撤销（闸门超时 "+restartGateWait.String()+"，mode="+mode+"）——"+
-		"执行面归 P5 外壳（整机切换未接线）；宿主按当前进程继续服务")
+	s.log(2, "重启请求已撤销（mode="+mode+"）——"+reason)
 }
 
 // log 记一条 CONFIG 类观测日志。
@@ -126,6 +153,6 @@ func (d *Deps) handleHostRestartPost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "重启面未绑定")
 		return
 	}
-	d.Restart.Request(mode, push)
+	d.Restart.Request(mode, "", push)
 	writeJSON(w, restartResponse{OK: true, Mode: mode, Note: "已登记——全局空闲后执行重启（闸门超时会自动撤销）"})
 }

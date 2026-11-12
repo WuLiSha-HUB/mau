@@ -90,6 +90,8 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 		poolSpecs = append(poolSpecs, session.ToolSpec{Name: def.Name, Description: def.Description, ParametersJSON: def.ParametersJSON})
 	}
 	// 持久化快照优先（旧档 / 首建回落池面；退役剔除出声）——与 C# ChatSession.ResolveSessionTools 同序
+	// 特权面判定先接线：非默认会话的注入面过滤读注册面组级标记（默认会话永久激活，行为不变）
+	session.IsPrivilegedTool = toolsResult.Registry.IsPrivilegedName
 	sess.SetToolSpecs(session.ResolveSessionTools(catID, poolSpecs))
 
 	// LLM 客户端——端点池 + 密钥 + 全局配置读取（存储与管理面共用同一实例）

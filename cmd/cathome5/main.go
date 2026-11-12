@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.24.0"
+var version = "0.25.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -48,6 +48,7 @@ func main() {
 	areaFlag := flag.String("area", "", "区覆盖（dev / deploy）")
 	pageFlag := flag.String("page", "", "页面覆盖（chat.html = 对话页实例）")
 	corpusFlag := flag.String("corpus", "", "语料根覆盖（等价 CAT5_CORPUS；缺省从 exe 目录 / workspace 的 mau 根推导）")
+	pushFlag := flag.String("majordomopush", "", "宿主启动回执注入串（重启链 T6——一次性 system 消息投给 Majordomo 会话）")
 	versionFlag := flag.Bool("version", false, "打印版本后退出")
 	flag.Parse()
 	if *versionFlag {
@@ -329,6 +330,11 @@ func main() {
 	restartState := admin.NewRestartState(func(level int, message string) {
 		logs.Add("CatHome5", level, message, "CONFIG", "", "", 0, frame.Current(), false)
 	})
+	// [段12b-2] 重启链会话侧钩子——T1 请求载荷（DataBox 全局盒）与登记面（置停机态）
+	session.RestartRequestPayload = func() string {
+		return toolRT.DB.GetString("global", "host_restart_request")
+	}
+	session.RestartRequestRegister = func(payload string) { restartState.RequestFromPayload(payload) }
 	adminDeps := &admin.Deps{
 		DataRoot:    dataRoot,
 		Schema:      schema,
@@ -415,8 +421,13 @@ func main() {
 			"未定位 html 根（源码区 CatHome4/html 或 --html-root）", "用 --html-root 指定静态页目录，或确认 workspace.json 的 mau 根可达", "S6")
 	}
 
-	// [段12f] 机制 ticker——100ms 帧序（对齐 C# 主循环）：组 Flow 驱动 → OA 结算 → 会话推进。
+	// [段12f] 机制 ticker——100ms 帧序（对齐 C# 主循环）：组 Flow 驱动 → OA 结算 → 会话推进 → 重启闸门。
 	// 快照 / SSE 仍走 250ms Pump（观测面节拍与机制节拍分离）。
+	gate := newRestartGate(restartState, wiring.Session, toolRT.Runner, toolRT.OA, workspace,
+		dataRoot, listenPort, band.Area, *pageFlag, func(level int, message, category string) {
+			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
+		})
+	restartCh := make(chan struct{}, 1)
 	tickStop := make(chan struct{})
 	tickerDone := make(chan struct{})
 	go func() {
@@ -430,9 +441,24 @@ func main() {
 			case <-ticker.C:
 				toolRT.Runner.Tick()
 				wiring.Session.Pump()
+				// 按猫新会话请求（cat.new-session）——仅 Idle 时执行（轮内不重建）
+				router.ConsumePendingNewSession()
+				// 重启闸门（T3/T4）——通过后接力已拉起，主循环走退出通道
+				if gate.Tick() {
+					restartCh <- struct{}{}
+				}
 			}
 		}
 	}()
+
+	// [段12g] 重启回执注入（T6）——上一宿主经 --majordomopush 传来的部署结论（一次性 system 消息）
+	if push := strings.TrimSpace(*pushFlag); push != "" {
+		if reply := wiring.Session.PostSystemMessage(session.SysKindRestart, push, ""); reply != "OK" {
+			logs.Add("CatHome5", observe.LevelWarn, "宿主启动回执注入未受理："+reply, "RESTART", "", "", 0, frame.Current(), false)
+		} else {
+			logs.Add("CatHome5", observe.LevelInfo, "宿主启动回执已登记（重启链 T6——注入 Majordomo 会话）", "RESTART", "", "", 0, frame.Current(), false)
+		}
+	}
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -484,6 +510,8 @@ func main() {
 	select {
 	case sig := <-sigCh:
 		logs.Add("CatHome5", observe.LevelInfo, "收到退出信号："+sig.String(), "SYS", "", "", 0, 0, false)
+	case <-restartCh:
+		logs.Add("CatHome5", observe.LevelInfo, "重启交接完成——宿主收尾退出（接力者已接管部署）", "RESTART", "", "", 0, frame.Current(), false)
 	case err := <-errCh:
 		if err != nil {
 			logs.Add("CatHome5", observe.LevelErr, "HTTP 服务异常退出："+err.Error(), "SYS", "", "", 0, 0, false)

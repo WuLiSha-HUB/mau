@@ -170,7 +170,7 @@ func TestHostRestartRequestAndWithdraw(t *testing.T) {
 	if !state.Requested() {
 		t.Fatal("登记后停机态未置位")
 	}
-	state.withdraw()
+	state.Withdraw("测试撤销")
 	if state.Requested() {
 		t.Fatal("撤销后停机态未复位")
 	}

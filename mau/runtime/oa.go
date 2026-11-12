@@ -315,6 +315,24 @@ func (o *OA) Counts() (done, timeout, relist, version int64) {
 	return o.totalDone, o.totalTimeout, o.totalRelist, o.version
 }
 
+// InFlight 返回在途工单计数（待认领 / 执行中）——全局 Idle 闸门判据（宿主重启 T3）。
+func (o *OA) InFlight() (open, work int) {
+	if o == nil {
+		return 0, 0
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, off := range o.offices {
+		switch off.Status {
+		case OfficeOpen:
+			open++
+		case OfficeWork:
+			work++
+		}
+	}
+	return open, work
+}
+
 func cloneOffice(off *Office) *Office {
 	cp := *off
 	cp.Data = make(map[string]string, len(off.Data))

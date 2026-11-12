@@ -349,6 +349,10 @@ func (s *Session) Pump() {
 
 // pumpIdle 空闲推进——继续请求 / 自动继续到点 / 排队消息启动一轮。
 func (s *Session) pumpIdle() {
+	// 停机态丢弃在途系统注入——宿主即将重启，不再开新轮（人工队列跨重启保留）
+	if s.Pending != nil {
+		s.Pending.DropSysIfRestarting()
+	}
 	r := s.roundState()
 	r.mu.Lock()
 	continueRequested := r.continueRequested

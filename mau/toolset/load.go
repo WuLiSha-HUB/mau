@@ -1,5 +1,5 @@
 // Package toolset 把语料组（corpus/ch4/<组>/<组>.mau）装配成可驱动的运行时图：
-// 工具积木映射（72 件）+ 公共五积木（oa.* / self.desc）+ 组加载门禁。
+// 工具积木映射（75 件）+ 公共五积木（oa.* / self.desc）+ 组加载门禁。
 //
 // 分层：bricks（工具执行体）← 本包（积木表 + 组装配）→ graph（图）/ runtime（帧序）。
 // 门禁口径：组内引用的积木全部在本包积木表里才注册；缺件组逐条出声跳过（不静默）。
@@ -69,11 +69,13 @@ type BrickOptions struct {
 	Mau *bricks.MauService
 }
 
-// BuildBrickSet 构造积木表——72 件工具积木（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 3 / py 3 / mau 4 / temp 2）+ 公共五积木。
+// BuildBrickSet 构造积木表——75 件工具积木（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 3 / py 3 / mau 4 / temp 2 / host 3）+ 公共五积木。
 //
 // 工具积木名与语料一致（text.read / file.tree / ps.exec …），参数是语料求值后的字符串切片：
 // 单动作积木取 args[0]（整包工具参数 JSON）；公共积木按各自签名取参。
 func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts BrickOptions) graph.BrickSet {
+	// 运行模式标记——host.restart 的闸门数据源（本宿主恒常驻交互形态；无常驻主循环的形态不调用）
+	bricks.SetInteractiveRunMode(db)
 	set := graph.BrickSet{
 		// ── OA 公共积木（语料每组必用）──
 		"oa.is_open": func(args []string) (string, bool) {
@@ -90,6 +92,17 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		"self.desc": func(args []string) (string, bool) {
 			return bricks.SelfDesc(db, runtime.CurrentFlowID, args...)
+		},
+		// ── HOST（Majordomo 五条认领线——重启登记 / 管理指令 / 全猫统计）──
+		// 特权面由工具定义积木组级 privileged 声明承担；host.restart 只落盒不执行（进程动作归宿主闸门）
+		"host.restart": func(args []string) (string, bool) {
+			return bricks.HostRestart(db, argAt(args, 0), argAt(args, 1))
+		},
+		"host.command": func(args []string) (string, bool) {
+			return bricks.HostCommand(opts.HostCommand, argAt(args, 0))
+		},
+		"host.catinfo": func(args []string) (string, bool) {
+			return bricks.HostCatInfo(opts.HostCommand, argAt(args, 0))
 		},
 		// ── TEMP（TempToolCat 两件——临时工具注册表生产空表；Key 分发 str→str，异常回收 ERR|TEMP_EXEC）──
 		"temp.exec": func(args []string) (string, bool) {

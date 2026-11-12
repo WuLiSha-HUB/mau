@@ -412,6 +412,12 @@ func (s *Session) pumpToolBatch() {
 	s.Timeback.Apply()
 	s.Timeback.PostCard()
 	s.Timeback.FlushNotice()
+	// [段2c] 宿主重启检测——重启族工具成功回执 → 登记重启请求 + 停机态（A72：本轮走常规结束流程）
+	s.registerRestartFromBatch(dogs)
+	// 停机态丢弃在途系统注入（人工队列跨重启保留——A232 同口径）
+	if s.Pending != nil {
+		s.Pending.DropSysIfRestarting()
+	}
 	// 忙时插话——有排队消息则同轮插入并续轮
 	if s.DrainPendingIntoRound(true) {
 		r.mu.Lock()
