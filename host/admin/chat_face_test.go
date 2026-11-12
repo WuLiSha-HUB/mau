@@ -30,10 +30,26 @@ func newChatFaceStore(t *testing.T) (*config.LlmAPIStore, string, string) {
 	return store, primaryID, backupID
 }
 
+// testAPIRole 端点角色桩——admin 包测试不依赖 llm 包（只依赖 session.APIRole 接口）。
+type testAPIRole struct {
+	// backup 当前角色（true=备用）
+	backup bool
+}
+
+// EffectiveUseBackup 生效角色。
+func (r *testAPIRole) EffectiveUseBackup() bool { return r.backup }
+
+// ToggleManual 手动对调。
+func (r *testAPIRole) ToggleManual() bool {
+	r.backup = !r.backup
+	return r.backup
+}
+
 // TestBuildAPIRoleJSON 端点角色信息——主要 / 备用 / 覆盖三态。
 func TestBuildAPIRoleJSON(t *testing.T) {
 	store, primaryID, _ := newChatFaceStore(t)
 	sess := session.NewSession("", session.NewContext(), nil, nil)
+	sess.SetAPIRole(&testAPIRole{})
 
 	payload := decodePayload(t, BuildAPIRoleJSON(sess, store, ""))
 	if payload["role"] != "主要" || payload["primary"] != "m-primary" || payload["backup"] != "m-backup" {

@@ -22,6 +22,16 @@ var IsPrivilegedTool = func(name string) bool { return false }
 // SessionMetaPathProvider 会话元数据落点解析——猫 key → 元数据文件绝对路径（空 = 不持久化）。
 var SessionMetaPathProvider func(catID string) string
 
+// APIRole 会话端点角色面——C# ChatSession._apiRole 的窄投射（实现 = llm.EndpointRole）。
+//
+// 角色状态只有一份（组合根共享同一实例）：会话读它渲染角色文本，LLM 客户端读它解析目标端点。
+type APIRole interface {
+	// EffectiveUseBackup 生效角色——true=当前走备用站（窗口期内以窗口角色为准）
+	EffectiveUseBackup() bool
+	// ToggleManual 手动对调——返回切换后的角色（true=备用）
+	ToggleManual() bool
+}
+
 // Session 是宿主会话实体——前文 / 视图 / 注入面 / Note / timeback / 待处理队列的聚合。
 //
 // 职责边界：本实体只承载「会话自身状态与其文本面」；LLM 请求、工具批、相位推进归 P3-c。
@@ -94,8 +104,8 @@ type Session struct {
 	roundRequests int64
 	// roundTools 本轮工具调用次数
 	roundTools int64
-	// apiRoleBackup 会话端点角色（true=备用；仅本会话有效——手动对调，C# ChatSession._apiRole 同语义）
-	apiRoleBackup bool
+	// apiRole 会话端点角色面（C# ChatSession._apiRole 的窄投射；nil = 未接线——角色按「主要」处理）
+	apiRole APIRole
 	// modelOverride 会话级临时模型（空=跟随端点默认；不回写端点池配置）
 	modelOverride string
 	// roundSummary 轮末总结服务状态（开关 / 在途工单 / 本轮缓冲）
@@ -568,23 +578,39 @@ func (s *Session) DescribeInjection() string {
 	return strings.Join(names, ",")
 }
 
-// ToggleAPIRole 手动对调端点角色——仅本会话有效（清自动窗口：用户意志优先）；返回切换后角色文本（主要/备用）。
-func (s *Session) ToggleAPIRole() string {
-	s.mu.Lock()
-	s.apiRoleBackup = !s.apiRoleBackup
-	backup := s.apiRoleBackup
-	s.mu.Unlock()
-	if backup {
-		return "备用"
-	}
-	return "主要"
-}
-
-// APIRoleText 当前端点角色文本（主要/备用）。
-func (s *Session) APIRoleText() string {
+// SetAPIRole 接线会话端点角色面——与 LLM 客户端共享同一实例（组合根单点，C# ChatSession 持 _apiRole 引用同形）。
+func (s *Session) SetAPIRole(role APIRole) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.apiRoleBackup {
+	s.apiRole = role
+}
+
+// ToggleAPIRole 手动对调端点角色——仅本会话有效（清自动窗口：用户意志优先）；日志 + 视图提示 + 返回角色文本。
+//
+// 逐字对齐 C# ChatSession.ToggleApiRole：角色面未接线 → 返回「主要」不翻转（无日志、无视图）。
+func (s *Session) ToggleAPIRole() string {
+	s.mu.Lock()
+	role := s.apiRole
+	catKey := s.CatKey
+	s.mu.Unlock()
+	if role == nil {
+		return "主要"
+	}
+	text := "主要"
+	if role.ToggleManual() {
+		text = "备用"
+	}
+	logAt("LLM", 1, "手动切换端点角色："+catKey+" → "+text+"（仅本会话有效）", LogCategoryLLM)
+	s.PushAPIRoleView(text, "")
+	return text
+}
+
+// APIRoleText 当前端点角色文本（主要/备用）——读共享角色面实时值（窗口到期自动回落）。
+func (s *Session) APIRoleText() string {
+	s.mu.Lock()
+	role := s.apiRole
+	s.mu.Unlock()
+	if role != nil && role.EffectiveUseBackup() {
 		return "备用"
 	}
 	return "主要"
@@ -593,8 +619,20 @@ func (s *Session) APIRoleText() string {
 // APIRoleBackup 备用态判定（true = 当前走备用站）。
 func (s *Session) APIRoleBackup() bool {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.apiRoleBackup
+	role := s.apiRole
+	s.mu.Unlock()
+	return role != nil && role.EffectiveUseBackup()
+}
+
+// PushAPIRoleView 端点切换视图提示——复用 retry 视图面（C# PushApiRoleView 同形：独立气泡）。
+//
+// 消费方：手动切换（原因空）+ 自动故障转移（原因 = 触发错误摘要）。
+func (s *Session) PushAPIRoleView(role, reason string) {
+	if s.Views == nil {
+		return
+	}
+	payload := `{"state":"failover","role":` + jsonStr(role) + `,"text":` + jsonStr(reason) + `}`
+	s.Views.AppendRetry(payload, s.ViewTimestamp())
 }
 
 // SetModelOverride 会话级临时模型写入——空串 = 清空覆盖（跟随端点默认模型）；不回写端点池配置。

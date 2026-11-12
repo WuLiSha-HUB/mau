@@ -571,6 +571,15 @@ func (s *Session) consumeStreamEvent(ev StreamEvent) {
 		r.mu.Lock()
 		r.sawFailover = true
 		r.mu.Unlock()
+		// 端点切换——双打探针判定临时切换 / 手动对调：独立提示气泡（复用 retry 视图面，不静默）
+		// 事件文本 FAILOVER|角色|原因（C# Split('|', 3) 同口径）
+		foRole := "主要"
+		foReason := ""
+		if parts := strings.SplitN(ev.Text, "|", 3); len(parts) >= 3 {
+			foRole = parts[1]
+			foReason = parts[2]
+		}
+		s.PushAPIRoleView(foRole, foReason)
 	case StreamError:
 		r.mu.Lock()
 		if r.paused {

@@ -136,10 +136,14 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 		}
 		return []string{flag, voice}
 	})
+	// 会话端点角色（c-3）——会话与客户端共享同一实例：手动对调 / 自动故障转移窗口都只改这一份状态
+	apiRole := &llm.EndpointRole{}
+	sess.SetAPIRole(apiRole)
 	client := &llm.Client{
 		Pool:            pool,
 		APIConfigID:     cfg.APIConfigID,
 		ReasoningEffort: cfg.ReasoningEffort,
+		Role:            apiRole,
 		Settings: func(key string) string {
 			return store.Resolve(schema, key).Value
 		},

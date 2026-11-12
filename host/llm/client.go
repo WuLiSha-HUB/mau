@@ -41,10 +41,11 @@ type Client struct {
 	ModelOverride string
 	// ReasoningEffort 每猫思考强度覆盖（空 = 跟随全局）——写入口径同 APIConfigID
 	ReasoningEffort string
-	// roleBackup 会话端点角色（true=备用站；仅本会话有效——手动对调，C# ChatSession._apiRole 同语义）
-	roleBackup bool
+	// Role 会话端点角色状态（自动故障转移窗口 + 手动对调；nil = 不启用——C# ChatSession._apiRole 同语义）
+	Role *EndpointRole
 	// Settings 全局配置读取（键 → 值；nil = 全默认）
-	Settings func(key string) string // Failover 故障转移判定钩子（nil = 不启用；返回 true 表示已切换、可重发）
+	Settings func(key string) string
+	// Failover 故障转移判定钩子（nil = 内置自动判定——Role + Pool 双打探针；非 nil 覆写；返回 true 表示已切换、可重发）
 	Failover func(errorText string) bool
 	// SelfTag 入站自报身份提供器（nil = 不发自报头；仅自家 apis——回环 + 18100——生效）
 	SelfTag func() session.SelfTag
@@ -92,20 +93,6 @@ func (c *Client) ModelOverrideValue() string {
 	return c.ModelOverride
 }
 
-// SetRoleBackup 端点角色切换——true=备用站（会话级手动对调）；无备用端点时 target 回落主要站。
-func (c *Client) SetRoleBackup(backup bool) {
-	c.mu.Lock()
-	c.roleBackup = backup
-	c.mu.Unlock()
-}
-
-// RoleBackup 当前是否走备用站。
-func (c *Client) RoleBackup() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.roleBackup
-}
-
 // effortOverride 读当前思考强度覆盖（加锁）。
 func (c *Client) effortOverride() string {
 	c.mu.RLock()
@@ -148,14 +135,26 @@ func (c *Client) APIKey() string {
 }
 
 // target 解析目标端点配置——备用态优先备用站；空身份 = 默认端点；显式身份未命中 = nil（回落环境变量）。
+//
+// 备用角色生效但池内无备用 → 回落原解析并审计一次（C# ResolveTarget 同口径，不静默）。
 func (c *Client) target() *APIConfig {
 	if c.Pool == nil {
 		return nil
 	}
-	if c.RoleBackup() {
+	if c.Role != nil && c.Role.EffectiveUseBackup() {
 		if backup := c.Pool.ResolveBackup(); backup != nil {
 			return backup
 		}
+		logAt(2, "备用角色生效但池内无备用端点——回落原解析")
+	}
+	return c.primaryTarget()
+}
+
+// primaryTarget 解析主要站配置——猫绑定身份（空 = 默认端点语义），不受会话角色影响
+// （故障转移的对照站，C# ResolvePrimary 同口径）。
+func (c *Client) primaryTarget() *APIConfig {
+	if c.Pool == nil {
+		return nil
 	}
 	binding := c.bindingID()
 	if IsZeroGUID(binding) {
@@ -295,7 +294,7 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 				emit(Event{Kind: EventRetryResume, Text: ""})
 				continue
 			}
-			if c.tryFailover(netError, emit) {
+			if c.tryFailover(ctx, netError, emit) {
 				retryCount = 0
 				continue
 			}
@@ -327,7 +326,7 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 				return
 			}
 			httpError := ParseErrorText(status, string(raw))
-			if c.tryFailover(httpError, emit) {
+			if c.tryFailover(ctx, httpError, emit) {
 				retryCount = 0
 				continue
 			}
@@ -341,18 +340,91 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 	}
 }
 
-// tryFailover 故障转移判定——钩子返回 true 时产出 Failover + RetryResume 事件。
-func (c *Client) tryFailover(errorText string, emit func(Event)) bool {
-	if c.Failover == nil || !c.Failover(errorText) {
+// tryFailover 故障转移判定——返回 true 时产出 Failover + RetryResume 事件（调用方重发本轮请求）。
+//
+// 判定来源：Failover 钩子（自定义覆写）优先；nil 走内置自动判定——当前站与候选站双打探针
+// （C# DeepSeekLlmRuntime.TryFailoverAsync 等价）。
+func (c *Client) tryFailover(ctx context.Context, errorText string, emit func(Event)) bool {
+	switched := false
+	if c.Failover != nil {
+		switched = c.Failover(errorText)
+	} else {
+		switched = c.tryAutoFailover(ctx, errorText)
+	}
+	if !switched {
 		return false
 	}
-	role := c.failoverRole
-	if role == "" {
-		role = "备用"
-	}
-	emit(Event{Kind: EventFailover, Text: "FAILOVER|" + role + "|" + trimText(errorText, 200)})
+	emit(Event{Kind: EventFailover, Text: "FAILOVER|" + c.roleText() + "|" + trimText(errorText, 200)})
 	emit(Event{Kind: EventRetryResume, Text: ""})
 	return true
+}
+
+// tryAutoFailover 内置自动故障转移判定——C# DeepSeekLlmRuntime.TryFailoverAsync 等价。
+//
+// 不切的四种情形（逐条对齐 C#）：无角色面 / 无池 · 两侧配置缺一或同站 · 当前站可用 · 候选站也不可用。
+// 双打探针并行（当前站 + 候选站）——当前站无回应且候选站正常才切换（180 秒窗口）。
+func (c *Client) tryAutoFailover(ctx context.Context, errorText string) bool {
+	if c.Role == nil || c.Pool == nil {
+		return false
+	}
+	useBackup := c.Role.EffectiveUseBackup()
+	var current, other *APIConfig
+	if useBackup {
+		current = c.Pool.ResolveBackup()
+		other = c.primaryTarget()
+	} else {
+		current = c.primaryTarget()
+		other = c.Pool.ResolveBackup()
+	}
+	if current == nil || other == nil {
+		return false
+	}
+	if current.APIConfigID == other.APIConfigID {
+		return false
+	}
+	currentCh := make(chan bool, 1)
+	otherCh := make(chan bool, 1)
+	go func() { currentCh <- probeConfig(ctx, c.Pool, current) }()
+	go func() { otherCh <- probeConfig(ctx, c.Pool, other) }()
+	currentOK := <-currentCh
+	otherOK := <-otherCh
+	if currentOK {
+		// 当前站能返回——不改：错误可能出在请求侧，切站无益（C# 文案逐字）
+		logAt(2, "端点探针：当前站可用（"+current.DisplayName+"）——不切换。触发原因："+trimText(errorText, 200))
+		return false
+	}
+	if !otherOK {
+		// 候选站也无结果——不改：两边都不通，切了同样失败（C# 文案逐字）
+		logAt(3, "端点探针：当前站与候选站均无回应（"+current.DisplayName+" / "+other.DisplayName+"）——不切换")
+		return false
+	}
+	c.Role.SetFailover(!useBackup)
+	logAt(2, "上游异常——临时切换端点："+current.DisplayName+" → "+other.DisplayName+"（"+itoa(FailoverSeconds)+" 秒后自动回退）。触发原因："+trimText(errorText, 200))
+	return true
+}
+
+// probeConfig 探测一条端点配置是否可用（模型 / 密钥取自配置本身）。
+func probeConfig(ctx context.Context, pool *Pool, cfg *APIConfig) bool {
+	if cfg == nil || pool == nil {
+		return false
+	}
+	return ProbeEndpoint(ctx, DeriveChatEndpoint(cfg.Endpoint), pool.Secret(cfg.APIConfigID), cfg.DefaultModel)
+}
+
+// roleText 当前生效角色文本（主要 / 备用）——切换后取角色面实时值（C# BuildFailoverText 同口径）。
+//
+// 角色面未接线（Role == nil）时回落 failoverRole（钩子覆写场景的默认目标，空 = 「备用」）。
+func (c *Client) roleText() string {
+	if c.Role != nil {
+		if c.Role.EffectiveUseBackup() {
+			return "备用"
+		}
+		return "主要"
+	}
+	if c.failoverRole != "" {
+		return c.failoverRole
+	}
+	return "备用"
 }
 
 // transportErrorText 传输错误文本——超时与其它错误分档。

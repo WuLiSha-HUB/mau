@@ -90,11 +90,35 @@ func TestBuildFullContextView(t *testing.T) {
 	}
 }
 
+// fakeAPIRole 端点角色桩——session 包测试不依赖 llm 包（依赖方向 llm → session，反向会成环）。
+type fakeAPIRole struct {
+	// backup 当前角色（true=备用）
+	backup bool
+}
+
+// EffectiveUseBackup 生效角色。
+func (f *fakeAPIRole) EffectiveUseBackup() bool { return f.backup }
+
+// ToggleManual 手动对调。
+func (f *fakeAPIRole) ToggleManual() bool {
+	f.backup = !f.backup
+	return f.backup
+}
+
 // TestAPIRoleAndModelOverride 会话级端点角色与临时模型。
 func TestAPIRoleAndModelOverride(t *testing.T) {
 	sess := NewSession("", NewContext(), nil, nil)
+	// 未接线角色面——恒主要、切换不翻转（C# ToggleApiRole 的 _apiRole == null 同判）
 	if sess.APIRoleText() != "主要" || sess.APIRoleBackup() {
-		t.Fatalf("初始角色期望主要")
+		t.Fatalf("未接线角色期望主要")
+	}
+	if role := sess.ToggleAPIRole(); role != "主要" {
+		t.Fatalf("未接线切换期望主要（不翻转），实际 %q", role)
+	}
+	// 接线后——手动对调翻转
+	sess.SetAPIRole(&fakeAPIRole{})
+	if sess.APIRoleText() != "主要" || sess.APIRoleBackup() {
+		t.Fatalf("接线初始角色期望主要")
 	}
 	if role := sess.ToggleAPIRole(); role != "备用" || !sess.APIRoleBackup() {
 		t.Fatalf("首次对调期望备用，实际 %q", role)
