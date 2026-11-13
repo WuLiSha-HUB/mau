@@ -161,7 +161,7 @@ type toolRuntime struct {
 // buildToolRuntime 装配机制面——DataBox / OA / Runner / 积木表 / 组注册。
 //
 // 失败面一律出声（组跳过 / 语料目录缺失 / 受控根为空），不静默降级。
-func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir, dataRoot string, webCfg bricks.WebConfig, vision bricks.VisionService, cfgGet func(key string) string, configSvc bricks.ConfigService, hostCmd func(string) string, logf func(level int, message, category string), llmStream bricks.LLMStreamRuntime, groupSvc bricks.GroupService) *toolRuntime {
+func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir, dataRoot string, webCfg bricks.WebConfig, vision bricks.VisionService, cfgGet func(key string) string, configSvc bricks.ConfigService, hostCmd func(string) string, logf func(level int, message, category string), llmStream bricks.LLMStreamRuntime, groupSvc bricks.GroupService, catFS *catFSRegistry) *toolRuntime {
 	report := func(level int, message string) {
 		if logf != nil {
 			logf(level, message, "TOOL")
@@ -358,6 +358,12 @@ func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir,
 		report(1, "py 服务自启："+reply)
 	}
 	set := toolset.BuildBrickSet(svc, result.OA, db, toolset.BrickOptions{
+		SvcFor: func(argsJSON string) *fs.Service {
+			if catFS == nil {
+				return nil
+			}
+			return catFS.ServiceFor(argsJSON)
+		},
 		PwshPath: func() string {
 			if cfgGet == nil {
 				return ""
@@ -408,18 +414,30 @@ func buildFileService(workspace *config.WorkspaceConfig) (*fs.Service, string) {
 	if workspace == nil || len(workspace.Roots) == 0 {
 		return nil, "受控根表为空"
 	}
-	svc := &fs.Service{}
-	for _, root := range workspace.Roots {
-		svc.Roots = append(svc.Roots, fs.Root{ID: root.ID, Path: root.Path, Writable: root.Writable})
+	svc := buildFileServiceFromRoots(workspace.FSRoots())
+	if svc == nil {
+		return nil, "受控根表为空"
+	}
+	return svc, ""
+}
+
+// buildFileServiceFromRoots 按根条目构造文件工具服务——全局表与猫级子集共用同一实现
+// （Base 取 workspace 根，缺失取首根；RecycleRoot 固定 Base 下 tools/CatTemp/fs_recycle）。
+func buildFileServiceFromRoots(roots []fs.Root) *fs.Service {
+	if len(roots) == 0 {
+		return nil
+	}
+	svc := &fs.Service{Roots: append([]fs.Root{}, roots...)}
+	for _, root := range roots {
 		if svc.Base == "" && strings.EqualFold(root.ID, "workspace") {
 			svc.Base = root.Path
 		}
 	}
 	if svc.Base == "" {
-		svc.Base = workspace.Roots[0].Path
+		svc.Base = roots[0].Path
 	}
 	svc.RecycleRoot = filepath.Join(svc.Base, "tools", "CatTemp", "fs_recycle")
-	return svc, ""
+	return svc
 }
 
 // snapshotCats 投影 Flow 注册表为快照 cats 段——desc 取 DataBox 的 self_desc（对齐 C# GetSelfDesc）。

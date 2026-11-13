@@ -57,6 +57,9 @@ type BrickOptions struct {
 	Config bricks.ConfigService
 	// HostCommand 宿主指令服务（catcfg.bridge 的执行底座；nil = 报 HOSTCMD_NO_SERVICE）
 	HostCommand func(string) string
+	// SvcFor 按工具载荷解析猫级文件服务——载荷里的 catId 决定根表（nil / 未命中回退 svc）。
+	// 文件类积木（text / file / ts / ps）执行前按本钩子取服务；非文件类积木忽略。
+	SvcFor func(argsJSON string) *fs.Service
 	// Log 结构化日志出口（log.write 的执行面；nil = 走未接线失败侧）
 	Log func(level int, message, category string)
 	// Cs cs 桥执行面（csharp.bridge 的宿主依赖；nil = 报 CSHARP_NO_BRIDGE）
@@ -80,6 +83,15 @@ type BrickOptions struct {
 // 工具积木名与语料一致（text.read / file.tree / ps.exec …），参数是语料求值后的字符串切片：
 // 单动作积木取 args[0]（整包工具参数 JSON）；公共积木按各自签名取参。
 func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts BrickOptions) graph.BrickSet {
+	// 猫级文件服务解析——载荷 catId 命中即用该猫根表；未命中回退全局 svc（单猫形态 / 旧载荷无 catId）。
+	svcOf := func(argsJSON string) *fs.Service {
+		if opts.SvcFor != nil {
+			if catSvc := opts.SvcFor(argsJSON); catSvc != nil {
+				return catSvc
+			}
+		}
+		return svc
+	}
 	// 运行模式标记——host.restart 的闸门数据源（本宿主恒常驻交互形态；无常驻主循环的形态不调用）
 	bricks.SetInteractiveRunMode(db)
 	// 积木侧日志出口——category 固定 LLM（对齐 C# LogStore.Add("LLM", …) 的模块名口径）
@@ -251,7 +263,7 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		// ── PowerShell（PsCat 两条解释器线共用——shell 由语料第二参给）──
 		"ps.exec": func(args []string) (string, bool) {
-			return bricks.PsExec(svc, opts.PwshPath, argAt(args, 0), argAt(args, 1))
+			return bricks.PsExec(svcOf(argAt(args, 0)), opts.PwshPath, argAt(args, 0), argAt(args, 1))
 		},
 		// ── Git（GitCat 六条认领线共用——进程外 git.exe，路径边界在服务层）──
 		"git.status": func(args []string) (string, bool) {
@@ -319,19 +331,19 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		// ── TS（TsCat 五条认领线——node stdio 服务，进程与协议归服务层）──
 		"ts.check": func(args []string) (string, bool) {
-			return bricks.TsCheck(svc, opts.Ts, argAt(args, 0))
+			return bricks.TsCheck(svcOf(argAt(args, 0)), opts.Ts, argAt(args, 0))
 		},
 		"ts.list": func(args []string) (string, bool) {
-			return bricks.TsList(svc, opts.Ts, argAt(args, 0))
+			return bricks.TsList(svcOf(argAt(args, 0)), opts.Ts, argAt(args, 0))
 		},
 		"ts.read": func(args []string) (string, bool) {
-			return bricks.TsRead(svc, opts.Ts, argAt(args, 0))
+			return bricks.TsRead(svcOf(argAt(args, 0)), opts.Ts, argAt(args, 0))
 		},
 		"ts.findRef": func(args []string) (string, bool) {
-			return bricks.TsFindRef(svc, opts.Ts, argAt(args, 0))
+			return bricks.TsFindRef(svcOf(argAt(args, 0)), opts.Ts, argAt(args, 0))
 		},
 		"ts.patch": func(args []string) (string, bool) {
-			return bricks.TsPatch(svc, opts.Ts, argAt(args, 0))
+			return bricks.TsPatch(svcOf(argAt(args, 0)), opts.Ts, argAt(args, 0))
 		},
 		// ── Proc（ProcCat 四条认领线——进程槽：参数面 / 路径边界 / 台账归服务层）──
 		"proc.run": func(args []string) (string, bool) {
@@ -382,27 +394,27 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 	set["web.search"] = func(args []string) (string, bool) {
 		return searchRunner.WebSearch(argAt(args, 0))
 	}
-	if svc == nil {
+	if svc == nil && opts.SvcFor == nil {
 		return set
 	}
 	// ── 工具积木（text 7 + file 9）——单参：整包工具参数 JSON ──
-	tools := map[string]func(string) (string, bool){
-		"text.read":         func(a string) (string, bool) { return bricks.TextRead(svc, a) },
-		"text.write":        func(a string) (string, bool) { return bricks.TextWrite(svc, a) },
-		"text.append":       func(a string) (string, bool) { return bricks.TextAppend(svc, a) },
-		"text.replace":      func(a string) (string, bool) { return bricks.TextReplace(svc, a) },
-		"text.read_lines":   func(a string) (string, bool) { return bricks.TextReadLines(svc, a) },
-		"text.read_between": func(a string) (string, bool) { return bricks.TextReadBetween(svc, a) },
-		"text.grep":         func(a string) (string, bool) { return bricks.TextGrep(svc, a) },
-		"file.tree":         func(a string) (string, bool) { return bricks.FileTree(svc, a) },
-		"file.find":         func(a string) (string, bool) { return bricks.FileFind(svc, a) },
-		"file.move":         func(a string) (string, bool) { return bricks.FileMove(svc, a) },
-		"file.delete":       func(a string) (string, bool) { return bricks.FileDelete(svc, a) },
-		"file.copy":         func(a string) (string, bool) { return bricks.FileCopy(svc, a) },
-		"file.version":      func(a string) (string, bool) { return bricks.FileVersion(svc, a) },
-		"file.stat":         func(a string) (string, bool) { return bricks.FileStat(svc, a) },
-		"file.hash":         func(a string) (string, bool) { return bricks.FileHash(svc, a) },
-		"file.diff":         func(a string) (string, bool) { return bricks.FileDiff(svc, a) },
+	tools := map[string]func(*fs.Service, string) (string, bool){
+		"text.read":         bricks.TextRead,
+		"text.write":        bricks.TextWrite,
+		"text.append":       bricks.TextAppend,
+		"text.replace":      bricks.TextReplace,
+		"text.read_lines":   bricks.TextReadLines,
+		"text.read_between": bricks.TextReadBetween,
+		"text.grep":         bricks.TextGrep,
+		"file.tree":         bricks.FileTree,
+		"file.find":         bricks.FileFind,
+		"file.move":         bricks.FileMove,
+		"file.delete":       bricks.FileDelete,
+		"file.copy":         bricks.FileCopy,
+		"file.version":      bricks.FileVersion,
+		"file.stat":         bricks.FileStat,
+		"file.hash":         bricks.FileHash,
+		"file.diff":         bricks.FileDiff,
 	}
 	for name, fn := range tools {
 		run := fn
@@ -410,7 +422,7 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 			if len(args) < 1 {
 				return "ERR|BAD_ARGS|缺参数 args（工具载荷缺失）", false
 			}
-			return run(args[0])
+			return run(svcOf(args[0]), args[0])
 		}
 	}
 	return set

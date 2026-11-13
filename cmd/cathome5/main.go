@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.36.0"
+var version = "0.36.2"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -262,16 +262,21 @@ func main() {
 			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
 		},
 	}
+	catFS := newCatFSRegistry(workspace, func(level int, message, category string) {
+		logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
+	})
 	toolRT := buildToolRuntime(workspace, bricksIndex, resolveCorpusDir(*corpusFlag, workspace), dataRoot, &webConfigAdapter{store: store, schema: schema, llm: wiring.LLMStore}, visionSvc, func(key string) string {
 		return store.Resolve(schema, key).Value
 	}, configSvc, hostCommand, func(level int, message, category string) {
 		logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
-	}, &llmStreamAdapter{client: wiring.Client}, groupSvc)
+	}, &llmStreamAdapter{client: wiring.Client}, groupSvc, catFS)
 	logs.Add("CatHome5", observe.LevelInfo,
 		"toolset.boot | 组 "+itoa(len(toolRT.Groups))+" | 跳过 "+itoa(len(toolRT.Skipped)), "TOOL", "", "", 0, frame.Current(), false)
 	// [段9d-0] 会话运行时后置接线——info db 段回填 / 工单面 / 轮末总结 / 播报 / 浏览器 / 图片注入路径
 	// （机制面先于会话可用；每猫装配共用同一接线函数——cat.start / 启动扫描补建会话时同样调用）
 	attachSessionRuntime(wiring, toolRT, store, schema, logs, frame)
+	// 默认猫根表服务——cat.cfg enabledRoots 裁根（空白名单 = 仅常驻根；来源 / 声明 / 实际落审计行）
+	catFS.Rebuild(wiring.CatID, wiring.CatCfg)
 	if toolRT.DBSvc != nil {
 		dbLibs := []string{}
 		if wiring.CatCfg != nil {
@@ -292,6 +297,7 @@ func main() {
 			return catWiring
 		}
 		attachSessionRuntime(catWiring, toolRT, store, schema, logs, frame)
+		catFS.Rebuild(catWiring.CatID, catWiring.CatCfg)
 		return catWiring
 	}
 	cats.loadOnBoot()
@@ -419,6 +425,12 @@ func main() {
 		Apply: func(catKey string, cfg *config.CatCfg) {
 			// 按猫寻址（多猫面）——目标会话未装配（静默）时只落盘不生效
 			inst := cats.findAny(catKey)
+			catID := catKey
+			if inst != nil && inst.id != "" {
+				catID = inst.id
+			}
+			// 根表服务按配置重建（静默猫同样重建——一旦启动即按新白名单）
+			catFS.Rebuild(catID, cfg)
 			if inst == nil || inst.session == nil || inst.wiring == nil {
 				return
 			}

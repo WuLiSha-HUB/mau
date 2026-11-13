@@ -20,17 +20,16 @@ func (w *WorkspaceConfig) FSRoots() []fs.Root {
 
 // FilterRoots 按启用清单过滤根表。
 //
-// 语义与 C# 每猫 enabledRoots 一致：空清单 = 未配置白名单（全量放行）；
-// 非空清单 = 白名单（大小写不敏感）；workspace 恒在（强制根）。
+// 语义与 C# 每猫 enabledRoots 一致：空清单 = 空白名单（仅常驻根 workspace / runtime 可用）；
+// 非空清单 = 白名单（大小写不敏感）；workspace / runtime 恒在（强制根）。
+// 失败默认收紧——空清单当「未配置」放行全量会把权限面放大，与 C# 相反。
 func FilterRoots(all []fs.Root, enabled []string) []fs.Root {
-	if len(enabled) == 0 {
-		return all
-	}
-	allow := make(map[string]bool, len(enabled)+1)
+	allow := make(map[string]bool, len(enabled)+2)
 	for _, id := range enabled {
 		allow[strings.ToLower(id)] = true
 	}
 	allow["workspace"] = true
+	allow["runtime"] = true
 	out := make([]fs.Root, 0, len(all))
 	for _, r := range all {
 		if allow[strings.ToLower(r.ID)] {
@@ -38,4 +37,13 @@ func FilterRoots(all []fs.Root, enabled []string) []fs.Root {
 		}
 	}
 	return out
+}
+
+// RootIDs 取根 id 清单（保序；展示 / 审计用）。
+func RootIDs(roots []fs.Root) []string {
+	ids := make([]string, 0, len(roots))
+	for _, r := range roots {
+		ids = append(ids, r.ID)
+	}
+	return ids
 }

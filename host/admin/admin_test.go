@@ -112,7 +112,7 @@ func TestCatConfigGetKeyOrder(t *testing.T) {
 		"ok", "cat", "displayName", "type", "apiConfigId", "persona", "toolNames", "injectList",
 		"projectMount", "projectMountExpert", "packs", "dbLibs", "allLibs", "dbLibsAvailable",
 		"allPacks", "userInjectIdleOnly", "reasoningEffort", "appearanceId", "themeColor",
-		"roundSummary", "defaultReasoningEffort", "enabledRoots", "allRoots", "allToolNames",
+		"roundSummary", "defaultReasoningEffort", "enabledRoots", "rootsEffective", "allRoots", "allToolNames",
 		"allTools", "defectGroups", "staleToolNames", "apiOptions", "appearanceOptions",
 	}
 	keys := objectKeyOrder(t, rec.Body.Bytes())
@@ -214,13 +214,13 @@ func TestCatConfigMultiCat(t *testing.T) {
 	applied := ""
 	deps.Apply = func(catKey string, cfg *config.CatCfg) { applied = catKey }
 
-	// GET——29 字段 + 该猫取值
+	// GET——30 字段 + 该猫取值
 	rec := do(t, deps, http.MethodGet, "/api/v1/cat-config?cat="+multiID, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET 状态码 %d", rec.Code)
 	}
-	if keys := objectKeyOrder(t, rec.Body.Bytes()); len(keys) != 29 {
-		t.Fatalf("GET 字段数 %d（期望 29）: %v", len(keys), keys)
+	if keys := objectKeyOrder(t, rec.Body.Bytes()); len(keys) != 30 {
+		t.Fatalf("GET 字段数 %d（期望 30）: %v", len(keys), keys)
 	}
 	var got struct {
 		OK          bool   `json:"ok"`
@@ -390,7 +390,7 @@ func TestCatDetailHeadKeys(t *testing.T) {
 			t.Fatalf("头部位 %d 期望 %s 实得 %s（全序 %v）", i, key, keys[i], keys)
 		}
 	}
-	tail := []string{"ok", "cat", "isIdle", "lastUser", "lastReply"}
+	tail := []string{"ok", "cat", "rootsEffective", "isIdle", "lastUser", "lastReply"}
 	if len(keys) < len(head)+len(tail) {
 		t.Fatalf("键数不足: %v", keys)
 	}

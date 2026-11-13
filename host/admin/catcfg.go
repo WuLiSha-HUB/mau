@@ -58,6 +58,8 @@ type catConfigResponse struct {
 	DefaultReasoningEffort string `json:"defaultReasoningEffort"`
 	// EnabledRoots 启用根 id 清单
 	EnabledRoots []string `json:"enabledRoots"`
+	// RootsEffective 实际可用根 id（enabledRoots 经池过滤后的结果；空清单 = 仅常驻根）
+	RootsEffective []string `json:"rootsEffective"`
 	// AllRoots 全局根池
 	AllRoots []rootItem `json:"allRoots"`
 	// AllToolNames 可配置工具名清单
@@ -162,6 +164,7 @@ func (d *Deps) handleCatConfigGet(w http.ResponseWriter, r *http.Request) {
 		RoundSummary:           config.ResolveRoundSummary(appearancePool, cfg.AppearanceID),
 		DefaultReasoningEffort: d.defaultReasoningEffort(),
 		EnabledRoots:           cfg.EnabledRoots,
+		RootsEffective:         d.effectiveRootIDs(cfg.EnabledRoots),
 		AllRoots:               d.allRoots(),
 		AllToolNames:           d.allToolNames(),
 		AllTools:               d.allTools(),
@@ -170,6 +173,24 @@ func (d *Deps) handleCatConfigGet(w http.ResponseWriter, r *http.Request) {
 		APIOptions:             d.apiOptions(),
 		AppearanceOptions:      d.buildAppearanceOptions(appearancePool),
 	})
+}
+
+// effectiveRootIDs 实际可用根 id——enabledRoots 经全局池过滤后的结果（空清单 = 仅常驻根 workspace/runtime）。
+// 与 catFSRegistry.Rebuild 同源（config.FilterRoots），面板看到的与实际工具面一致。
+func (d *Deps) effectiveRootIDs(enabled []string) []string {
+	if d.Workspace == nil {
+		return []string{}
+	}
+	return config.RootIDs(config.FilterRoots(d.Workspace.FSRoots(), enabled))
+}
+
+// catRootsEffective 读该猫 cat.cfg 的 enabledRoots 并算实际根集——读失败按空白名单（失败默认收紧）。
+func (d *Deps) catRootsEffective(catID string) []string {
+	var enabled []string
+	if cfg, err := config.LoadCatCfg(filepath.Join(d.DataRoot, "sessions", catID, "cat.cfg")); err == nil && cfg != nil {
+		enabled = cfg.EnabledRoots
+	}
+	return d.effectiveRootIDs(enabled)
 }
 
 // buildAppearanceOptions 外观下拉清单（池序）。
@@ -578,6 +599,8 @@ type catDetailResponse struct {
 	OK bool `json:"ok"`
 	// Cat 会话 ID
 	Cat string `json:"cat"`
+	// RootsEffective 实际可用根 id（cat.cfg enabledRoots 经池过滤；空清单 = 仅常驻根）
+	RootsEffective []string `json:"rootsEffective"`
 	// IsIdle 是否空闲
 	IsIdle bool `json:"isIdle"`
 	// LastUser 末条用户消息
@@ -640,6 +663,9 @@ func (c catDetailResponse) MarshalJSON() ([]byte, error) {
 		return nil, err
 	}
 	if err := writer.field("cat", c.Cat); err != nil {
+		return nil, err
+	}
+	if err := writer.field("rootsEffective", c.RootsEffective); err != nil {
 		return nil, err
 	}
 	if err := writer.field("isIdle", c.IsIdle); err != nil {
@@ -767,6 +793,7 @@ func (d *Deps) handleCatDetail(w http.ResponseWriter, r *http.Request) {
 		OK:      true,
 		Cat:     id,
 	}
+	resp.RootsEffective = d.catRootsEffective(id)
 	if sess == nil {
 		resp.IsIdle = true
 		writeJSON(w, resp)

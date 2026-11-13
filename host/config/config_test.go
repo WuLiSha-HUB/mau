@@ -365,17 +365,28 @@ func TestLoadCatDefaultNullRoots(t *testing.T) {
 }
 
 func TestFilterRoots(t *testing.T) {
-	all := []RootEntry{{ID: "workspace"}, {ID: "mau"}, {ID: "ccbp"}}
+	all := []RootEntry{{ID: "workspace"}, {ID: "runtime"}, {ID: "mau"}, {ID: "ccbp"}}
 	roots := (&WorkspaceConfig{Roots: all}).FSRoots()
-	if len(roots) != 3 {
+	if len(roots) != 4 {
 		t.Fatalf("根表 = %d", len(roots))
 	}
+	// 子集：workspace + runtime 强制，其余按清单
 	filtered := FilterRoots(roots, []string{"MAU"})
-	if len(filtered) != 2 {
-		t.Fatalf("过滤后 = %d，期望 2（mau + 强制 workspace）", len(filtered))
+	if len(filtered) != 3 {
+		t.Fatalf("过滤后 = %d，期望 3（mau + 强制 workspace/runtime）", len(filtered))
 	}
-	if len(FilterRoots(roots, nil)) != 3 {
-		t.Fatal("空清单应全量放行")
+	// 空清单 = 空白名单（仅常驻根）——与 C# 同口径，失败默认收紧
+	empty := FilterRoots(roots, nil)
+	if len(empty) != 2 {
+		t.Fatalf("空清单应只剩常驻根 2 个，实得 %d：%v", len(empty), RootIDs(empty))
+	}
+	if ids := RootIDs(empty); ids[0] != "workspace" || ids[1] != "runtime" {
+		t.Fatalf("空清单常驻根不符：%v", ids)
+	}
+	// 池外 id 剔除，不静默放行
+	pooled := FilterRoots(roots, []string{"nope"})
+	if len(pooled) != 2 {
+		t.Fatalf("池外 id 应被剔除，实得 %d：%v", len(pooled), RootIDs(pooled))
 	}
 }
 
