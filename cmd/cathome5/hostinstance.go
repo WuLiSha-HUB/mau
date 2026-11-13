@@ -207,8 +207,15 @@ func startCatHost(inst *catInstance, deps *hostInstanceDeps, port int) (*hostIns
 			srv.BindCommand(func(text string) bool { return deps.DispatchCat(inst.id, sess, text) })
 		}
 		if deps.Admin != nil {
-			// 对话页静态路由（chat-images / cache-image / audio）——C# RegisterChatPageRoutes 同形
-			srv.BindAdmin(func(mux *http.ServeMux) { admin.RegisterChatPageRoutes(mux, deps.Admin) })
+			// 对话页路由——静态三件（chat-images / cache-image / audio）+ 项目挂载四件。
+			// C# 每猫 hostoptions 注入了 InjectProjectsBuilder / InjectProjectSetter / InjectAutoGetter /
+			// InjectAutoSetter（Cats.cs:2078-2081），故每猫端口须挂 inject 三件；
+			// routes.go 的 inject 条件面在 adminRegister 非空时不补挂（避免与段 12 重复注册），
+			// 每猫端口的注册面只含静态件 → 此处显式补挂（同一实现，不造第二份规则）。
+			srv.BindAdmin(func(mux *http.ServeMux) {
+				admin.RegisterChatPageRoutes(mux, deps.Admin)
+				admin.RegisterChatInjectRoutes(mux, deps.Admin)
+			})
 		}
 	})
 }

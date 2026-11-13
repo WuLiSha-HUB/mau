@@ -629,7 +629,11 @@ func jsonText(v any) string {
 	return string(bytes.TrimSuffix(buf.Bytes(), []byte("\n")))
 }
 
-// RegisterChatInjectRoutes 主端口对话页实例的项目挂载三件——与段 12 同一实现（C# 双注册同构）。
+// RegisterChatInjectRoutes 对话页实例的项目挂载四件——与段 12 同一实现（C# 双注册同构）。
+//
+// 每猫独立对话端口（d-1b）在 BindAdmin 回调里调用本函数：C# 每猫 hostoptions 注入了四个
+// inject builder（`CatHostService.Cats.cs:2078-2081`），Go 侧以显式路由注册承载。
+// 主端口管理面板已由段 12 注册同名路由，不重复调用（ServeMux 同模式重复注册会 panic）。
 func RegisterChatInjectRoutes(mux *http.ServeMux, d *Deps) {
 	mux.HandleFunc("GET /api/v1/inject/projects", d.handleInjectProjectsGet)
 	mux.HandleFunc("POST /api/v1/inject/project", d.handleInjectProjectPost)
@@ -666,6 +670,10 @@ func (d *Deps) InjectAutoJSON(catKey string) string {
 }
 
 // InjectAutoSetJSON 自动识别开关写面 JSON——on 为 nil 时默认 true（C# 主端口版同口径）。
+//
+// 多猫分支（0.33.0）：catKey 非 majordomo 时按 CatLookup 寻址（id 精确 / 显示名 / id 前缀唯一），
+// 字段级合并写该猫 cat.cfg.mountAuto——对齐 C# HandleInjectAutoPost :756-764
+// （FindCat → 未命中「未找到猫：」→ 改值 + SaveCatCfg + 日志用显示名）。
 func (d *Deps) InjectAutoSetJSON(catKey string, on *bool) string {
 	if catKey == "" {
 		catKey = "majordomo"
@@ -678,7 +686,7 @@ func (d *Deps) InjectAutoSetJSON(catKey string, on *bool) string {
 		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "cat 参数非法: " + catKey})
 	}
 	if catKey != "majordomo" {
-		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "未找到猫：" + catKey})
+		return d.injectAutoSetForCat(catKey, value)
 	}
 	path := d.catCfgPath("majordomo")
 	cfg, err := config.LoadCatCfg(path)
@@ -691,5 +699,35 @@ func (d *Deps) InjectAutoSetJSON(catKey string, on *bool) string {
 		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "cat.cfg 写入失败: " + err.Error()})
 	}
 	d.logInject(1, "自动识别开关：cat=majordomo on="+strconv.FormatBool(value))
+	return jsonText(injectAutoResponse{OK: true, Cat: catKey, On: value})
+}
+
+// injectAutoSetForCat 多猫写面分支——寻址命中后写该猫 cat.cfg.mountAuto。
+//
+// 回执 cat 用请求键（C# `new { ok, cat = catKey, on }` 同形）；日志用显示名（C# cat.DisplayName）。
+// 未命中 / 盘缺失一律具名失败——静默回落会让「关不掉」伪装成成功。
+func (d *Deps) injectAutoSetForCat(catKey string, value bool) string {
+	var id, name string
+	var ok bool
+	if d.CatLookup != nil {
+		id, name, _, _, _, ok = d.CatLookup(catKey)
+	}
+	if !ok || id == "" {
+		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "未找到猫：" + catKey})
+	}
+	if name == "" {
+		name = id
+	}
+	path := d.catCfgPath(id)
+	cfg, err := config.LoadCatCfg(path)
+	if err != nil || cfg == nil {
+		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "cat.cfg 不存在: " + catKey})
+	}
+	cfg.MountAuto = value
+	if err := config.SaveCatCfg(path, cfg); err != nil {
+		d.logInject(2, "自动识别开关写入失败："+err.Error())
+		return jsonText(injectAutoPostFailResponse{OK: false, Reason: "cat.cfg 写入失败: " + err.Error()})
+	}
+	d.logInject(1, "自动识别开关：cat="+name+" on="+strconv.FormatBool(value))
 	return jsonText(injectAutoResponse{OK: true, Cat: catKey, On: value})
 }

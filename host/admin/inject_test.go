@@ -261,6 +261,62 @@ func TestInjectAutoEndpoints(t *testing.T) {
 	}
 }
 
+// TestInjectAutoPerCat 多猫写面——按 CatLookup 寻址翻转落盘 / 回执键序 / 未命中文案（C# 逐字）。
+//
+// 寻址语义（id 精确 / 显示名 / 前缀唯一 / 不含 majordomo）归 cats.findCat（cats_test.go 覆盖）；
+// 本测试守 Deps 层契约：命中即写该猫 cat.cfg.mountAuto、回执 cat 用请求键、日志用显示名、未命中具名拒绝。
+func TestInjectAutoPerCat(t *testing.T) {
+	deps, root := newTestDeps(t)
+	seedCatSession(t, deps, "cat001", "测试猫", true, "")
+	logs := captureLogs(deps)
+
+	// 按 id 寻址：关 → 落盘 false + 键序 ok,cat,on
+	rec := do(t, deps, "POST", "/api/v1/inject/auto", `{"cat":"cat001","on":false}`)
+	if rec.Code != 200 {
+		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
+	}
+	order := objectKeyOrder(t, rec.Body.Bytes())
+	if strings.Join(order, ",") != "ok,cat,on" {
+		t.Fatalf("写面键序不符: %v", order)
+	}
+	if !strings.Contains(rec.Body.String(), `"cat":"cat001"`) || !strings.Contains(rec.Body.String(), `"on":false`) {
+		t.Fatalf("回执不符: %s", rec.Body.String())
+	}
+	if cfg := loadCatCfgOf(t, deps, "cat001"); cfg.MountAuto {
+		t.Fatalf("mountAuto 未落盘翻转: %+v", cfg)
+	}
+	if !hasLog(logs, "自动识别开关：cat=测试猫 on=false") {
+		t.Fatalf("日志未用显示名: %v", *logs)
+	}
+	// GET 回读同值（按 id——读面直拼 cat.cfg 路径，C# 同口径）
+	rec = do(t, deps, "GET", "/api/v1/inject/auto?cat=cat001", "")
+	if !strings.Contains(rec.Body.String(), `"on":false`) {
+		t.Fatalf("读面回读不一致: %s", rec.Body.String())
+	}
+	// 按显示名寻址：开 → 落盘 true；未提交字段保留
+	rec = do(t, deps, "POST", "/api/v1/inject/auto", `{"cat":"测试猫","on":true}`)
+	if !strings.Contains(rec.Body.String(), `"on":true`) {
+		t.Fatalf("按显示名写入失败: %s", rec.Body.String())
+	}
+	if cfg := loadCatCfgOf(t, deps, "cat001"); !cfg.MountAuto || cfg.ToolNames != "text-read" {
+		t.Fatalf("落盘异常（mountAuto / toolNames）: %+v", cfg)
+	}
+	// 未命中猫 → C# 逐字（reason 键 + 全角冒号）
+	rec = do(t, deps, "POST", "/api/v1/inject/auto", `{"cat":"nobody","on":true}`)
+	if !strings.Contains(rec.Body.String(), `"reason":"未找到猫：nobody"`) {
+		t.Fatalf("未命中猫文案不符: %s", rec.Body.String())
+	}
+	// 主干分支不受影响（直拼路径 + 日志用 majordomo）
+	rec = do(t, deps, "POST", "/api/v1/inject/auto", `{"cat":"majordomo","on":false}`)
+	if !strings.Contains(rec.Body.String(), `"on":false`) {
+		t.Fatalf("主干分支异常: %s", rec.Body.String())
+	}
+	cfg, err := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if err != nil || cfg.MountAuto {
+		t.Fatalf("主干 mountAuto 未落盘: %+v %v", cfg, err)
+	}
+}
+
 // TestInjectPreview 挂载预览——只读，不落盘；cat 空按新猫模板算。
 func TestInjectPreview(t *testing.T) {
 	deps, root := newTestDeps(t)
