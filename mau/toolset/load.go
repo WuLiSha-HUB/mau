@@ -1,5 +1,5 @@
 // Package toolset 把语料组（corpus/ch4/<组>/<组>.mau）装配成可驱动的运行时图：
-// 工具积木映射（84 件）+ 公共十四积木（oa.* 九件 / self.* 两件 / data.box_* 两件 / log.write）+ 组加载门禁。
+// 工具积木映射（83 件）+ 公共十四积木（oa.* 九件 / self.* 两件 / data.box_* 两件 / log.write）+ 组加载门禁。
 //
 // 分层：bricks（工具执行体）← 本包（积木表 + 组装配）→ graph（图）/ runtime（帧序）。
 // 门禁口径：组内引用的积木全部在本包积木表里才注册；缺件组逐条出声跳过（不静默）。
@@ -65,19 +65,27 @@ type BrickOptions struct {
 	DB *db.Service
 	// LLM 一次性 LLM 请求服务（llm.simple_* 三件的执行面；nil = 报 LLM_NO_SERVICE）
 	LLM *bricks.LLMSimpleService
+	// LLMStream LLM 流式执行面（llm.stream 五件的执行面；nil = 启动走失败侧）
+	LLMStream bricks.LLMStreamRuntime
 	// Py py 执行服务（py-* 三件的执行面；nil = 报 PY_NO_SERVICE）
 	Py *bricks.PyService
 	// Mau Mau 工具链执行面（mau-* 四件的执行面；nil = 报 MAU_NO_SERVICE）
 	Mau *bricks.MauService
 }
 
-// BuildBrickSet 构造积木表——84 件工具积木（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 3 / py 3 / mau 4 / temp 2 / host 3）+ 公共十四积木。
+// BuildBrickSet 构造积木表——97 件积木 = 工具 83（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 8 / py 3 / mau 4 / temp 2 / host 3 / probe 3）+ 公共十四积木。
 //
 // 工具积木名与语料一致（text.read / file.tree / ps.exec …），参数是语料求值后的字符串切片：
 // 单动作积木取 args[0]（整包工具参数 JSON）；公共积木按各自签名取参。
 func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts BrickOptions) graph.BrickSet {
 	// 运行模式标记——host.restart 的闸门数据源（本宿主恒常驻交互形态；无常驻主循环的形态不调用）
 	bricks.SetInteractiveRunMode(db)
+	// 积木侧日志出口——category 固定 LLM（对齐 C# LogStore.Add("LLM", …) 的模块名口径）
+	llmLog := func(level int, message string) {
+		if opts.Log != nil {
+			opts.Log(level, message, "LLM")
+		}
+	}
 	set := graph.BrickSet{
 		// ── OA 公共积木（语料每组必用）──
 		"oa.is_open": func(args []string) (string, bool) {
@@ -187,6 +195,32 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		"llm.simple_read": func(args []string) (string, bool) {
 			return bricks.LLMSimpleRead(opts.LLM, argAt(args, 0))
+		},
+		// ── LLM 流式（BRIK-LLM-002..006 五件——无组引用的流式执行面；flowId 取当前驱动上下文）──
+		"llm.stream": func(args []string) (string, bool) {
+			return bricks.LLMStreamStart(opts.LLMStream, db, runtime.CurrentFlowID, argAt(args, 0), argAt(args, 1), llmLog)
+		},
+		"llm.chunk_ready": func(args []string) (string, bool) {
+			return bricks.LLMChunkReady(db, runtime.CurrentFlowID)
+		},
+		"llm.done_ready": func(args []string) (string, bool) {
+			return bricks.LLMDoneReady(db, runtime.CurrentFlowID)
+		},
+		"llm.reply_read": func(args []string) (string, bool) {
+			return bricks.LLMReplyRead(db, runtime.CurrentFlowID)
+		},
+		"llm.chunk_read": func(args []string) (string, bool) {
+			return bricks.LLMChunkRead(db, runtime.CurrentFlowID)
+		},
+		// ── TEST 探针（BRIK-TEST-001..003 三件——数据流绑定验证，无组引用）──
+		"probe.source": func(args []string) (string, bool) {
+			return bricks.ProbeSource(argAt(args, 0))
+		},
+		"probe.sink": func(args []string) (string, bool) {
+			return bricks.ProbeSink(argAt(args, 0), argAt(args, 1))
+		},
+		"probe.sink_slow": func(args []string) (string, bool) {
+			return bricks.ProbeSinkSlow(argAt(args, 0), argAt(args, 1))
 		},
 		// ── PowerShell（PsCat 两条解释器线共用——shell 由语料第二参给）──
 		"ps.exec": func(args []string) (string, bool) {

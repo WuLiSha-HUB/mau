@@ -255,7 +255,7 @@ func main() {
 		return store.Resolve(schema, key).Value
 	}, configSvc, hostCommand, func(level int, message, category string) {
 		logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
-	})
+	}, &llmStreamAdapter{client: wiring.Client})
 	logs.Add("CatHome5", observe.LevelInfo,
 		"toolset.boot | 组 "+itoa(len(toolRT.Groups))+" | 跳过 "+itoa(len(toolRT.Skipped)), "TOOL", "", "", 0, frame.Current(), false)
 	// [段9d-0] info 的 db 段数据源回填——会话层先于机制面构造，服务实例此处才存在（闭包按调用时刻读取）

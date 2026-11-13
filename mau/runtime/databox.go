@@ -113,6 +113,24 @@ func (d *DataBox) GetBool(scope, key string) bool {
 	return b
 }
 
+// Remove 删除数据区条目——不存在静默成功；返回是否真的删除了条目（C# DataBox.Remove 同口径）。
+//
+// 与 Set false 的语义差异：删除后 Get 未命中，消费侧「盒不存在 = 未采样」的条件天然为假；
+// 写 false 则是「采样过且为假」——会话边界信号清理用本原语，不用覆盖写。
+func (d *DataBox) Remove(scope, key string) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	m, ok := d.data[scope]
+	if !ok {
+		return false
+	}
+	_, exists := m[key]
+	if exists {
+		delete(m, key)
+	}
+	return exists
+}
+
 // Signal 置位事件沿——消费前多次投递合并。
 func (d *DataBox) Signal(name string) {
 	d.mu.Lock()

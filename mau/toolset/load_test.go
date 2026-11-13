@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"cathome5/mau/bricks"
 	"cathome5/mau/fs"
 	"cathome5/mau/runtime"
 )
@@ -100,5 +102,83 @@ func TestSnakeCase(t *testing.T) {
 		if got := snakeCase(input); got != want {
 			t.Fatalf("snakeCase(%q)=%q，期望 %q", input, got, want)
 		}
+	}
+}
+
+// toolsetStreamStep 是接线测试的流式事件一步。
+type toolsetStreamStep struct {
+	kind bricks.LLMStreamKind
+	text string
+}
+
+// toolsetStreamRuntime 是 llm.stream 接线测试的假执行面——按脚本回放后返回。
+type toolsetStreamRuntime struct {
+	events []toolsetStreamStep
+}
+
+// ChatStream 回放脚本。
+func (f *toolsetStreamRuntime) ChatStream(system, content, sessionID string, onEvent func(kind bricks.LLMStreamKind, text string)) {
+	for _, step := range f.events {
+		onEvent(step.kind, step.text)
+	}
+}
+
+// TestIncrementBricksWiring 增量积木接线——注册闭包可执行（llm 流式五件 / probe 三件 / log.write 出口）。
+//
+// 与 bricks 包单测的分工：单测验语义，本测试验「BuildBrickSet → 闭包 → 服务 / 日志出口」这条接线。
+func TestIncrementBricksWiring(t *testing.T) {
+	db := runtime.NewDataBox()
+	var logLines []string
+	set := BuildBrickSet(&fs.Service{}, runtime.NewOA(nil), db, BrickOptions{
+		LLMStream: &toolsetStreamRuntime{events: []toolsetStreamStep{
+			{kind: bricks.LLMStreamText, text: "hi"},
+			{kind: bricks.LLMStreamDone},
+		}},
+		Log: func(level int, message, category string) {
+			logLines = append(logLines, category+"|"+message)
+		},
+	})
+	// probe 三件——单值主端口
+	if value, ok := set["probe.source"]([]string{"5"}); !ok || value != "probe-5" {
+		t.Fatalf("probe.source 不符: %q/%v", value, ok)
+	}
+	if value, ok := set["probe.sink"]([]string{"abc", "3"}); !ok || value != "abc:3" {
+		t.Fatalf("probe.sink 不符: %q/%v", value, ok)
+	}
+	if value, ok := set["probe.sink_slow"]([]string{"x", "0"}); !ok || value != "x" {
+		t.Fatalf("probe.sink_slow 不符: %q/%v", value, ok)
+	}
+	// log.write 出口——BrickOptions.Log 已接线（非 nil 即成功侧）
+	if value, ok := set["log.write"]([]string{"日志正文", "1", "TEST"}); !ok || value != "true" {
+		t.Fatalf("log.write 不符: %q/%v", value, ok)
+	}
+	if len(logLines) != 1 || logLines[0] != "TEST|日志正文" {
+		t.Fatalf("日志出口未收到: %#v", logLines)
+	}
+	// llm 流式五件——当前 flow 置 11 后走全链（启动 → 结算 → 取数）
+	oldFlow := runtime.CurrentFlowID
+	runtime.CurrentFlowID = 11
+	defer func() { runtime.CurrentFlowID = oldFlow }()
+	if value, ok := set["llm.stream"]([]string{"sys", "content"}); !ok || value != "" {
+		t.Fatalf("llm.stream 不符: %q/%v", value, ok)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if value, _ := set["llm.done_ready"](nil); value == "true" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("llm.done_ready 未置位（2s）")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if value, ok := set["llm.chunk_ready"](nil); !ok || value != "true" {
+		t.Fatalf("llm.chunk_ready 不符: %q/%v", value, ok)
+	}
+	if value, ok := set["llm.chunk_read"](nil); !ok || value != "hi" {
+		t.Fatalf("llm.chunk_read 不符: %q/%v", value, ok)
+	}
+	if value, ok := set["llm.reply_read"](nil); !ok || value != "hi" {
+		t.Fatalf("llm.reply_read 不符: %q/%v", value, ok)
 	}
 }
