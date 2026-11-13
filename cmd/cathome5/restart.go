@@ -206,6 +206,11 @@ func (g *restartGate) execute(req admin.RestartRequest) error {
 	if abs, absErr := filepath.Abs(target); absErr == nil {
 		target = abs
 	}
+	// 判例 2026-11-13（CH4 1.8.266 同因）——目标运行区已被另一宿主实例占用：改名必失败（60×500 ms 全败）
+	// 且本宿主会被拉下线。源头拦住：检出即撤销重启态、宿主不下线；不自动杀「可能是另一只正在服务的宿主」。
+	if foreign := hostScanForeignInTarget(target, g.logf); foreign != "" {
+		return fmt.Errorf("检测到另一宿主实例正在使用目标运行区：%s——请先停止该实例再重启（宿主继续服务，已撤销重启态）", foreign)
+	}
 	// 模式前置校验——验证不过即不动运行区（对齐 CH4「验证不过即不动运行区」）
 	switch mode {
 	case "host":

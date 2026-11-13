@@ -86,3 +86,40 @@ func TestCollectCsBridge(t *testing.T) {
 		t.Fatalf("重跑应清理旧产物")
 	}
 }
+
+// TestRelaunchSkipsAutostartWhenHostRunning 自启前检（CH4 1.8.266 同因）——运行区已有宿主实例：
+// 跳过自启、不新增第二个实例（退出码 0，报告出「自启跳过」步骤）；无实例时才走起实例路径。
+func TestRelaunchSkipsAutostartWhenHostRunning(t *testing.T) {
+	prev := hostScanFindInDir
+	t.Cleanup(func() { hostScanFindInDir = prev })
+	hostScanFindInDir = func(dir string) ([]int, error) { return []int{4321, 4322}, nil }
+	target := filepath.Join(t.TempDir(), "MauOut5")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "version.txt"), []byte("0.35.0"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := &deployRun{o: deployOptions{Target: target, Mode: "host"}, mode: "relaunch"}
+	if code := r.relaunch(); code != deployExitOK {
+		t.Fatalf("已有实例应视为服务已承载（退出码 0），got %d（steps=%+v）", code, r.steps)
+	}
+	skipSeen := false
+	for _, step := range r.steps {
+		if step.Name == "start" || step.Name == "probe" {
+			t.Fatalf("跳过自启后不应再起实例 / 探活：%+v", r.steps)
+		}
+		if step.Name == "自启跳过（运行区已有实例 pid 4321,4322）" && step.OK {
+			skipSeen = true
+		}
+	}
+	if !skipSeen {
+		t.Fatalf("报告缺「自启跳过」步骤：%+v", r.steps)
+	}
+	// 对照：无实例 → 运行区缺 exe → 起实例失败 → 需人工（证明上面是「跳过」而不是「碰巧没起」）
+	hostScanFindInDir = func(dir string) ([]int, error) { return nil, nil }
+	r = &deployRun{o: deployOptions{Target: target, Mode: "host"}, mode: "relaunch"}
+	if code := r.relaunch(); code != deployExitManual {
+		t.Fatalf("无实例且运行区缺 exe 应需人工，got %d", code)
+	}
+}

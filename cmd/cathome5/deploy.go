@@ -393,8 +393,22 @@ func (r *deployRun) relaunch() int {
 	}
 	push := buildRestartPush(mode, prepOK, replaced, version, r.o.Target, r.o.PushIn, r.ensureReportPath(), time.Since(r.startedAt))
 	r.writeReport("relaunch", -1, false)
-	// [段5] 起新实例（带 --majordomopush）+ 探活
-	bootOK, _ := r.bootAndProbe(version, push)
+	// [段4c] 自启前检（CH4 1.8.266 同因）——目标运行区已有宿主实例在跑：跳过自启，不新增第二个实例。
+	//        判例 2026-11-13：deploy 原子切换失败后自启又拉起一个，运行区并存两个宿主（服务假象 + dll 持锁）。
+	runningHosts, scanErr := hostScanFindInDir(r.o.Target)
+	if scanErr != nil {
+		fmt.Println("[自启前检] 宿主进程扫描失败（按无实例继续）: " + scanErr.Error())
+	}
+	bootOK := false
+	if len(runningHosts) > 0 {
+		hostList := joinHostPIDs(runningHosts)
+		fmt.Println("[部署] 运行区已有宿主实例在跑（pid " + hostList + "）——跳过自启，不新增第二个实例。")
+		r.add("自启跳过（运行区已有实例 pid "+hostList+"）", true, "服务由已有实例承载；本次未新增进程")
+		bootOK = true
+	} else {
+		// [段5] 起新实例（带 --majordomopush）+ 探活
+		bootOK, _ = r.bootAndProbe(version, push)
+	}
 	// [段6] 回退——仅本次已替换时 _old 才是有效回退源（最坏 = 原地重启）
 	if !bootOK && replaced {
 		return r.rollback(version, "自启 / 探活失败")

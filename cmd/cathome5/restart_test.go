@@ -172,3 +172,34 @@ func TestBuildRestartPush(t *testing.T) {
 		}
 	}
 }
+
+// TestRestartGateAbortsOnForeignHost 闸门前置（CH4 1.8.266 同因）——目标运行区已有宿主实例：
+// 撤销重启态并出声（点名占用者），宿主不下线、不拉起接力。
+func TestRestartGateAbortsOnForeignHost(t *testing.T) {
+	prevDetect := hostScanForeignInTarget
+	t.Cleanup(func() { hostScanForeignInTarget = prevDetect })
+	hostScanForeignInTarget = func(target string, logf func(level int, message, category string)) string {
+		return `pid 4242（D:\tmp\MauOut5\cathome5.exe）`
+	}
+	prevRestart := session.HostRestarting
+	t.Cleanup(func() { session.HostRestarting = prevRestart })
+	var logs []string
+	state := admin.NewRestartState(func(level int, message string) { logs = append(logs, message) })
+	gate := newRestartGate(state, nil, nil, runtime.NewOA(nil), &config.WorkspaceConfig{}, t.TempDir(), 8079, "dev", "", func(level int, message, category string) {
+		logs = append(logs, message)
+	})
+	state.Request("host", filepath.Join(t.TempDir(), "MauOut5"), "")
+	if gate.Tick() {
+		t.Fatal("检出目标运行区占用者时不应拉起接力")
+	}
+	if _, ok := state.Snapshot(); ok {
+		t.Fatal("重启态应被撤销（宿主继续服务）")
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "检测到另一宿主实例正在使用目标运行区：pid 4242") {
+		t.Fatalf("撤销原因应点名占用者：\n%s", joined)
+	}
+	if !strings.Contains(joined, "请先停止该实例再重启") {
+		t.Fatalf("撤销原因应给出处置：\n%s", joined)
+	}
+}
