@@ -77,6 +77,10 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	}
 	views := session.NewViewStore(filepath.Join(dataRoot, "sessions", catID, catID+".view.jsonl"))
 	views.Load()
+	// 载入期受限重建（design-ch4-protocol §10.2 / §10.3）——顶尾补差 + 对账哨兵：
+	// 视图层为展示面权威，前文修复不级联重建；缺口由补差（append-only、不改已有条目）
+	// 与对账（只读出声、受限抽样）处置。
+	reconcileViewOnLoad(views, messages)
 	sess := session.NewSession(catID, ctx, sessionStore, views)
 	sess.SetDisplayName(wiring.DisplayName)
 	// 桌宠种类——外观池解析（cat.cfg appearanceId 零值 = 跟随默认外观；池缺失 / 引用失效 = 空 = 无桌宠）
@@ -185,6 +189,19 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 		return buildInfoJSON(sess, workspace, catID, wiring.DisplayName, wiring.DBSvc)
 	})
 	return wiring
+}
+
+// reconcileViewOnLoad 载入期受限重建——顶尾补差 + 对账哨兵（design-ch4-protocol §10.2 / §10.3）。
+//
+// 视图层为展示面权威，前文修复不级联重建：前文有而视图缺的条目按补差口径顺补（append-only、
+// 幂等、不改已有条目，返回补齐数）；已有条目按受限样本核对（索引越界 / 角色不符出声，不修改）。
+// 补差数即视图缺口规模——非零出声（修复动作必须可见）。
+func reconcileViewOnLoad(views *session.ViewStore, messages []session.Message) (int, int) {
+	added := views.AppendTailMissing(messages)
+	if added > 0 {
+		session.Logf(session.LogModuleViewStore, 1, "载入顶尾补差：补齐 "+strconv.Itoa(added)+" 条视图块（前文 "+strconv.Itoa(len(messages))+" 条）", session.LogCategorySys)
+	}
+	return added, views.AuditEntries(messages, 5)
 }
 
 // resolvePetKind 解析猫的桌宠种类——cat.cfg appearanceId 零值 / 非法 = 跟随默认外观；

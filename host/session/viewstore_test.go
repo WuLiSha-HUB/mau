@@ -406,3 +406,47 @@ func TestViewStoreCopyFromEdges(t *testing.T) {
 		t.Fatalf("切点覆盖全部前文派生条目时应全保留，实得 %d 块", got)
 	}
 }
+
+// TestViewStoreAuditEntries 对账哨兵——越界 / 角色不符报告；抽样窗口只核对前 N 条；哨兵只读不改条目。
+func TestViewStoreAuditEntries(t *testing.T) {
+	// 健康面：索引存在、角色一致 → 零报告
+	healthy := NewViewStore(filepath.Join(t.TempDir(), "a1.view.jsonl"))
+	healthy.OnUserMessage(Message{Role: RoleUser, Content: "一", CreatedAt: 100}, 0, "")
+	healthy.OnAssistantText(Message{Role: RoleAssistant, Content: "答", CreatedAt: 200}, 1, -1)
+	msgs := []Message{
+		{Role: RoleUser, Content: "一", CreatedAt: 100},
+		{Role: RoleAssistant, Content: "答", CreatedAt: 200},
+	}
+	if bad := healthy.AuditEntries(msgs, 0); bad != 0 {
+		t.Fatalf("健康面应零报告，实得 %d", bad)
+	}
+
+	// 越界：条目来源索引超出前文长度
+	outOfRange := NewViewStore(filepath.Join(t.TempDir(), "a2.view.jsonl"))
+	outOfRange.OnUserMessage(Message{Role: RoleUser, Content: "幽灵", CreatedAt: 300}, 9, "")
+	if bad := outOfRange.AuditEntries(msgs, 0); bad != 1 {
+		t.Fatalf("越界条目应报告 1 条，实得 %d", bad)
+	}
+
+	// 角色不符：user 条目挂到 assistant 消息
+	mismatch := NewViewStore(filepath.Join(t.TempDir(), "a3.view.jsonl"))
+	mismatch.OnUserMessage(Message{Role: RoleUser, Content: "错位", CreatedAt: 400}, 1, "")
+	if bad := mismatch.AuditEntries(msgs, 0); bad != 1 {
+		t.Fatalf("角色不符应报告 1 条，实得 %d", bad)
+	}
+
+	// 抽样窗口：sample=1 只核对首条前文派生条目——坏条目在后则漏报（受限重建的“受限”面）
+	window := NewViewStore(filepath.Join(t.TempDir(), "a4.view.jsonl"))
+	window.OnUserMessage(Message{Role: RoleUser, Content: "一", CreatedAt: 100}, 0, "")
+	window.OnUserMessage(Message{Role: RoleUser, Content: "错位", CreatedAt: 400}, 1, "")
+	if bad := window.AuditEntries(msgs, 1); bad != 0 {
+		t.Fatalf("抽样 1 条时应只核对首条（健康），实得 %d", bad)
+	}
+	if bad := window.AuditEntries(msgs, 0); bad != 1 {
+		t.Fatalf("不限样本时应报告错位条目，实得 %d", bad)
+	}
+	// 哨兵只读——条目不变
+	if got := len(window.Blocks()); got != 2 {
+		t.Fatalf("对账不得修改条目，实得 %d 块", got)
+	}
+}
