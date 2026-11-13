@@ -132,3 +132,106 @@ func itoa64(v int64) string {
 	}
 	return string(buf[i:])
 }
+
+// OaPost 复现 oa.post——上架工单（空双字典载荷随单生成，挂单方 set_str 逐 Key 写参数）。
+//
+// 返回新 OfficeId 文本（OA 缺失 / 超时帧数非法为 "0"）；ok 表示是否上架成功。
+func OaPost(oa *runtime.OA, owner int64, officeType, officeName, timeoutTicks string) (string, bool) {
+	if oa == nil {
+		return "0", false
+	}
+	ticks, ok := parseNonNegative(timeoutTicks)
+	if !ok {
+		return "0", false
+	}
+	return itoa64(oa.Post(owner, officeType, officeName, ticks)), true
+}
+
+// OaSetStr 复现 oa.set_str——写入工单请求载荷 str 值（仅 Open + 挂单方本人可操作）。
+//
+// 返回 "true" / "false"（C# bool 返回值 = 写入结果）；ok = OA 服务存在。
+func OaSetStr(oa *runtime.OA, owner int64, officeID, key, value string) (string, bool) {
+	if oa == nil {
+		return "false", false
+	}
+	id, ok := parseOfficeID(officeID)
+	if !ok {
+		return "false", true
+	}
+	if oa.SetStr(id, owner, key, value) {
+		return "true", true
+	}
+	return "false", true
+}
+
+// OaIsClosed 复现 oa.is_closed——查询工单是否 Closed（挂单方轮询收结果）。
+func OaIsClosed(oa *runtime.OA, officeID string) (string, bool) {
+	if oa == nil {
+		return "false", false
+	}
+	id, ok := parseOfficeID(officeID)
+	if !ok {
+		return "false", true
+	}
+	state, exists := oa.StatusOf(id)
+	if exists && state == runtime.OfficeClosed {
+		return "true", true
+	}
+	return "false", true
+}
+
+// OaIsDone 复现 oa.is_done——终态判断（Closed 或 Timeout 都算完成；判断语义）。
+//
+// officeId ≤ 0（未建单）恒 false；OA 缺失走失败侧。
+func OaIsDone(oa *runtime.OA, officeID string) (string, bool) {
+	if oa == nil {
+		return "false", false
+	}
+	id, ok := parseOfficeID(officeID)
+	if !ok {
+		return "false", true
+	}
+	state, exists := oa.StatusOf(id)
+	if exists && (state == runtime.OfficeClosed || state == runtime.OfficeTimeout) {
+		return "true", true
+	}
+	return "false", true
+}
+
+// OaGetResultStr 复现 oa.get_result_str——读取工单回执 result 键（Closed 后的 Result 载荷）。
+//
+// 返回回执文本 + 是否命中 result 键（Key 不存在为空串 / false）。
+func OaGetResultStr(oa *runtime.OA, officeID string) (string, bool) {
+	if oa == nil {
+		return "", false
+	}
+	id, ok := parseOfficeID(officeID)
+	if !ok {
+		return "", false
+	}
+	office := oa.GetOffice(id)
+	if office.Result == nil {
+		return "", false
+	}
+	value, hit := office.Result["result"]
+	return value, hit
+}
+
+// parseNonNegative 解析非负十进制整数——空 / 含非数字 / 超界返回 false。
+func parseNonNegative(raw string) (int64, bool) {
+	text := strings.TrimSpace(raw)
+	if text == "" {
+		return 0, false
+	}
+	var value int64
+	for _, r := range text {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+		value = value*10 + int64(r-'0')
+		if value > 1<<40 {
+			return 0, false
+		}
+	}
+	return value, true
+}

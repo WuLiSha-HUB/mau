@@ -1,5 +1,5 @@
 // Package toolset 把语料组（corpus/ch4/<组>/<组>.mau）装配成可驱动的运行时图：
-// 工具积木映射（75 件）+ 公共五积木（oa.* / self.desc）+ 组加载门禁。
+// 工具积木映射（84 件）+ 公共十四积木（oa.* 九件 / self.* 两件 / data.box_* 两件 / log.write）+ 组加载门禁。
 //
 // 分层：bricks（工具执行体）← 本包（积木表 + 组装配）→ graph（图）/ runtime（帧序）。
 // 门禁口径：组内引用的积木全部在本包积木表里才注册；缺件组逐条出声跳过（不静默）。
@@ -57,6 +57,8 @@ type BrickOptions struct {
 	Config bricks.ConfigService
 	// HostCommand 宿主指令服务（catcfg.bridge 的执行底座；nil = 报 HOSTCMD_NO_SERVICE）
 	HostCommand func(string) string
+	// Log 结构化日志出口（log.write 的执行面；nil = 走未接线失败侧）
+	Log func(level int, message, category string)
 	// Cs cs 桥执行面（csharp.bridge 的宿主依赖；nil = 报 CSHARP_NO_BRIDGE）
 	Cs *bricks.CsService
 	// DB 条目库服务（db-* / dbAdmin-* 八件的执行面；nil = 报 DB_NO_SERVICE）
@@ -69,7 +71,7 @@ type BrickOptions struct {
 	Mau *bricks.MauService
 }
 
-// BuildBrickSet 构造积木表——75 件工具积木（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 3 / py 3 / mau 4 / temp 2 / host 3）+ 公共五积木。
+// BuildBrickSet 构造积木表——84 件工具积木（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 3 / py 3 / mau 4 / temp 2 / host 3）+ 公共十四积木。
 //
 // 工具积木名与语料一致（text.read / file.tree / ps.exec …），参数是语料求值后的字符串切片：
 // 单动作积木取 args[0]（整包工具参数 JSON）；公共积木按各自签名取参。
@@ -89,6 +91,35 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		"oa.complete_str": func(args []string) (string, bool) {
 			return bricks.OaCompleteStr(oa, runtime.CurrentFlowID, argAt(args, 0), argAt(args, 1))
+		},
+		// ── OA 增量面（无组引用件五件——P4 余量；语义与 C# Bricks/OA 五件逐字对齐）──
+		"oa.post": func(args []string) (string, bool) {
+			return bricks.OaPost(oa, runtime.CurrentFlowID, argAt(args, 0), argAt(args, 1), argAt(args, 2))
+		},
+		"oa.set_str": func(args []string) (string, bool) {
+			return bricks.OaSetStr(oa, runtime.CurrentFlowID, argAt(args, 0), argAt(args, 1), argAt(args, 2))
+		},
+		"oa.is_closed": func(args []string) (string, bool) {
+			return bricks.OaIsClosed(oa, argAt(args, 0))
+		},
+		"oa.is_done": func(args []string) (string, bool) {
+			return bricks.OaIsDone(oa, argAt(args, 0))
+		},
+		"oa.get_result_str": func(args []string) (string, bool) {
+			return bricks.OaGetResultStr(oa, argAt(args, 0))
+		},
+		// ── DATA / SELF / LOG 增量面（无组引用件四件——P4 余量；对齐 C# Bricks/DATA·SELF·LOG）──
+		"data.box_set_str": func(args []string) (string, bool) {
+			return bricks.DataBoxSetStr(db, argAt(args, 0), argAt(args, 1), argAt(args, 2))
+		},
+		"data.box_get_str": func(args []string) (string, bool) {
+			return bricks.DataBoxGetStr(db, argAt(args, 0), argAt(args, 1))
+		},
+		"self.desc.add": func(args []string) (string, bool) {
+			return bricks.SelfDescAdd(db, runtime.CurrentFlowID, args...)
+		},
+		"log.write": func(args []string) (string, bool) {
+			return bricks.LogWrite(opts.Log, argAt(args, 0), argAt(args, 1), argAt(args, 2))
 		},
 		"self.desc": func(args []string) (string, bool) {
 			return bricks.SelfDesc(db, runtime.CurrentFlowID, args...)
