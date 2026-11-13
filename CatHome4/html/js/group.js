@@ -19,8 +19,8 @@ var gCatNodes = {};      // catKey -> 球列节点（A319；增量复用，不�
 var gDividerMs = 3600000; // A340 时间分割线阈值——相邻两行时刻差超过 1 小时即插一条分割线
 var gTarget = '';        // @ 目标（2026-11-13）——空 = 不 @（只记流水）；非空 = 派单投递该猫
 var gMembers = [];       // 最近一次成员名单（@ 浮层渲染用）
-var gFilterCat = '';     // A341 猫筛选——空 = 全部猫；非空 = 只显示该猫发言（再点同球取消）
-var gFilterKind = 'all'; // A341 类型筛选——all / note（讨论）/ receipt（回执）/ delegation（派单）
+var gHiddenCats = {};    // A343 猫显隐——键 = 被隐藏的 catKey（初始空 = 全部显示）；人消息无 from，恒显示
+var gFilterKind = 'all'; // A341 类型筛选——all / note（讨论）/ receipt（回执）/ delegation（派单）；与猫显隐叠加
 
 var gTitleEl = document.getElementById('chatTitle');
 var gInfoEl = document.getElementById('chatInfo');
@@ -226,9 +226,9 @@ function gCreateCatNode(key) {
     item.appendChild(ball);
     item.appendChild(name);
     item.appendChild(tok);
-    // A341——点球筛选：只显示该猫发言（再点同一球取消）
+    // A343——点球切换该猫消息显隐：默认全显，点一下隐藏该猫发言，再点恢复
     item.addEventListener('click', function () {
-        gToggleCatFilter(key);
+        gToggleCatVisible(key);
     });
     var node = { item: item, crown: crown, ball: ball, initial: initial, dot: dot, name: name, tok: tok };
     gCatNodes[key] = node;
@@ -478,14 +478,18 @@ function gBuildEmpty() {
     return empty;
 }
 
-// [段2d] 筛选（A341）——猫筛选 × 类型筛选叠加；隐藏走行级 .grp-hidden（滚动带按可见行自动收刻度）
+// [段2d] 筛选（A341 · A343 改猫层语义）——猫显隐 × 类型筛选叠加；隐藏走行级 .grp-hidden（滚动带按可见行自动收刻度）
 
-// 球点击——同一球再点即取消；换球直接切换
-function gToggleCatFilter(key) {
+// 球点击（A343）——切换该猫消息的显隐：默认全显，点一下隐藏该猫发言，再点恢复
+function gToggleCatVisible(key) {
     if (!key) {
         return;
     }
-    gFilterCat = (gFilterCat === key) ? '' : key;
+    if (gHiddenCats[key] === true) {
+        delete gHiddenCats[key];
+    } else {
+        gHiddenCats[key] = true;
+    }
     gApplyFilter();
 }
 
@@ -524,7 +528,7 @@ function gApplyFilter() {
     for (var i = 0; i < rows.length; i = i + 1) {
         var from = rows[i].getAttribute('data-from') || '';
         var kind = rows[i].getAttribute('data-kind') || 'note';
-        var okCat = (gFilterCat === '' || from === gFilterCat);
+        var okCat = (gHiddenCats[from] !== true);
         var okKind = (gFilterKind === 'all' || kind === gFilterKind);
         var show = okCat && okKind;
         rows[i].classList.toggle('grp-hidden', !show);
@@ -532,10 +536,10 @@ function gApplyFilter() {
             shown = shown + 1;
         }
     }
-    // 球列选中态
+    // 球列显隐态（A343——亮 = 该猫消息显示中，暗 = 已隐藏）
     var keys = Object.keys(gCatNodes);
     for (var j = 0; j < keys.length; j = j + 1) {
-        gCatNodes[keys[j]].item.classList.toggle('sel', gFilterCat !== '' && keys[j] === gFilterCat);
+        gCatNodes[keys[j]].item.classList.toggle('mute', gHiddenCats[keys[j]] === true);
     }
     // 筛选后空态提示——有消息但全被筛掉时出声（朴素件，不占刻度）
     var hint = gMsgsEl.querySelector('.group-filter-empty');
@@ -547,7 +551,7 @@ function gApplyFilter() {
     }
     if (hint) {
         if (needHint) {
-            hint.textContent = '（当前筛选下没有消息——再点同一球或切回「全部」）';
+            hint.textContent = '（没有符合当前筛选的消息——点亮已变暗的球或切回「全部」）';
         } else if (hint.parentNode) {
             hint.parentNode.removeChild(hint);
         }

@@ -79,7 +79,7 @@
         /* ═══ A319 成员球列——左预留带内竖列（与对话页「全部/精简」开关同一条竖轴：左缘 / 宽 = --ch-send-w）═══
            构成：主题色球（猫名首字 · 管理员球顶挂 👑）+ 右下状态灯点（六态同源色）+ 下方前文 token
            top / max-height 由 group.js 按对话区矩形与切换条高度写入（fixed，不随对话滚动）
-           A341：整球可点——点击高亮并只显示该猫发言（再点取消） */
+           A343：整球可点——点击切换该猫消息显隐（默认全显；隐藏后球变暗，再点恢复） */
         #groupCats { position: fixed; left: calc(var(--ch-col-left) - var(--ch-send-w) - 6px); top: 0; width: var(--ch-send-w); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: center; overflow-y: auto; scrollbar-width: none; z-index: 6; }
         #groupCats::-webkit-scrollbar { width: 0; height: 0; }
         .gc-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 auto; }
@@ -104,8 +104,8 @@
         .sb-tick.gc-tint[data-type]:not(.err) { background: var(--gc-color); }
         /* 状态区占位（2026-11-13 莎定）——与对话页六态行同容器；当前只放占位字样，后续接线真实计时 */
         .grp-status-ph { color: var(--ch-fg-weak); }
-        /* ═══ A341 筛选（2026-11-13 莎定）——消息类型切换条（左预留带上段，四格竖排）+ 球列点选高亮 ═══
-           类型与猫两层筛选叠加：例如「主持人 + 讨论」只显示该猫的讨论；隐藏走行级 .grp-hidden */
+        /* ═══ A341 筛选（2026-11-13 莎定）——消息类型切换条（左预留带上段，四格竖排）+ 球列显隐开关（A343）═══
+           类型与猫两层筛选叠加：例如「隐藏某猫 + 讨论」只显示其余猫的讨论；隐藏走行级 .grp-hidden */
         #groupKindBar { position: fixed; left: calc(var(--ch-col-left) - var(--ch-send-w) - 6px); top: 0; width: var(--ch-send-w); display: flex; flex-direction: column; border: 1px solid var(--ch-line); border-radius: var(--ch-radius-bubble); background: var(--ch-bg-panel); overflow: hidden; z-index: 7; }
         .gk-btn { font-family: inherit; font-size: var(--ch-fs-tag); color: var(--ch-fg-weak); background: transparent; border: none; border-bottom: 1px solid var(--ch-line-faint); padding: 5px 0; cursor: pointer; transition: background 0.15s, color 0.15s; }
         .gk-btn:last-child { border-bottom: none; }
@@ -115,8 +115,10 @@
         .gk-btn.on[data-kind="receipt"] { background: var(--ch-ok); color: var(--ch-bg-page); font-weight: bold; }
         .gk-btn.on[data-kind="delegation"] { background: var(--ch-info); color: var(--ch-bg-page); font-weight: bold; }
         .gc-item { cursor: pointer; }
-        .gc-item.sel .gc-ball { box-shadow: 0 0 0 2px var(--gc-color), 0 0 10px color-mix(in srgb, var(--gc-color) 45%, transparent); }
-        .gc-item.sel .gc-name { color: var(--ch-fg-strong); font-weight: bold; }
+        /* A343——点球切换该猫消息显隐：亮 = 显示中（默认全显）；暗 + 去色 = 已隐藏 */
+        .gc-item.mute .gc-ball { opacity: 0.28; filter: grayscale(1); }
+        .gc-item.mute .gc-name { color: var(--ch-fg-faint); }
+        .gc-item.mute .gc-tok { opacity: 0.4; }
         .chat-row.grp-hidden { display: none; }
         .group-filter-empty { color: var(--ch-fg-weak); padding: 0 12px; margin-top: 30px; }
     </style>

@@ -317,11 +317,12 @@ test('A320 气泡着色——只写行内 --gc-color，不再挂底色标记', (
   expect(other.style.getPropertyValue('--gc-color')).toBe('#ffffff');
 });
 
-// A341——类型筛选 × 猫筛选叠加（2026-11-13 莎定）
-test('A341 筛选——类型切换只留该类型，猫筛选只留该猫，两层叠加取交集', () => {
+// A341 类型筛选 × A343 猫显隐叠加（2026-11-13 莎定 · A343 改猫层为多选显隐）
+test('A343 筛选——类型切换只留该类型，猫显隐逐只切换，两层叠加取交集', () => {
   const box = document.getElementById('chatMsgs');
   const t0 = new Date(2026, 10, 13, 9, 0, 0).getTime();
   box.textContent = '';
+  window.gHiddenCats = {};
   window.gRenderMessages([
     { seq: 1, from: 'c1', displayName: '丙', type: 'note', ts: t0, text: '丙-讨论' },
     { seq: 2, from: 'c1', displayName: '丙', type: 'receipt', ts: t0 + 1000, text: '丙-回执' },
@@ -332,67 +333,87 @@ test('A341 筛选——类型切换只留该类型，猫筛选只留该猫，两
     .call(box.querySelectorAll('.chat-row'), (r) => !r.classList.contains('grp-hidden'))
     .map((r) => r.getAttribute('data-kind') + ':' + (r.getAttribute('data-from') || 'human'));
 
+  // 初始全显（默认无隐藏猫）
   expect(visible().length).toBe(4);
   // 类型：回执
   window.gSetFilterKind('receipt');
   expect(visible()).toEqual(['receipt:c1']);
-  // 叠加：甲 + 回执 → 空，并出声
-  window.gToggleCatFilter('a1');
+  // 叠加：隐藏甲 + 回执 → 甲本就无回执，故仍只有丙的回执
+  window.gToggleCatVisible('a1');
+  expect(visible()).toEqual(['receipt:c1']);
+  // 叠加：隐藏丙 + 隐藏甲 → 只剩人那条？回执类型下人无回执 → 空，并出声
+  window.gToggleCatVisible('c1');
   expect(visible()).toEqual([]);
   expect(box.querySelector('.group-filter-empty')).not.toBeNull();
-  // 叠加：甲 + 派单 → 命中一条；空态提示被摘掉
+  // 恢复丙、切派单 → 甲仍隐藏 → 空
+  window.gToggleCatVisible('c1');
   window.gSetFilterKind('delegation');
+  expect(visible()).toEqual([]);
+  // 恢复甲 → 派单命中甲那条；空态提示被摘掉
+  window.gToggleCatVisible('a1');
   expect(visible()).toEqual(['delegation:a1']);
   expect(box.querySelector('.group-filter-empty')).toBeNull();
-  // 取消猫筛选（再点同球）→ 派单仅甲那条
-  window.gToggleCatFilter('a1');
-  expect(window.gFilterCat).toBe('');
-  // 回到全部
+  // 人消息不受猫显隐影响（from 空恒显示）
   window.gSetFilterKind('all');
+  window.gToggleCatVisible('a1');
+  window.gToggleCatVisible('c1');
+  expect(visible()).toEqual(['note:human']);
+  // 全部恢复
+  window.gToggleCatVisible('a1');
+  window.gToggleCatVisible('c1');
   expect(visible().length).toBe(4);
 });
 
-test('A341 球列选中态——点球挂 .sel，换球转移，再点取消', () => {
+test('A343 球列显隐态——点球挂 .mute，再点恢复，初始全亮', () => {
   const el = document.getElementById('groupCats');
   el.textContent = '';
   window.gCatNodes = {};
+  window.gHiddenCats = {};
   window.gRenderCats([
     { key: 'c1', displayName: '丙', admin: false, running: true, themeColor: 1, runState: 'idle', context: 0 },
     { key: 'a1', displayName: '甲', admin: true, running: true, themeColor: 2, runState: 'idle', context: 0 }
   ]);
-  window.gFilterCat = '';
   const items = el.querySelectorAll('.gc-item');
   // 管理员球排前：items[0] = a1（甲），items[1] = c1（丙）
+  // 初始全显——无球带 mute
+  expect(items[0].classList.contains('mute')).toBe(false);
+  expect(items[1].classList.contains('mute')).toBe(false);
+  // 点丙 → 只丙隐藏（多选语义：不影响甲）
   items[1].click();
-  expect(window.gFilterCat).toBe('c1');
-  expect(items[1].classList.contains('sel')).toBe(true);
+  expect(window.gHiddenCats.c1).toBe(true);
+  expect(items[1].classList.contains('mute')).toBe(true);
+  expect(items[0].classList.contains('mute')).toBe(false);
+  // 再点甲 → 两只同时隐藏（旧单选语义下会互斥，此处验多选）
   items[0].click();
-  expect(window.gFilterCat).toBe('a1');
-  expect(items[1].classList.contains('sel')).toBe(false);
-  expect(items[0].classList.contains('sel')).toBe(true);
+  expect(window.gHiddenCats.a1).toBe(true);
+  expect(items[0].classList.contains('mute')).toBe(true);
+  expect(items[1].classList.contains('mute')).toBe(true);
+  // 再点甲 → 恢复显示，丙仍隐藏
   items[0].click();
-  expect(window.gFilterCat).toBe('');
-  expect(items[0].classList.contains('sel')).toBe(false);
+  expect(window.gHiddenCats.a1).toBeUndefined();
+  expect(items[0].classList.contains('mute')).toBe(false);
+  expect(items[1].classList.contains('mute')).toBe(true);
   // 复位，避免影响后续用例
-  window.gFilterCat = '';
+  window.gHiddenCats = {};
   window.gSetFilterKind('all');
 });
 
-test('A341 时间分割线随筛选重算——隐藏行不参与相邻判定', () => {
+test('A343 时间分割线随筛选重算——隐藏行不参与相邻判定', () => {
   const box = document.getElementById('chatMsgs');
   const t0 = new Date(2026, 10, 13, 9, 0, 0).getTime();
   box.textContent = '';
+  window.gHiddenCats = {};
   window.gRenderMessages([
     { seq: 1, from: 'a1', displayName: '甲', type: 'note', ts: t0, text: '甲1' },
-    { seq: 2, from: 'c1', displayName: '丙', type: 'note', ts: t0 + 10 * 60 * 1000, text: '丙1' },
-    { seq: 3, from: 'a1', displayName: '甲', type: 'note', ts: t0 + 120 * 60 * 1000, text: '甲2' }
+    { seq: 2, from: 'c1', displayName: '丙', type: 'note', ts: t0 + 30 * 60 * 1000, text: '丙1' },
+    { seq: 3, from: 'a1', displayName: '甲', type: 'note', ts: t0 + 90 * 60 * 1000, text: '甲2' }
   ]);
-  // 全量：丙1 → 甲2 跨 110 分钟 → 一条分割线
+  // 全量：相邻两段各 30 / 60 分钟，均未超 1h → 无分割线
+  expect(box.querySelectorAll('.grp-divider').length).toBe(0);
+  // 隐藏丙 → 可见 = 甲1 → 甲2 跨 90 分钟 → 一条（隐藏行未被计入相邻判定）
+  window.gToggleCatVisible('c1');
   expect(box.querySelectorAll('.grp-divider').length).toBe(1);
-  // 只看甲：甲1 → 甲2 跨 120 分钟 → 仍一条（且不因隐藏行错位）
-  window.gToggleCatFilter('a1');
-  expect(box.querySelectorAll('.grp-divider').length).toBe(1);
-  window.gToggleCatFilter('a1');
+  window.gToggleCatVisible('c1');
   window.gSetFilterKind('all');
 });
 
@@ -408,7 +429,7 @@ test('A340 消息头——类型徽标排在显示名之前', () => {
 test('A340 时间分割线——相邻 > 1h 插一条，恰好 1h 不插', () => {
   const box = document.getElementById('chatMsgs');
   // 筛选态复位（用例独立：筛选会隐藏行、连带影响相邻判定）
-  window.gFilterCat = '';
+  window.gHiddenCats = {};
   window.gFilterKind = 'all';
   const t0 = new Date(2026, 10, 13, 9, 0, 0).getTime();
   box.textContent = '';
