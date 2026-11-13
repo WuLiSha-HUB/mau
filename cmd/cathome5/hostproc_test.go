@@ -47,3 +47,24 @@ func TestListHostProcessesSmoke(t *testing.T) {
 		}
 	}
 }
+
+// TestWaitProcessGoneMS 进程退出判据——当前进程在短窗口内不退（false）；不存在的 pid 视为已退出（true）。
+func TestWaitProcessGoneMS(t *testing.T) {
+	if waitProcessGoneMS(os.Getpid(), 100) {
+		t.Fatal("当前进程不应在 100 ms 内被判为已退出")
+	}
+	if !waitProcessGoneMS(1<<30, 100) {
+		t.Fatal("不存在的 pid 应视为已退出")
+	}
+}
+
+// TestSweepHostsInDirectorySmoke 清扫冒烟——空目录命中 0（真实枚举，不结束任何进程）。
+func TestSweepHostsInDirectorySmoke(t *testing.T) {
+	res, err := sweepHostsInDirectoryImpl(t.TempDir())
+	if err != nil {
+		t.Fatalf("清扫枚举失败：%v", err)
+	}
+	if len(res.PIDs) != 0 || res.Graceful != 0 || res.Killed != 0 || res.Failed != 0 {
+		t.Fatalf("空目录不应命中实例：%+v", res)
+	}
+}

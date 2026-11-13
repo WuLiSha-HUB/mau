@@ -352,6 +352,11 @@ func (r *deployRun) relaunch() int {
 		}
 		r.add("wait", true, "旧进程 "+strconv.Itoa(r.o.WaitPID)+" 已退出")
 	}
+	// [段1b] 同目录残留实例清扫（CH4 SetUp/Program.Relaunch.cs 段1b / KillHostsInDirectory 对位）——
+	//        只有发起方 pid 会自退；历次失败自启 / 手动启动的实例仍持 dll 与目录 cwd → 原子切换改名必失败，
+	//        它们都是待替换运行区里的旧实例，属部署链自身的清理面（只清「可执行路径落在 target 下」的实例）。
+	//        先优雅关（≤2 s）、再强杀（≤3 s）、有强杀则 settle 1 s；命中与处置进报告 step，失败不阻断。
+	r.sweepStrayHosts()
 	// [段2] prepare 全链——仅 full（失败即不替换运行区）
 	prepOK := true
 	if mode == "full" {
@@ -421,6 +426,27 @@ func (r *deployRun) relaunch() int {
 		return deployExitOK
 	}
 	return deployExitNotReplaced
+}
+
+// sweepStrayHosts 同目录残留实例清扫（段1 之后、段2 之前——dll 锁必须先释放，原子切换改名才可能成功）。
+// 只作用于「可执行路径落在 target 下」的宿主实例（不碰其它运行区 / 现役实例）；有命中才记报告 step。
+func (r *deployRun) sweepStrayHosts() {
+	swept, err := hostKillInDir(r.o.Target)
+	if err != nil {
+		fmt.Println("[清扫残留] 宿主进程扫描失败（按无实例继续）: " + err.Error())
+		return
+	}
+	if len(swept.PIDs) == 0 {
+		fmt.Println("[清扫残留] 运行区无同目录宿主实例")
+		return
+	}
+	detail := "另结束 " + strconv.Itoa(swept.Graceful+swept.Killed) + " 个同目录残留宿主实例（pid " +
+		joinHostPIDs(swept.PIDs) + "；优雅关 " + strconv.Itoa(swept.Graceful) + " / 强杀 " + strconv.Itoa(swept.Killed) + "）"
+	if swept.Failed > 0 {
+		r.add("清扫残留", false, detail+"；失败 "+strconv.Itoa(swept.Failed)+" 个（见日志）")
+		return
+	}
+	r.add("清扫残留", true, detail)
 }
 
 // bootAndProbe 起新实例并探活——成功返回 (true, pid)。

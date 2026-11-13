@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -93,6 +95,10 @@ func TestRelaunchSkipsAutostartWhenHostRunning(t *testing.T) {
 	prev := hostScanFindInDir
 	t.Cleanup(func() { hostScanFindInDir = prev })
 	hostScanFindInDir = func(dir string) ([]int, error) { return []int{4321, 4322}, nil }
+	// 段1b 清扫不参与本用例（target 为临时目录——mock 空结果，不依赖本机进程表）
+	prevKill := hostKillInDir
+	t.Cleanup(func() { hostKillInDir = prevKill })
+	hostKillInDir = func(dir string) (hostSweepResult, error) { return hostSweepResult{}, nil }
 	target := filepath.Join(t.TempDir(), "MauOut5")
 	if err := os.MkdirAll(target, 0o755); err != nil {
 		t.Fatal(err)
@@ -121,5 +127,48 @@ func TestRelaunchSkipsAutostartWhenHostRunning(t *testing.T) {
 	r = &deployRun{o: deployOptions{Target: target, Mode: "host"}, mode: "relaunch"}
 	if code := r.relaunch(); code != deployExitManual {
 		t.Fatalf("无实例且运行区缺 exe 应需人工，got %d", code)
+	}
+}
+
+// TestSweepStrayHostsReports 段1b 清扫——命中记 step（优雅 / 强杀分列）；无命中 / 扫描失败不记（stdout 出声）；有失败 ok=false。
+func TestSweepStrayHostsReports(t *testing.T) {
+	prev := hostKillInDir
+	t.Cleanup(func() { hostKillInDir = prev })
+	target := filepath.Join(t.TempDir(), "MauOut5")
+	// 命中：优雅 1 + 强杀 1 → ok=true，明细含计数与 pid 清单
+	hostKillInDir = func(dir string) (hostSweepResult, error) {
+		return hostSweepResult{PIDs: []int{4321, 4322}, Graceful: 1, Killed: 1}, nil
+	}
+	r := &deployRun{o: deployOptions{Target: target}}
+	r.sweepStrayHosts()
+	if len(r.steps) != 1 || r.steps[0].Name != "清扫残留" || !r.steps[0].OK {
+		t.Fatalf("命中应记一条 ok=true 的清扫残留步骤：%+v", r.steps)
+	}
+	for _, want := range []string{"另结束 2 个", "pid 4321,4322", "优雅关 1", "强杀 1"} {
+		if !strings.Contains(r.steps[0].Detail, want) {
+			t.Fatalf("步骤明细缺 %q：%s", want, r.steps[0].Detail)
+		}
+	}
+	// 失败面：ok=false 且明细标失败数
+	hostKillInDir = func(dir string) (hostSweepResult, error) {
+		return hostSweepResult{PIDs: []int{4321}, Killed: 1, Failed: 1}, nil
+	}
+	r = &deployRun{o: deployOptions{Target: target}}
+	r.sweepStrayHosts()
+	if len(r.steps) != 1 || r.steps[0].OK || !strings.Contains(r.steps[0].Detail, "失败 1 个") {
+		t.Fatalf("有失败应记 ok=false 并标失败数：%+v", r.steps)
+	}
+	// 空命中 / 扫描失败：不记 step（出声在 stdout）
+	hostKillInDir = func(dir string) (hostSweepResult, error) { return hostSweepResult{}, nil }
+	r = &deployRun{o: deployOptions{Target: target}}
+	r.sweepStrayHosts()
+	if len(r.steps) != 0 {
+		t.Fatalf("空命中不应记 step：%+v", r.steps)
+	}
+	hostKillInDir = func(dir string) (hostSweepResult, error) { return hostSweepResult{}, fmt.Errorf("tasklist 失败") }
+	r = &deployRun{o: deployOptions{Target: target}}
+	r.sweepStrayHosts()
+	if len(r.steps) != 0 {
+		t.Fatalf("扫描失败不应记 step：%+v", r.steps)
 	}
 }
