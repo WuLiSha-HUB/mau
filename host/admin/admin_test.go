@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"cathome5/host/config"
+	"cathome5/host/session"
 	"cathome5/host/toolpool"
 )
 
@@ -190,6 +191,123 @@ func TestCatConfigPostRejects(t *testing.T) {
 		if payload.OK || !strings.Contains(payload.Error, item.want) {
 			t.Fatalf("%s: 期望拒绝（%s），实得 ok=%v error=%q", item.name, item.want, payload.OK, payload.Error)
 		}
+	}
+}
+
+// TestCatConfigMultiCat 多猫寻址（d-1c）——GET 回该猫 29 字段 / POST 落盘该猫并回调 Apply / 未命中拒绝。
+func TestCatConfigMultiCat(t *testing.T) {
+	deps, root := newTestDeps(t)
+	multiID := "1750000000000000101"
+	if err := os.MkdirAll(filepath.Join(root, "sessions", multiID), 0o755); err != nil {
+		t.Fatalf("建多猫目录失败: %v", err)
+	}
+	cfg := &config.CatCfg{ID: multiID, DisplayName: "多猫甲", APIConfigID: config.ZeroGUIDText, ToolNames: "text-read"}
+	if err := config.SaveCatCfg(filepath.Join(root, "sessions", multiID, "cat.cfg"), cfg); err != nil {
+		t.Fatalf("写多猫 cat.cfg 失败: %v", err)
+	}
+	deps.CatLookup = func(catKey string) (string, string, bool, int, *session.Session, bool) {
+		if catKey == multiID {
+			return multiID, "多猫甲", true, 8078, nil, true
+		}
+		return "", "", false, 0, nil, false
+	}
+	applied := ""
+	deps.Apply = func(catKey string, cfg *config.CatCfg) { applied = catKey }
+
+	// GET——29 字段 + 该猫取值
+	rec := do(t, deps, http.MethodGet, "/api/v1/cat-config?cat="+multiID, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET 状态码 %d", rec.Code)
+	}
+	if keys := objectKeyOrder(t, rec.Body.Bytes()); len(keys) != 29 {
+		t.Fatalf("GET 字段数 %d（期望 29）: %v", len(keys), keys)
+	}
+	var got struct {
+		OK          bool   `json:"ok"`
+		Cat         string `json:"cat"`
+		DisplayName string `json:"displayName"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("GET 解析失败: %v", err)
+	}
+	if !got.OK || got.Cat != multiID || got.DisplayName != "多猫甲" {
+		t.Fatalf("GET 多猫取值不符: %+v", got)
+	}
+
+	// POST——落盘该猫 + Apply 收到该猫 key
+	rec = do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"`+multiID+`","persona":"多猫人设"}`)
+	var write struct {
+		OK  bool   `json:"ok"`
+		Cat string `json:"cat"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &write); err != nil {
+		t.Fatalf("POST 解析失败: %v", err)
+	}
+	if !write.OK || write.Cat != multiID {
+		t.Fatalf("POST 回执不符: %+v（body=%s）", write, rec.Body.String())
+	}
+	if applied != multiID {
+		t.Fatalf("Apply 未按猫回调: %q", applied)
+	}
+	saved, err := config.LoadCatCfg(filepath.Join(root, "sessions", multiID, "cat.cfg"))
+	if err != nil || saved.Persona != "多猫人设" {
+		t.Fatalf("多猫 cat.cfg 未落盘: %v %+v", err, saved)
+	}
+
+	// 未命中——「猫不存在」
+	rec = do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"nobody","persona":"x"}`)
+	var rejected struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rejected); err != nil {
+		t.Fatalf("拒绝面解析失败: %v", err)
+	}
+	if rejected.OK || !strings.Contains(rejected.Error, "猫不存在") {
+		t.Fatalf("未命中应拒绝: %+v", rejected)
+	}
+}
+
+// TestCatDetailMultiCat 多猫详情（d-1c）——按猫取显示名 / 运行态 / 端口；未命中拒绝。
+func TestCatDetailMultiCat(t *testing.T) {
+	deps, _ := newTestDeps(t)
+	multiID := "1750000000000000102"
+	deps.CatLookup = func(catKey string) (string, string, bool, int, *session.Session, bool) {
+		if catKey == multiID {
+			return multiID, "多猫乙", true, 8078, nil, true
+		}
+		return "", "", false, 0, nil, false
+	}
+	rec := do(t, deps, http.MethodGet, "/api/v1/cat-detail?cat="+multiID, "")
+	var got struct {
+		OK      bool   `json:"ok"`
+		ID      string `json:"id"`
+		Name    string `json:"name"`
+		Cat     string `json:"cat"`
+		Running bool   `json:"running"`
+		Port    int    `json:"port"`
+		IsIdle  bool   `json:"isIdle"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	if !got.OK || got.ID != multiID || got.Name != "多猫乙" || !got.Running || got.Port != 8078 || !got.IsIdle {
+		t.Fatalf("多猫详情不符: %+v", got)
+	}
+	if got.Cat != multiID {
+		t.Fatalf("cat 字段应为寻址归一 id: %+v", got)
+	}
+	// 未命中
+	rec = do(t, deps, http.MethodGet, "/api/v1/cat-detail?cat=nobody", "")
+	var rejected struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rejected); err != nil {
+		t.Fatalf("拒绝面解析失败: %v", err)
+	}
+	if rejected.OK || !strings.Contains(rejected.Error, "未找到猫") {
+		t.Fatalf("未命中应拒绝: %+v", rejected)
 	}
 }
 

@@ -94,6 +94,33 @@ type catConfigWriteResponse struct {
 	RootsPoolUnavailable bool `json:"rootsPoolUnavailable"`
 }
 
+// sessionFor 按猫 key 取会话——多猫钩子优先（main 注入 cats.sessionByKey）；
+// nil 时回退单猫判定（majordomo / 默认猫 key / 显示名命中默认会话，其余 nil）。
+func (d *Deps) sessionFor(catKey string) *session.Session {
+	if d.SessionFor != nil {
+		return d.SessionFor(catKey)
+	}
+	if catKey == "" {
+		return nil
+	}
+	if catKey == "majordomo" || catKey == d.CatID || (d.DisplayName != "" && catKey == d.DisplayName) {
+		return d.Session
+	}
+	return nil
+}
+
+// catLookup 多猫寻址——CatLookup 钩子优先（id 精确 / 显示名 / id 前缀唯一）；
+// nil 时回退单猫判定（默认猫 key / 显示名命中）。
+func (d *Deps) catLookup(catKey string) (string, string, bool, int, *session.Session, bool) {
+	if d.CatLookup != nil {
+		return d.CatLookup(catKey)
+	}
+	if catKey == "majordomo" || catKey == d.CatID || (d.DisplayName != "" && catKey == d.DisplayName) {
+		return d.CatID, d.DisplayName, d.Running, d.Port, d.Session, true
+	}
+	return "", "", false, 0, nil, false
+}
+
 // handleCatConfigGet 服务 GET /api/v1/cat-config?cat=<id|majordomo>。
 func (d *Deps) handleCatConfigGet(w http.ResponseWriter, r *http.Request) {
 	catKey := r.URL.Query().Get("cat")
@@ -187,9 +214,12 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "cat 参数非法: "+catKey)
 		return
 	}
-	if catKey != "majordomo" && catKey != d.CatID {
-		writeErr(w, "猫不存在: "+catKey)
-		return
+	// 多猫寻址（d-1c）——majordomo 恒可；其余按 CatLookup（id / 显示名 / id 前缀唯一）
+	if catKey != "majordomo" {
+		if _, _, _, _, _, found := d.catLookup(catKey); !found {
+			writeErr(w, "猫不存在: "+catKey)
+			return
+		}
 	}
 	cfg, err := config.LoadCatCfg(d.catCfgPath(catKey))
 	if err != nil {
@@ -630,29 +660,41 @@ func (d *Deps) handleCatDetail(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, "cat 参数非法: "+catKey)
 		return
 	}
+	// 多猫寻址（d-1c）——special 走默认猫；其余按 CatLookup 取 id / 显示名 / 运行态 / 端口 / 会话
 	special := catKey == "majordomo"
-	if !special && catKey != d.CatID {
-		writeErr(w, "未找到猫: "+catKey)
-		return
+	id := catKey
+	name := d.DisplayName
+	running := d.Running
+	port := d.Port
+	var sess *session.Session
+	if special {
+		sess = d.sessionFor("majordomo")
+	} else {
+		gotID, gotName, gotRunning, gotPort, gotSess, found := d.catLookup(catKey)
+		if !found {
+			writeErr(w, "未找到猫: "+catKey)
+			return
+		}
+		id, name, running, port, sess = gotID, gotName, gotRunning, gotPort, gotSess
 	}
 	resp := catDetailResponse{
-		ID:      catKey,
-		Name:    d.DisplayName,
+		ID:      id,
+		Name:    name,
 		Type:    "",
 		Special: special,
-		Running: d.Running,
-		Port:    d.Port,
+		Running: running,
+		Port:    port,
 		OK:      true,
-		Cat:     catKey,
+		Cat:     id,
 	}
-	if d.Session == nil {
+	if sess == nil {
 		resp.IsIdle = true
 		writeJSON(w, resp)
 		return
 	}
-	resp.State = d.Session.StateEntry()
-	resp.IsIdle = d.Session.PhaseText() == "Idle"
-	blocks := d.Session.Views.Blocks()
+	resp.State = sess.StateEntry()
+	resp.IsIdle = sess.PhaseText() == "Idle"
+	blocks := sess.Views.Blocks()
 	resp.LastUser = findLastViewEntry(blocks, "user", d)
 	resp.LastReply = findLastViewEntry(blocks, "text", d)
 	// [段3] 上一会话回落——sessions_old 该猫最近一份留档（本会话无对应消息时取档内末条）

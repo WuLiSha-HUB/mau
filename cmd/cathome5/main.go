@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.30.0"
+var version = "0.31.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -422,6 +422,19 @@ func main() {
 		Dispatch: func(command string) bool {
 			return router.Handle(command)
 		},
+	}
+	// 多猫寻址钩子（d-1c）——管理面 cat-config / cat-detail / 组列表成员面按 cat 取会话与运行态
+	adminDeps.SessionFor = cats.sessionByKey
+	adminDeps.CatLookup = func(catKey string) (string, string, bool, int, *session.Session, bool) {
+		inst := cats.findCat(catKey)
+		if inst == nil {
+			return "", "", false, 0, nil, false
+		}
+		name := inst.displayName
+		if name == "" {
+			name = inst.id
+		}
+		return inst.id, name, inst.running, inst.port, inst.session, true
 	}
 	// [段12b-3] 附属宿主实例装配（d-1a 组轻宿主 / d-1b 每猫独立对话端口）——
 	// 端口即身份：猫实例闭包绑定本猫会话，组实例闭包绑定组名（C# StartCatHost / StartGroupHost 同构）。

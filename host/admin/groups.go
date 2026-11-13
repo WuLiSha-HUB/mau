@@ -205,17 +205,24 @@ func (d *Deps) buildGroupRow(summary group.Summary) groupRow {
 	}
 }
 
-// memberRuntime 成员运行面——单猫形态：仅主干会话有会话态，其余按未运行。
+// memberRuntime 成员运行面——按猫寻址取会话（多猫钩子优先；静默猫 / 未命中按未运行）。
 func (d *Deps) memberRuntime(catKey string) (running bool, runState string, contextTokens int64) {
 	runState = "idle"
-	if d.Session == nil || catKey == "" {
+	if catKey == "" {
 		return false, runState, 0
 	}
-	if catKey != d.CatID && catKey != d.DisplayName {
+	sess := d.sessionFor(catKey)
+	if sess == nil {
 		return false, runState, 0
 	}
-	running = d.Running
-	state := d.Session.StateEntry()
+	if catKey == "majordomo" || catKey == d.CatID {
+		running = d.Running
+	} else if _, _, catRunning, _, _, found := d.catLookup(catKey); found {
+		running = catRunning
+	} else {
+		running = true
+	}
+	state := sess.StateEntry()
 	if text, ok := state["runState"].(string); ok && text != "" {
 		runState = text
 	}

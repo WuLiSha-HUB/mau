@@ -352,8 +352,8 @@ func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet 
 		return injectFailResponse{OK: false, Reason: "cat.cfg 写入失败: " + err.Error()}, nil
 	}
 	// 自报身份同步——项目 / 模式 / Job 清单进请求附加头容器（未挂载 = 空，适配层整组不发）
-	if d.Session != nil {
-		d.Session.SetSelfTagMount(project, MountModeText(project, cfg.ProjectMountExpert), BuildJobList(next))
+	if sess := d.sessionFor("majordomo"); sess != nil {
+		sess.SetSelfTagMount(project, MountModeText(project, cfg.ProjectMountExpert), BuildJobList(next))
 	}
 	// 会话未开始对话 → 立即重建（等同新会话重注入）；已有对话 → 只落盘，下个新会话生效
 	fresh := msgCount <= 1
@@ -408,10 +408,11 @@ func compactListJSON(list []string) string {
 
 // sessionMessageCount 当前会话前文条数（无会话按 0——与 C# DefaultSession == null 同口径）。
 func (d *Deps) sessionMessageCount() int {
-	if d.Session == nil || d.Session.Context == nil {
+	sess := d.sessionFor("majordomo")
+	if sess == nil || sess.Context == nil {
 		return 0
 	}
-	return d.Session.Context.Count()
+	return sess.Context.Count()
 }
 
 // projectDocSpec 项目档案条目前缀——先认 ccbp:Project/<名>，再回落 workspace:<名>（两处都不存在 = 空串）。

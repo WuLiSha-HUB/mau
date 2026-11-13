@@ -40,8 +40,14 @@ type Deps struct {
 	LLMStore *config.LlmAPIStore
 	// DB 条目库服务（段 11 四端点 + allLibs 库池的数据源；nil = 服务未绑定）
 	DB *db.Service
-	// Session 默认会话（cat-detail / cat-config 的会话面数据源）
+	// Session 默认会话（单猫形态回退——多猫面按 cat 走 SessionFor）
 	Session *session.Session
+	// SessionFor 按猫 key 取会话（含 majordomo / 显示名 / id 前缀唯一；nil = 未命中）。
+	// 多猫钩子（main 注入 cats.sessionByKey）；nil 时回退单猫判定（默认猫 key / 显示名命中 d.Session）
+	SessionFor func(catKey string) *session.Session
+	// CatLookup 多猫寻址（id 精确 / 显示名 / id 前缀唯一）——返回 id / 显示名 / 运行态 / 端口 / 会话 / 命中。
+	// nil 时回退单猫判定（默认猫 key / 显示名命中）；d-1c 管理面多猫编辑的寻址单点
+	CatLookup func(catKey string) (id, name string, running bool, port int, sess *session.Session, ok bool)
 	// CatID 默认会话 key（majordomo）
 	CatID string
 	// DisplayName 默认会话显示名
