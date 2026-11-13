@@ -161,7 +161,7 @@ type toolRuntime struct {
 // buildToolRuntime 装配机制面——DataBox / OA / Runner / 积木表 / 组注册。
 //
 // 失败面一律出声（组跳过 / 语料目录缺失 / 受控根为空），不静默降级。
-func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir, dataRoot string, webCfg bricks.WebConfig, vision bricks.VisionService, cfgGet func(key string) string, configSvc bricks.ConfigService, hostCmd func(string) string, logf func(level int, message, category string), llmStream bricks.LLMStreamRuntime) *toolRuntime {
+func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir, dataRoot string, webCfg bricks.WebConfig, vision bricks.VisionService, cfgGet func(key string) string, configSvc bricks.ConfigService, hostCmd func(string) string, logf func(level int, message, category string), llmStream bricks.LLMStreamRuntime, groupSvc bricks.GroupService) *toolRuntime {
 	report := func(level int, message string) {
 		if logf != nil {
 			logf(level, message, "TOOL")
@@ -385,6 +385,7 @@ func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir,
 		LLMStream:   llmStream,
 		Py:          pySvc,
 		Mau:         mauSvc,
+		Group:       groupSvc,
 	})
 
 	if corpusDir == "" {

@@ -5,6 +5,7 @@
 //
 //	bin\hostprobe.exe -corpus D:\Mau\Mau\corpus\ch4 -tool majordomo-cmd -args {"cmd":"cat.list"}
 //	bin\hostprobe.exe -corpus D:\Mau\Mau\corpus\ch4 -tool majordomo-catinfo
+//	bin\hostprobe.exe -corpus D:\Mau\Mau\corpus\ch4 -tool group-info -args {"group":"g1","catId":"majordomo"}
 //	bin\hostprobe.exe -corpus D:\Mau\Mau\corpus\ch4 -tool restart-host -args {"target":"D:\\Mau\\MauOut5"}
 //	bin\hostprobe.exe -snapshot http://127.0.0.1:8079
 //
@@ -50,10 +51,60 @@ func (s *hostCommandStub) Last() string {
 	return s.last
 }
 
+// groupProbeStub 是组服务探针替身——记录最后调用的方法与参数，按 A214 形态回执。
+//
+// 定位与 hostCommandStub 相同：只验「GroupCat 语料链 + 八件积木接线」；
+// 真实权限 / 组数据语义由 cmd/cathome5 单测（hostGroupService）与宿主实机覆盖。
+type groupProbeStub struct {
+	mu     sync.Mutex
+	method string
+	args   string
+}
+
+// record 记录调用并回 A214 形态回执。
+func (s *groupProbeStub) record(method, argsJSON string) string {
+	s.mu.Lock()
+	s.method = method
+	s.args = argsJSON
+	s.mu.Unlock()
+	return `{"ok":true,"tool":"group-` + method + `","target":"probe","items":1}` + "\n" + "probe | " + method + " 已执行"
+}
+
+// Last 取最近一次调用的方法与参数。
+func (s *groupProbeStub) Last() (string, string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.method, s.args
+}
+
+// Info 记录 group.info。
+func (s *groupProbeStub) Info(argsJSON string) string { return s.record("info", argsJSON) }
+
+// Inbox 记录 group.inbox。
+func (s *groupProbeStub) Inbox(argsJSON string) string { return s.record("inbox", argsJSON) }
+
+// Say 记录 group.say。
+func (s *groupProbeStub) Say(argsJSON string) string { return s.record("post", argsJSON) }
+
+// Send 记录 group.send。
+func (s *groupProbeStub) Send(argsJSON string) string { return s.record("delegate", argsJSON) }
+
+// NewSession 记录 group.new_session。
+func (s *groupProbeStub) NewSession(argsJSON string) string { return s.record("newsession", argsJSON) }
+
+// CatInfo 记录 group.catinfo。
+func (s *groupProbeStub) CatInfo(argsJSON string) string { return s.record("catinfo", argsJSON) }
+
+// CatCfgGet 记录 group.catcfg_get。
+func (s *groupProbeStub) CatCfgGet(argsJSON string) string { return s.record("catcfg-get", argsJSON) }
+
+// CatCfgSet 记录 group.catcfg_set。
+func (s *groupProbeStub) CatCfgSet(argsJSON string) string { return s.record("catcfg-set", argsJSON) }
+
 // main 执行一次链路验证。
 func main() {
 	corpusDir := flag.String("corpus", "", "语料根（corpus/ch4）")
-	toolName := flag.String("tool", "majordomo-cmd", "工具名（restart-full / restart-incr / restart-host / majordomo-cmd / majordomo-catinfo）")
+	toolName := flag.String("tool", "majordomo-cmd", "工具名（restart-full / restart-incr / restart-host / majordomo-cmd / majordomo-catinfo / group-info / group-inbox / group-post / group-delegate / group-newsession / group-catinfo / group-catcfg-get / group-catcfg-set）")
 	args := flag.String("args", "{}", "工具参数 JSON")
 	viaFlow := flag.Bool("flow", true, "走 OA + Flow 全链（false = 直调积木层）")
 	maxFrames := flag.Int("frames", 3000, "Flow 模式最大 tick 次数")
@@ -69,11 +120,12 @@ func main() {
 		return
 	}
 	stub := &hostCommandStub{}
+	groupStub := &groupProbeStub{}
 
 	if !*viaFlow {
 		box := runtime.NewDataBox()
 		bricks.SetInteractiveRunMode(box)
-		reply, ok := executeDirect(box, stub, *toolName, *args)
+		reply, ok := executeDirect(box, stub, groupStub, *toolName, *args)
 		fmt.Printf("direct ok=%v\n%s\n", ok, reply)
 		printRestartBox(box)
 		return
@@ -89,21 +141,27 @@ func main() {
 	oa.FrameProvider = runner.Frame
 	set := toolset.BuildBrickSet(nil, oa, box, toolset.BrickOptions{
 		HostCommand: stub.Execute,
+		Group:       groupStub,
 	})
 	groups, skipped := toolset.LoadGroups(*corpusDir, "", set, func(level int, message string) {
 		fmt.Printf("[group %d] %s\n", level, message)
 	})
 	fmt.Printf("groups=%d skipped=%d\n", len(groups), len(skipped))
+	// 目标组——group-* 走 GroupCat，其余走 Majordomo（探针一次只注册一条目标组）
+	targetGroup := "Majordomo"
+	if strings.HasPrefix(*toolName, "group-") {
+		targetGroup = "GroupCat"
+	}
 	registered := false
 	for _, group := range groups {
-		if group.Name != "Majordomo" {
+		if group.Name != targetGroup {
 			continue
 		}
 		runner.RegisterFlow(group.Graph, group.Name)
 		registered = true
 	}
 	if !registered {
-		fmt.Println("目标组未注册：Majordomo")
+		fmt.Println("目标组未注册：" + targetGroup)
 		return
 	}
 
@@ -134,8 +192,8 @@ func main() {
 	fmt.Println("flow 未在限定 tick 内完成")
 }
 
-// executeDirect 直调积木层——HOST 三件（与语料消费同一实现）。
-func executeDirect(box *runtime.DataBox, stub *hostCommandStub, tool, argsJSON string) (string, bool) {
+// executeDirect 直调积木层——HOST 三件 + GROUP 八件（与语料消费同一实现）。
+func executeDirect(box *runtime.DataBox, stub *hostCommandStub, groupStub *groupProbeStub, tool, argsJSON string) (string, bool) {
 	switch tool {
 	case "restart-full", "restart-incr", "restart-host":
 		return bricks.HostRestart(box, argsJSON, strings.TrimPrefix(tool, "restart-"))
@@ -143,6 +201,22 @@ func executeDirect(box *runtime.DataBox, stub *hostCommandStub, tool, argsJSON s
 		return bricks.HostCommand(stub.Execute, argsJSON)
 	case "majordomo-catinfo":
 		return bricks.HostCatInfo(stub.Execute, argsJSON)
+	case "group-info":
+		return bricks.GroupInfo(groupStub, argsJSON)
+	case "group-inbox":
+		return bricks.GroupInbox(groupStub, argsJSON)
+	case "group-post":
+		return bricks.GroupSay(groupStub, argsJSON)
+	case "group-delegate":
+		return bricks.GroupSend(groupStub, argsJSON)
+	case "group-newsession":
+		return bricks.GroupNewSession(groupStub, argsJSON)
+	case "group-catinfo":
+		return bricks.GroupCatInfo(groupStub, argsJSON)
+	case "group-catcfg-get":
+		return bricks.GroupCatCfgGet(groupStub, argsJSON)
+	case "group-catcfg-set":
+		return bricks.GroupCatCfgSet(groupStub, argsJSON)
 	}
 	return "ERR|BAD_ARGS|未知工具: " + tool, false
 }

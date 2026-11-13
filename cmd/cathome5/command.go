@@ -65,10 +65,20 @@ type commandRouter struct {
 	ValidateEnabledRoots func(ids []string) (kept, removed []string, poolUnavailable bool)
 	// FilterInjectPaths 注入路径过滤（nil = 按 config.IsValidInjectPath 过滤）
 	FilterInjectPaths func(items []string) []string
-	// pendingMu 保护 pendingNewSession
+	// pendingMu 保护 pendingRebuild
 	pendingMu sync.Mutex
-	// pendingNewSession 按猫请求新会话标志（cat.new-session 指令置位——Idle 时消费，轮内不重建）
-	pendingNewSession bool
+	// pendingRebuild 挂起的会话重建请求（cat.new-session 指令 / group-newsession 自指置位——Idle 时消费，轮内不重建）
+	pendingRebuild pendingRebuildRequest
+}
+
+// pendingRebuildRequest 是挂起的会话重建请求——重复登记不覆盖首次请求（C# ChatSession._pendingRebuild 同语义）。
+type pendingRebuildRequest struct {
+	// pending 是否有挂起请求
+	pending bool
+	// first 重建后注入的初始消息（空 = 只重建）
+	first string
+	// origin 初始消息来源锚（组派单用 group:<组>:<seq>:delegation）
+	origin string
 }
 
 // log 出声（nil 安全）。
@@ -130,6 +140,11 @@ func (r *commandRouter) Handle(text string) bool {
 //
 // 顺序对齐 C# ChatBridge.HandleSessionNew：声明面 → 注入提示词 → 清前文 → 留档 → 清视图 → 注入报告 → 重置事件。
 func (r *commandRouter) sessionNew(firstMessage string) bool {
+	return r.sessionNewWithOrigin(firstMessage, "")
+}
+
+// sessionNewWithOrigin 执行会话重建（带初始消息来源锚）——origin 随初始消息投递（组派单用 group:<组>:<seq>:delegation）。
+func (r *commandRouter) sessionNewWithOrigin(firstMessage, origin string) bool {
 	cfg := r.loadCfg()
 	specs := r.rebuildSpecs(cfg)
 	prompt, report, count := r.buildInjectSurface(cfg, specs)
@@ -141,7 +156,7 @@ func (r *commandRouter) sessionNew(firstMessage string) bool {
 		InjectCount:      count,
 	})
 	if firstMessage != "" {
-		if r.Session.PostUser(firstMessage, "user", "", "") {
+		if r.Session.PostUser(firstMessage, "user", "", origin) {
 			summary += " · 已注入初始消息 " + strconv.Itoa(utf8.RuneCountInString(firstMessage)) + " 字"
 		} else {
 			summary += " · 初始消息未受理"
@@ -647,16 +662,13 @@ func (r *commandRouter) catSessionNewCommand(rest string) string {
 		key = strings.TrimSpace(body[:sp])
 		first = strings.TrimSpace(body[sp+1:])
 	}
-	if r.Session == nil || (key != "majordomo" && key != r.CatID) {
-		return "cat.session.new | ERR|CAT_OFFLINE|猫未运行: " + key
+	result := r.rebuildCatSession(key, first, "")
+	if !strings.HasPrefix(result, "ok|") {
+		return "cat.session.new | " + result
 	}
-	if !r.Session.IsIdle() {
-		return "cat.session.new | ERR|CAT_BUSY|猫忙——仅在空闲时可重建: " + key
-	}
-	r.sessionNew(first)
 	tail := "（无初始消息）"
 	if first != "" {
-		tail = "（初始消息 " + strconv.Itoa(len(utf16.Encode([]rune(first)))) + " 字）"
+		tail = "（初始消息 " + strconv.Itoa(utf16Length(first)) + " 字）"
 	}
 	return "cat.session.new | 已重建会话: " + key + tail
 }
@@ -683,10 +695,40 @@ func (r *commandRouter) catNewSessionCommand(key string) string {
 	if key != "majordomo" && key != r.CatID {
 		return "cat.new-session | 未找到猫: " + key
 	}
-	r.pendingMu.Lock()
-	r.pendingNewSession = true
-	r.pendingMu.Unlock()
+	r.requestSessionRebuild("", "")
 	return "cat.new-session | 已请求新会话: majordomo"
+}
+
+// requestSessionRebuild 登记会话重建——轮末 / Idle 生效；重复登记返回 false（不覆盖首次请求）。
+//
+// 对齐 C# ChatSession.RequestSessionRebuild：首个请求的 first / origin 保留，后续登记一律拒绝。
+func (r *commandRouter) requestSessionRebuild(firstMessage, origin string) bool {
+	r.pendingMu.Lock()
+	defer r.pendingMu.Unlock()
+	if r.pendingRebuild.pending {
+		return false
+	}
+	r.pendingRebuild = pendingRebuildRequest{pending: true, first: firstMessage, origin: origin}
+	r.log(1, "会话重建已登记（轮末生效）: cat="+r.CatID, "CHAT")
+	return true
+}
+
+// rebuildCatSession 跨猫会话重建——目标须空闲；供 Group 工具面与指令面共用（单猫形态目标恒 majordomo）。
+//
+// 对齐 C# AdminService.RebuildCatSession：寻址 → 空闲判据 → 重建（带初始消息与来源锚）。
+func (r *commandRouter) rebuildCatSession(key, firstMessage, origin string) string {
+	useKey := strings.TrimSpace(key)
+	if useKey == "" {
+		return "ERR|CAT_KEY_EMPTY|目标猫 key 不能为空"
+	}
+	if r.Session == nil || (useKey != "majordomo" && useKey != r.CatID) {
+		return "ERR|CAT_OFFLINE|猫未运行: " + useKey
+	}
+	if !r.Session.IsIdle() {
+		return "ERR|CAT_BUSY|猫忙——仅在空闲时可重建: " + useKey
+	}
+	r.sessionNewWithOrigin(firstMessage, origin)
+	return "ok|" + useKey
 }
 
 // ConsumePendingNewSession 消费按猫新会话请求——仅 Idle 时执行（轮内不重建，避免冲掉在途回合）。
@@ -694,18 +736,18 @@ func (r *commandRouter) catNewSessionCommand(key string) string {
 // 返回 true = 已执行重建。
 func (r *commandRouter) ConsumePendingNewSession() bool {
 	r.pendingMu.Lock()
-	pending := r.pendingNewSession
+	pending := r.pendingRebuild
 	r.pendingMu.Unlock()
-	if !pending {
+	if !pending.pending {
 		return false
 	}
 	if r.Session == nil || !r.Session.IsIdle() {
 		return false
 	}
 	r.pendingMu.Lock()
-	r.pendingNewSession = false
+	r.pendingRebuild = pendingRebuildRequest{}
 	r.pendingMu.Unlock()
-	return r.sessionNew("")
+	return r.sessionNewWithOrigin(pending.first, pending.origin)
 }
 
 // catCfgApply catcfg.apply——重读 cat.cfg 并走与 cat.cfg.set 同一生效面（单猫形态）。

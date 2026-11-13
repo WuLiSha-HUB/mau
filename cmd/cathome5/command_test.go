@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"cathome5/host/session"
+	"cathome5/host/toolpool"
 )
 
 // newCommandRouter 构造单猫形态的路由（会话 + 延迟队列；日志收集可选）。
@@ -24,6 +25,8 @@ func newCommandRouter(t *testing.T) (*commandRouter, *session.DelayQueue, *[]str
 		CatID:       "majordomo",
 		DisplayName: "majordomo",
 		Session:     sess,
+		Pool:        &toolpool.Pool{},
+		Registry:    &toolpool.Registry{},
 		Running:     true,
 		Port:        8079,
 		Logf: func(level int, message, category string) {

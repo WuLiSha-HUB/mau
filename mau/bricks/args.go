@@ -160,7 +160,7 @@ func jsonString(s string) string {
 // 两个口径按「被对齐的 C# 出口」选：回执头（JsonUtil.Str / TextUtil.JsonEscape 系）用 jsonString；
 // 结构化回执（C# JsonUtil.Serialize 系——py 的 Run 八键 / List / 服务态四键 / Autostart）用本函数。
 // 差异只在非 ASCII 与 HTML 敏感字符：jsonString 转义、本函数直出（C# 实测中文直显）。
-func jsonRelaxedString(s string) string {
+func JSONRelaxedString(s string) string {
 	var b strings.Builder
 	b.WriteByte('"')
 	for _, r := range s {
@@ -195,6 +195,11 @@ func jsonRelaxedString(s string) string {
 	}
 	b.WriteByte('"')
 	return b.String()
+}
+
+// jsonRelaxedString 是 JSONRelaxedString 的包内别名（历史调用点保持；导出面供组合根拼组回执头）。
+func jsonRelaxedString(s string) string {
+	return JSONRelaxedString(s)
 }
 
 // writeUnicodeEscape 写单个 \uXXXX 转义（大写十六进制）。

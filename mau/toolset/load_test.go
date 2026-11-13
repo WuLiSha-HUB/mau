@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -180,5 +181,101 @@ func TestIncrementBricksWiring(t *testing.T) {
 	}
 	if value, ok := set["llm.reply_read"](nil); !ok || value != "hi" {
 		t.Fatalf("llm.reply_read 不符: %q/%v", value, ok)
+	}
+}
+
+// toolsetGroupStub 是 GroupService 的接线测试桩——记录最后调用的方法，回固定成功回执。
+type toolsetGroupStub struct {
+	// method 最近一次调用的方法名
+	method string
+}
+
+// Info 记录 group.info。
+func (s *toolsetGroupStub) Info(argsJSON string) string {
+	s.method = "Info"
+	return `{"ok":true,"tool":"group-info"}`
+}
+
+// Inbox 记录 group.inbox。
+func (s *toolsetGroupStub) Inbox(argsJSON string) string {
+	s.method = "Inbox"
+	return `{"ok":true,"tool":"group-inbox"}`
+}
+
+// Say 记录 group.say。
+func (s *toolsetGroupStub) Say(argsJSON string) string {
+	s.method = "Say"
+	return `{"ok":true,"tool":"group-post"}`
+}
+
+// Send 记录 group.send。
+func (s *toolsetGroupStub) Send(argsJSON string) string {
+	s.method = "Send"
+	return `{"ok":true,"tool":"group-delegate"}`
+}
+
+// NewSession 记录 group.new_session。
+func (s *toolsetGroupStub) NewSession(argsJSON string) string {
+	s.method = "NewSession"
+	return `{"ok":true,"tool":"group-newsession"}`
+}
+
+// CatInfo 记录 group.catinfo。
+func (s *toolsetGroupStub) CatInfo(argsJSON string) string {
+	s.method = "CatInfo"
+	return `{"ok":true,"tool":"group-catinfo"}`
+}
+
+// CatCfgGet 记录 group.catcfg_get。
+func (s *toolsetGroupStub) CatCfgGet(argsJSON string) string {
+	s.method = "CatCfgGet"
+	return `{"ok":true,"tool":"group-catcfg-get"}`
+}
+
+// CatCfgSet 记录 group.catcfg_set。
+func (s *toolsetGroupStub) CatCfgSet(argsJSON string) string {
+	s.method = "CatCfgSet"
+	return `{"ok":true,"tool":"group-catcfg-set"}`
+}
+
+// TestGroupBricksWiring GROUP 八件接线——BuildBrickSet 闭包 → 服务；nil 服务报 GROUP_NO_SERVICE。
+//
+// 与 bricks 包单测的分工：单测验薄壳语义，本测试验「BuildBrickSet → 闭包 → 服务」这条接线。
+func TestGroupBricksWiring(t *testing.T) {
+	names := []string{"group.info", "group.inbox", "group.say", "group.send", "group.new_session", "group.catinfo", "group.catcfg_get", "group.catcfg_set"}
+	args := []string{`{"group":"g1","catId":"majordomo"}`}
+	// nil 服务——八件统一 GROUP_NO_SERVICE（GroupCat 缺件时的诚实失败面）
+	set := BuildBrickSet(&fs.Service{}, runtime.NewOA(nil), runtime.NewDataBox(), BrickOptions{})
+	for _, name := range names {
+		brick, exists := set[name]
+		if !exists {
+			t.Fatalf("%s 未注册", name)
+		}
+		if value, ok := brick(args); ok || value != "ERR|GROUP_NO_SERVICE|群组服务未注入（宿主未接线）" {
+			t.Fatalf("%s 未注入服务应报 GROUP_NO_SERVICE：%q/%v", name, value, ok)
+		}
+	}
+	// 注入服务——闭包按件透传到对应方法
+	svc := &toolsetGroupStub{}
+	set = BuildBrickSet(&fs.Service{}, runtime.NewOA(nil), runtime.NewDataBox(), BrickOptions{Group: svc})
+	cases := map[string]string{
+		"group.info":        "Info",
+		"group.inbox":       "Inbox",
+		"group.say":         "Say",
+		"group.send":        "Send",
+		"group.new_session": "NewSession",
+		"group.catinfo":     "CatInfo",
+		"group.catcfg_get":  "CatCfgGet",
+		"group.catcfg_set":  "CatCfgSet",
+	}
+	for _, name := range names {
+		brick := set[name]
+		value, ok := brick(args)
+		if !ok || !strings.HasPrefix(value, `{"ok":true`) {
+			t.Fatalf("%s 成功回执不符：%q/%v", name, value, ok)
+		}
+		if svc.method != cases[name] {
+			t.Fatalf("%s 应调 %s，实调 %s", name, cases[name], svc.method)
+		}
 	}
 }

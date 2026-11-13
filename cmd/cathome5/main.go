@@ -251,11 +251,19 @@ func main() {
 		return commandRouterRef.Execute(line)
 	}
 	configSvc := &configServiceAdapter{store: store, schema: schema}
+	// 群组服务面——GroupCat 八件积木的执行底座（组数据面 + 会话指令路由晚绑定：router 在 [段12a] 构造）
+	groupSvc := &hostGroupService{
+		Store:  groups,
+		Router: func() *commandRouter { return commandRouterRef },
+		Logf: func(level int, message, category string) {
+			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
+		},
+	}
 	toolRT := buildToolRuntime(workspace, bricksIndex, resolveCorpusDir(*corpusFlag, workspace), dataRoot, &webConfigAdapter{store: store, schema: schema, llm: wiring.LLMStore}, visionSvc, func(key string) string {
 		return store.Resolve(schema, key).Value
 	}, configSvc, hostCommand, func(level int, message, category string) {
 		logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
-	}, &llmStreamAdapter{client: wiring.Client})
+	}, &llmStreamAdapter{client: wiring.Client}, groupSvc)
 	logs.Add("CatHome5", observe.LevelInfo,
 		"toolset.boot | 组 "+itoa(len(toolRT.Groups))+" | 跳过 "+itoa(len(toolRT.Skipped)), "TOOL", "", "", 0, frame.Current(), false)
 	// [段9d-0] info 的 db 段数据源回填——会话层先于机制面构造，服务实例此处才存在（闭包按调用时刻读取）

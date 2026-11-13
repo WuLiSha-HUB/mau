@@ -1,5 +1,5 @@
 // Package toolset 把语料组（corpus/ch4/<组>/<组>.mau）装配成可驱动的运行时图：
-// 工具积木映射（83 件）+ 公共十四积木（oa.* 九件 / self.* 两件 / data.box_* 两件 / log.write）+ 组加载门禁。
+// 工具积木映射（91 件）+ 公共十四积木（oa.* 九件 / self.* 两件 / data.box_* 两件 / log.write）+ 组加载门禁。
 //
 // 分层：bricks（工具执行体）← 本包（积木表 + 组装配）→ graph（图）/ runtime（帧序）。
 // 门禁口径：组内引用的积木全部在本包积木表里才注册；缺件组逐条出声跳过（不静默）。
@@ -71,9 +71,11 @@ type BrickOptions struct {
 	Py *bricks.PyService
 	// Mau Mau 工具链执行面（mau-* 四件的执行面；nil = 报 MAU_NO_SERVICE）
 	Mau *bricks.MauService
+	// Group 群组服务面（GroupCat 八件的执行面；nil = 报 GROUP_NO_SERVICE）
+	Group bricks.GroupService
 }
 
-// BuildBrickSet 构造积木表——97 件积木 = 工具 83（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 8 / py 3 / mau 4 / temp 2 / host 3 / probe 3）+ 公共十四积木。
+// BuildBrickSet 构造积木表——105 件积木 = 工具 91（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 8 / py 3 / mau 4 / temp 2 / host 3 / probe 3 / group 8）+ 公共十四积木。
 //
 // 工具积木名与语料一致（text.read / file.tree / ps.exec …），参数是语料求值后的字符串切片：
 // 单动作积木取 args[0]（整包工具参数 JSON）；公共积木按各自签名取参。
@@ -221,6 +223,31 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		"probe.sink_slow": func(args []string) (string, bool) {
 			return bricks.ProbeSinkSlow(argAt(args, 0), argAt(args, 1))
+		},
+		// ── GROUP（GroupCat 八件认领线共用——权限与业务语义归宿主服务层，积木只做服务寻址）──
+		"group.info": func(args []string) (string, bool) {
+			return bricks.GroupInfo(opts.Group, argAt(args, 0))
+		},
+		"group.inbox": func(args []string) (string, bool) {
+			return bricks.GroupInbox(opts.Group, argAt(args, 0))
+		},
+		"group.say": func(args []string) (string, bool) {
+			return bricks.GroupSay(opts.Group, argAt(args, 0))
+		},
+		"group.send": func(args []string) (string, bool) {
+			return bricks.GroupSend(opts.Group, argAt(args, 0))
+		},
+		"group.new_session": func(args []string) (string, bool) {
+			return bricks.GroupNewSession(opts.Group, argAt(args, 0))
+		},
+		"group.catinfo": func(args []string) (string, bool) {
+			return bricks.GroupCatInfo(opts.Group, argAt(args, 0))
+		},
+		"group.catcfg_get": func(args []string) (string, bool) {
+			return bricks.GroupCatCfgGet(opts.Group, argAt(args, 0))
+		},
+		"group.catcfg_set": func(args []string) (string, bool) {
+			return bricks.GroupCatCfgSet(opts.Group, argAt(args, 0))
 		},
 		// ── PowerShell（PsCat 两条解释器线共用——shell 由语料第二参给）──
 		"ps.exec": func(args []string) (string, bool) {
