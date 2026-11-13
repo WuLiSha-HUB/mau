@@ -392,11 +392,16 @@ func (r *catRegistry) createCat(name string) (*catInstance, string) {
 	r.mu.Unlock()
 
 	cfg := &config.CatCfg{ID: id, DisplayName: displayName, MountAuto: true, ProjectMountExpert: true}
+	// 新猫初始即「跟随默认模板」——工具清单 / 前文注入 / 受控根随模板改动同步（生效仍为新会话）。
+	cfg.FollowDefaultTools = true
+	cfg.FollowDefaultInject = true
+	cfg.FollowDefaultRoots = true
 	// 模板继承——新猫初值取 cat-default.cfg（模板缺失 = 空四字段，与 C# 同）
 	if tpl, err := config.LoadCatDefault(filepath.Join(r.dataRoot, "config", "cat-default.cfg")); err == nil && tpl != nil {
 		cfg.Persona = tpl.DefaultPersona
 		cfg.ToolNames = tpl.DefaultToolNames
-		cfg.InjectList = append([]string{}, tpl.DefaultInjectList...)
+		// 前文取「启用集」——defaultInjectList 去掉 defaultInjectDisabled（模板里取消勾选的条目不继承）
+		cfg.InjectList = config.ResolveTplEnabledInject(tpl)
 		cfg.Packs = append([]string{}, tpl.DefaultPacks...)
 		cfg.UserInjectIdleOnly = tpl.DefaultUserInjectIdleOnly
 		if len(tpl.DefaultEnabledRoots) > 0 {

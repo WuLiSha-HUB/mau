@@ -369,8 +369,9 @@ func TestCatDefaultGetKeyOrder(t *testing.T) {
 	rec := do(t, deps, http.MethodGet, "/api/v1/cat-default", "")
 	expected := []string{
 		"ok", "baseRole", "defaultPersona", "defaultToolNames", "defaultInjectList",
-		"defaultPacks", "defaultUserInjectIdleOnly", "allToolNames", "allTools",
-		"defectGroups", "staleToolNames", "allPacks",
+		"defaultInjectDisabled", "defaultPacks", "defaultEnabledRoots",
+		"defaultUserInjectIdleOnly", "allToolNames", "allTools",
+		"defectGroups", "staleToolNames", "allPacks", "allRoots",
 	}
 	keys := objectKeyOrder(t, rec.Body.Bytes())
 	if strings.Join(keys, ",") != strings.Join(expected, ",") {
@@ -397,5 +398,91 @@ func TestCatDetailHeadKeys(t *testing.T) {
 		if got := keys[len(keys)-len(tail)+i]; got != key {
 			t.Fatalf("尾部位 %d 期望 %s 实得 %s（全序 %v）", i, key, got, keys)
 		}
+	}
+}
+
+// TestCatConfigFollowDefaultsSync 全跟随开关——点亮即同步模板现值（工具 / 前文启用集 / 受控根）。
+func TestCatConfigFollowDefaultsSync(t *testing.T) {
+	deps, root := newTestDeps(t)
+	tpl := &config.CatDefault{
+		BaseRole:              "基础",
+		DefaultToolNames:      "text-read",
+		DefaultInjectList:     []string{"ccbp:A.md", "ccbp:B.md"},
+		DefaultInjectDisabled: []string{"ccbp:B.md"},
+		DefaultEnabledRoots:   []string{"ccbp"},
+	}
+	if err := config.SaveCatDefault(filepath.Join(root, "config", "cat-default.cfg"), tpl); err != nil {
+		t.Fatalf("写模板失败: %v", err)
+	}
+	rec := do(t, deps, http.MethodPost, "/api/v1/cat-config",
+		`{"cat":"majordomo","followDefaultTools":true,"followDefaultInject":true,"followDefaultRoots":true}`)
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("全跟随写入失败: %s", rec.Body.String())
+	}
+	cfg, err := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if err != nil {
+		t.Fatalf("读回 cat.cfg 失败: %v", err)
+	}
+	if !cfg.FollowDefaultTools || !cfg.FollowDefaultInject || !cfg.FollowDefaultRoots {
+		t.Fatalf("follow 开关未落盘: %+v", cfg)
+	}
+	if cfg.ToolNames != "text-read" {
+		t.Fatalf("工具清单未同步模板: %q", cfg.ToolNames)
+	}
+	if strings.Join(cfg.InjectList, ",") != "ccbp:A.md" {
+		t.Fatalf("前文启用集未排除 disabled: %v", cfg.InjectList)
+	}
+	if strings.Join(cfg.EnabledRoots, ",") != "workspace,ccbp" {
+		t.Fatalf("受控根未同步（workspace 强制 + ccbp）: %v", cfg.EnabledRoots)
+	}
+	get := do(t, deps, http.MethodGet, "/api/v1/cat-config?cat=majordomo", "")
+	if !strings.Contains(get.Body.String(), `"toolNames":"text-read"`) {
+		t.Fatalf("读面未反映同步结果: %s", get.Body.String())
+	}
+	// 熄灭只改开关——现值保持
+	off := do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"majordomo","followDefaultTools":false}`)
+	if !strings.Contains(off.Body.String(), `"ok":true`) {
+		t.Fatalf("熄灭失败: %s", off.Body.String())
+	}
+	cfgOff, _ := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if cfgOff.FollowDefaultTools || cfgOff.ToolNames != "text-read" {
+		t.Fatalf("熄灭应只改开关、保持现值: %+v", cfgOff)
+	}
+}
+
+// TestCatDefaultPostTemplateFields 模板写面——defaultInjectDisabled / defaultEnabledRoots / allRoots + 广播入队。
+func TestCatDefaultPostTemplateFields(t *testing.T) {
+	deps, root := newTestDeps(t)
+	dispatched := ""
+	deps.Dispatch = func(command string) bool {
+		dispatched = command
+		return true
+	}
+	rec := do(t, deps, http.MethodPost, "/api/v1/cat-default", `{
+		"baseRole":"基础",
+		"defaultToolNames":"text-read",
+		"defaultInjectList":["ccbp:A.md","ccbp:B.md"],
+		"defaultInjectDisabled":["ccbp:B.md"],
+		"defaultEnabledRoots":["ccbp","bad-root"],
+		"defaultPacks":[]
+	}`)
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("模板写入失败: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"removedRoots":["bad-root"]`) {
+		t.Fatalf("池外根未剔除出声: %s", rec.Body.String())
+	}
+	tpl, err := config.LoadCatDefault(filepath.Join(root, "config", "cat-default.cfg"))
+	if err != nil {
+		t.Fatalf("读回模板失败: %v", err)
+	}
+	if strings.Join(tpl.DefaultInjectDisabled, ",") != "ccbp:B.md" {
+		t.Fatalf("禁用清单未落盘: %v", tpl.DefaultInjectDisabled)
+	}
+	if strings.Join(tpl.DefaultEnabledRoots, ",") != "workspace,ccbp" {
+		t.Fatalf("默认受控根未校验落盘: %v", tpl.DefaultEnabledRoots)
+	}
+	if dispatched != "catcfg.tplbroadcast" {
+		t.Fatalf("保存后应入队模板广播，实得 %q", dispatched)
 	}
 }

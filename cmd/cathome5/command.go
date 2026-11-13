@@ -566,6 +566,9 @@ func (r *commandRouter) catsJSON() string {
 		apiConfigID := ""
 		enabledRoots := []string{}
 		reasoningEffort := ""
+		followDefaultTools := false
+		followDefaultInject := false
+		followDefaultRoots := false
 		path := filepath.Join(r.DataRoot, "sessions", inst.id, "cat.cfg")
 		if cfg, err := config.LoadCatCfg(path); err == nil && cfg != nil {
 			if cfg.DisplayName != "" {
@@ -576,12 +579,18 @@ func (r *commandRouter) catsJSON() string {
 				enabledRoots = cfg.EnabledRoots
 			}
 			reasoningEffort = cfg.ReasoningEffort
+			followDefaultTools = cfg.FollowDefaultTools
+			followDefaultInject = cfg.FollowDefaultInject
+			followDefaultRoots = cfg.FollowDefaultRoots
 		}
 		entry := catsEntry{
-			catInfoEntry:    r.buildCatInfoEntry(inst),
-			APIConfigID:     apiConfigID,
-			EnabledRoots:    enabledRoots,
-			ReasoningEffort: reasoningEffort,
+			catInfoEntry:        r.buildCatInfoEntry(inst),
+			APIConfigID:         apiConfigID,
+			EnabledRoots:        enabledRoots,
+			ReasoningEffort:     reasoningEffort,
+			FollowDefaultTools:  followDefaultTools,
+			FollowDefaultInject: followDefaultInject,
+			FollowDefaultRoots:  followDefaultRoots,
 		}
 		entry.Name = name
 		list = append(list, entry)
@@ -598,6 +607,12 @@ type catsEntry struct {
 	EnabledRoots []string `json:"enabledRoots"`
 	// ReasoningEffort 思考强度覆盖（空 = 跟随全局）
 	ReasoningEffort string `json:"reasoningEffort"`
+	// FollowDefaultTools 跟随默认模板工具清单（true=模板改动广播到本猫）
+	FollowDefaultTools bool `json:"followDefaultTools"`
+	// FollowDefaultInject 跟随默认模板前文注入（true=模板改动广播到本猫）
+	FollowDefaultInject bool `json:"followDefaultInject"`
+	// FollowDefaultRoots 跟随默认模板受控根（true=模板改动广播到本猫）
+	FollowDefaultRoots bool `json:"followDefaultRoots"`
 }
 
 // catsResponse 是 GET /api/v1/cats 的返回体（键序 version / cats）。
@@ -682,6 +697,8 @@ func (r *commandRouter) Execute(line string) string {
 		return r.catCfgSet(strings.TrimSpace(strings.TrimPrefix(trimmed, catCfgSetPrefix)))
 	case strings.HasPrefix(trimmed, "catcfg.apply "):
 		return r.catCfgApply(strings.TrimSpace(strings.TrimPrefix(trimmed, "catcfg.apply ")))
+	case trimmed == "catcfg.tplbroadcast":
+		return r.tplBroadcast()
 	}
 	return "cat.* 指令未识别: " + trimmed + "\n" + catCommandUsage()
 }
@@ -703,6 +720,7 @@ func catCommandUsage() string {
 		"  cat.cfg.get <key> | 该猫 cat.cfg 全量字段",
 		"  cat.cfg.set <key> <字段> <值> | 字段级合并写（未提交字段保留）",
 		"  catcfg.apply <key> | 每猫配置运行时生效",
+		"  catcfg.tplbroadcast | 模板跟随广播（默认模板同步到跟随猫）",
 	}
 	return strings.Join(lines, "\r\n")
 }
@@ -980,6 +998,119 @@ func (r *commandRouter) catCfgApply(key string) string {
 	return "catcfg.apply | " + inst.displayName + " | 已生效（前文项新会话生效）"
 }
 
+// tplBroadcast catcfg.tplbroadcast——把新猫默认模板的工具清单 / 前文注入 / 受控根
+// 同步到 follow=true 的猫（含主干 majordomo）；写盘后逐只 Apply（生效仍为新会话）。
+// 对齐 C# HandleTplBroadcast：三项各按 follow 字段分治——前端一枚「全跟随」按钮同开同关。
+func (r *commandRouter) tplBroadcast() string {
+	tpl, err := r.loadCatDefaultTemplate()
+	if err != nil || tpl == nil {
+		r.log(2, "catcfg.tplbroadcast | 模板不存在——跳过", "CHAT")
+		return "catcfg.tplbroadcast | 模板不存在——跳过"
+	}
+	tools := tpl.DefaultToolNames
+	if r.ValidateToolNames != nil {
+		tools, _ = r.ValidateToolNames(tools)
+	}
+	injects := config.ResolveTplEnabledInject(tpl)
+	roots, _, _ := r.resolveTplEnabledRoots(tpl)
+	touched := 0
+	names := []string{}
+	for _, inst := range r.catEntries() {
+		if inst == nil || inst.id == "" {
+			continue
+		}
+		path := filepath.Join(r.DataRoot, "sessions", inst.id, "cat.cfg")
+		cfg, loadErr := config.LoadCatCfg(path)
+		if loadErr != nil || cfg == nil {
+			continue
+		}
+		changed := false
+		if cfg.FollowDefaultTools && cfg.ToolNames != tools {
+			cfg.ToolNames = tools
+			changed = true
+		}
+		if cfg.FollowDefaultInject && !sameStringArray(cfg.InjectList, injects) {
+			cfg.InjectList = append([]string{}, injects...)
+			changed = true
+		}
+		if cfg.FollowDefaultRoots && !sameStringArray(cfg.EnabledRoots, roots) {
+			cfg.EnabledRoots = append([]string{}, roots...)
+			changed = true
+		}
+		if !changed {
+			continue
+		}
+		if saveErr := config.SaveCatCfg(path, cfg); saveErr != nil {
+			r.log(2, "catcfg.tplbroadcast | 写入失败: "+inst.id+"："+saveErr.Error(), "CHAT")
+			continue
+		}
+		if r.Apply != nil {
+			r.Apply(inst.id, cfg)
+		}
+		touched++
+		name := cfg.DisplayName
+		if name == "" {
+			name = cfg.ID
+		}
+		names = append(names, name)
+	}
+	r.log(1, "catcfg.tplbroadcast | 模板跟随广播："+strconv.Itoa(touched)+" 只猫更新（新会话生效）", "CHAT")
+	result := "catcfg.tplbroadcast | " + strconv.Itoa(touched) + " 只猫已跟随更新"
+	if len(names) > 0 {
+		result += "：" + strings.Join(names, "、")
+	}
+	return result
+}
+
+// loadCatDefaultTemplate 读取新猫默认模板（cat-default.cfg）。
+func (r *commandRouter) loadCatDefaultTemplate() (*config.CatDefault, error) {
+	return config.LoadCatDefault(filepath.Join(r.DataRoot, "config", "cat-default.cfg"))
+}
+
+// resolveTplEnabledRoots 默认受控根「启用集」——经池校验（workspace 强制 + 池外剔除）。
+func (r *commandRouter) resolveTplEnabledRoots(tpl *config.CatDefault) (kept, removed []string, poolUnavailable bool) {
+	ids := []string{}
+	if tpl != nil {
+		ids = tpl.DefaultEnabledRoots
+	}
+	if r.ValidateEnabledRoots != nil {
+		return r.ValidateEnabledRoots(ids)
+	}
+	return append([]string{}, ids...), []string{}, false
+}
+
+// parseCfgBool 布尔值解析（true/false 大小写不敏感）；非法值回错误文本。
+func parseCfgBool(field, value string) (bool, string) {
+	if strings.EqualFold(value, "true") {
+		return true, ""
+	}
+	if strings.EqualFold(value, "false") {
+		return false, ""
+	}
+	return false, field + " 非法值: " + value + "（true/false）"
+}
+
+// boolText 布尔值文本（true/false）。
+func boolText(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
+// sameStringArray 字符串数组同序同值判定（模板广播的值比对用）。
+func sameStringArray(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // catCfgGetCommand 指令入口（cat.cfg.get）——结果落 CMD 日志（与 cat.list / cat.info 同口径）。
 func (r *commandRouter) catCfgGetCommand(key string) bool {
 	r.log(1, "cat 指令: "+r.catCfgGet(key), "CMD")
@@ -1197,6 +1328,94 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 			return "userInjectIdleOnly=false", false, ""
 		}
 		return "", false, "userInjectIdleOnly 非法值: " + value + "（true/false）"
+	case "enabledRoots":
+		ids := splitCfgList(value)
+		kept := []string{}
+		removed := []string{}
+		poolUnavailable := false
+		if r.ValidateEnabledRoots != nil {
+			kept, removed, poolUnavailable = r.ValidateEnabledRoots(ids)
+		} else {
+			kept = append(kept, ids...)
+		}
+		cfg.EnabledRoots = kept
+		applied := "enabledRoots=" + strings.Join(kept, ",")
+		if len(removed) > 0 {
+			applied += "｜⚠️ 已剔除池外根 id " + strconv.Itoa(len(removed)) + " 个：" + strings.Join(removed, ",")
+		}
+		if poolUnavailable {
+			applied += "｜⚠️ 全局根池不可用——白名单按空处理（仅常驻根可用）"
+		}
+		return applied, false, ""
+	case "followDefaultTools":
+		// 跟随默认工具清单（与 HTTP 面同规：点亮即同步模板现值；熄灭只改开关，现值保持）
+		on, errText := parseCfgBool("followDefaultTools", value)
+		if errText != "" {
+			return "", false, errText
+		}
+		cfg.FollowDefaultTools = on
+		applied := "followDefaultTools=" + boolText(on)
+		if on {
+			tpl, tplErr := r.loadCatDefaultTemplate()
+			if tplErr != nil {
+				applied += "｜⚠️ 默认模板不存在——开关已置，工具清单未同步"
+			} else {
+				valid := tpl.DefaultToolNames
+				removed := []string{}
+				if r.ValidateToolNames != nil {
+					valid, removed = r.ValidateToolNames(valid)
+				}
+				cfg.ToolNames = valid
+				applied += "｜工具清单已同步模板（" + strconv.Itoa(len(toolpool.SplitToolNameList(cfg.ToolNames))) + " 件）"
+				if len(removed) > 0 {
+					applied += "｜⚠️ 已剔除池外工具名 " + strconv.Itoa(len(removed)) + " 个：" + strings.Join(removed, ",")
+				}
+			}
+		}
+		return applied, false, ""
+	case "followDefaultInject":
+		// 跟随默认前文注入（点亮即同步模板「启用集」；熄灭只改开关，现值保持）
+		on, errText := parseCfgBool("followDefaultInject", value)
+		if errText != "" {
+			return "", false, errText
+		}
+		cfg.FollowDefaultInject = on
+		applied := "followDefaultInject=" + boolText(on)
+		if on {
+			tpl, tplErr := r.loadCatDefaultTemplate()
+			if tplErr != nil {
+				applied += "｜⚠️ 默认模板不存在——开关已置，前文注入未同步"
+			} else {
+				cfg.InjectList = config.ResolveTplEnabledInject(tpl)
+				applied += "｜前文注入已同步模板启用集（" + strconv.Itoa(len(cfg.InjectList)) + " 行）"
+			}
+		}
+		return applied, false, ""
+	case "followDefaultRoots":
+		// 跟随默认受控根（点亮即同步模板受控根集；熄灭只改开关，现值保持）
+		on, errText := parseCfgBool("followDefaultRoots", value)
+		if errText != "" {
+			return "", false, errText
+		}
+		cfg.FollowDefaultRoots = on
+		applied := "followDefaultRoots=" + boolText(on)
+		if on {
+			tpl, tplErr := r.loadCatDefaultTemplate()
+			if tplErr != nil {
+				applied += "｜⚠️ 默认模板不存在——开关已置，受控根未同步"
+			} else {
+				kept, removed, poolUnavailable := r.resolveTplEnabledRoots(tpl)
+				cfg.EnabledRoots = kept
+				applied += "｜受控根已同步模板（" + strconv.Itoa(len(kept)) + " 项）"
+				if len(removed) > 0 {
+					applied += "｜⚠️ 已剔除池外根 id " + strconv.Itoa(len(removed)) + " 个：" + strings.Join(removed, ",")
+				}
+				if poolUnavailable {
+					applied += "｜⚠️ 全局根池不可用——白名单按空处理（仅常驻根可用）"
+				}
+			}
+		}
+		return applied, false, ""
 	case "reasoningEffort":
 		raw := strings.TrimSpace(value)
 		normalized := config.NormalizeReasoningEffort(raw)
@@ -1229,7 +1448,7 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 		cfg.ThemeColor = parsed
 		return "themeColor=" + strconv.Itoa(parsed), false, ""
 	}
-	return "", false, "非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId/themeColor）"
+	return "", false, "非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/followDefaultTools/followDefaultInject/followDefaultRoots/reasoningEffort/appearanceId/themeColor）"
 }
 
 // splitCfgList 逗号 / 空白分隔清单解析——去空项（对齐 C# SplitList：',', ' ', '\t'）。

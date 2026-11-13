@@ -49,6 +49,12 @@ type CatCfg struct {
 	ReasoningEffort string `json:"reasoningEffort"`
 	// ThemeColor 主题色索引（0 = 默认白）
 	ThemeColor int `json:"themeColor"`
+	// FollowDefaultTools 跟随新猫默认模板的工具清单（true=模板改动广播到本猫）
+	FollowDefaultTools bool `json:"followDefaultTools"`
+	// FollowDefaultInject 跟随新猫默认模板的前文注入（true=模板改动广播到本猫）
+	FollowDefaultInject bool `json:"followDefaultInject"`
+	// FollowDefaultRoots 跟随新猫默认模板的受控根（true=模板改动广播到本猫）
+	FollowDefaultRoots bool `json:"followDefaultRoots"`
 	// Running 运行态（读容忍，写面排除）
 	Running bool `json:"running,omitempty"`
 	// Port 监听端口（读容忍，写面排除；0 = 静默态）
@@ -99,6 +105,34 @@ type CatDefault struct {
 	DefaultEnabledRoots []string `json:"defaultEnabledRoots"`
 	// DefaultUserInjectIdleOnly 默认人工输入仅 Idle 注入
 	DefaultUserInjectIdleOnly bool `json:"defaultUserInjectIdleOnly"`
+	// DefaultInjectDisabled 默认注入禁用清单（条目留在池里可再勾回，但不注入）
+	DefaultInjectDisabled []string `json:"defaultInjectDisabled"`
+}
+
+// ResolveTplEnabledInject 默认前文「启用集」——DefaultInjectList 排除 DefaultInjectDisabled。
+//
+// 新猫继承、跟随广播、点亮即同步三处共用本出口（单点真相源，对齐 C# ResolveTplEnabledInject）。
+func ResolveTplEnabledInject(tpl *CatDefault) []string {
+	if tpl == nil || len(tpl.DefaultInjectList) == 0 {
+		return []string{}
+	}
+	if len(tpl.DefaultInjectDisabled) == 0 {
+		return append([]string{}, tpl.DefaultInjectList...)
+	}
+	disabled := make(map[string]bool, len(tpl.DefaultInjectDisabled))
+	for _, path := range tpl.DefaultInjectDisabled {
+		if path != "" {
+			disabled[path] = true
+		}
+	}
+	enabled := make([]string, 0, len(tpl.DefaultInjectList))
+	for _, path := range tpl.DefaultInjectList {
+		if path == "" || disabled[path] {
+			continue
+		}
+		enabled = append(enabled, path)
+	}
+	return enabled
 }
 
 // LoadCatDefault 读取新猫默认模板；文件缺失或 JSON 损坏返回错误。

@@ -306,6 +306,42 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 		removedEnabledRoots = removed
 		rootsPoolUnavailable = unavailable
 	}
+	// 点亮即同步——新开的跟随立刻把模板现值拉过来（之后由 catcfg.tplbroadcast 维持）；熄灭只改开关，现值保持。
+	// 位置须在 toolNames / injectList / enabledRoots 显式写之后：本块是「跟随开关」的语义补写，不应被同行载荷覆盖。
+	_, followToolsPresent := fields["followDefaultTools"]
+	_, followInjectPresent := fields["followDefaultInject"]
+	_, followRootsPresent := fields["followDefaultRoots"]
+	followToolsOn := false
+	followInjectOn := false
+	followRootsOn := false
+	if followToolsPresent {
+		cfg.FollowDefaultTools = fieldBool(fields, "followDefaultTools")
+		followToolsOn = cfg.FollowDefaultTools
+	}
+	if followInjectPresent {
+		cfg.FollowDefaultInject = fieldBool(fields, "followDefaultInject")
+		followInjectOn = cfg.FollowDefaultInject
+	}
+	if followRootsPresent {
+		cfg.FollowDefaultRoots = fieldBool(fields, "followDefaultRoots")
+		followRootsOn = cfg.FollowDefaultRoots
+	}
+	if (followToolsPresent && followToolsOn) || (followInjectPresent && followInjectOn) || (followRootsPresent && followRootsOn) {
+		if tpl, err := config.LoadCatDefault(d.catDefaultPath()); err == nil && tpl != nil {
+			if followToolsPresent && followToolsOn {
+				cfg.ToolNames, _ = d.validateToolNames(tpl.DefaultToolNames)
+			}
+			if followInjectPresent && followInjectOn {
+				cfg.InjectList = config.ResolveTplEnabledInject(tpl)
+			}
+			if followRootsPresent && followRootsOn {
+				kept, removed, unavailable := d.resolveTplEnabledRoots(tpl)
+				cfg.EnabledRoots = kept
+				removedEnabledRoots = removed
+				rootsPoolUnavailable = unavailable
+			}
+		}
+	}
 	if err := config.SaveCatCfg(d.catCfgPath(catKey), cfg); err != nil {
 		writeErr(w, "cat.cfg 写入失败: "+err.Error())
 		return
@@ -324,6 +360,16 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 		RemovedEnabledRoots:  removedEnabledRoots,
 		RootsPoolUnavailable: rootsPoolUnavailable,
 	})
+}
+
+// resolveTplEnabledRoots 默认受控根「启用集」——defaultEnabledRoots 经池校验（workspace 强制 + 池外剔除）。
+//
+// 新猫继承 / 跟随广播 / 点亮即同步三处共用本出口（对齐 C# ResolveTplEnabledRoots）。
+func (d *Deps) resolveTplEnabledRoots(tpl *config.CatDefault) (kept, removed []string, poolUnavailable bool) {
+	if tpl == nil || len(tpl.DefaultEnabledRoots) == 0 {
+		return d.validateEnabledRoots(nil)
+	}
+	return d.validateEnabledRoots(tpl.DefaultEnabledRoots)
 }
 
 // readToolNamesField 读 toolNames——字符串与字符串数组两形态皆收；非法形态出声（不吞成空串）。
@@ -395,8 +441,12 @@ type catDefaultResponse struct {
 	DefaultToolNames string `json:"defaultToolNames"`
 	// DefaultInjectList 默认注入清单
 	DefaultInjectList []string `json:"defaultInjectList"`
+	// DefaultInjectDisabled 默认注入禁用清单（条目留在池里可再勾回，但不注入）
+	DefaultInjectDisabled []string `json:"defaultInjectDisabled"`
 	// DefaultPacks 默认加载包
 	DefaultPacks []string `json:"defaultPacks"`
+	// DefaultEnabledRoots 默认根白名单（null = 未配置，与空数组区分）
+	DefaultEnabledRoots []string `json:"defaultEnabledRoots"`
 	// DefaultUserInjectIdleOnly 默认人工输入仅 Idle 注入
 	DefaultUserInjectIdleOnly bool `json:"defaultUserInjectIdleOnly"`
 	// AllToolNames 可配置工具名清单
@@ -409,6 +459,8 @@ type catDefaultResponse struct {
 	StaleToolNames []string `json:"staleToolNames"`
 	// AllPacks 加载包池
 	AllPacks []config.PackOption `json:"allPacks"`
+	// AllRoots 全局根池（模板受控根勾选面数据源）
+	AllRoots []rootItem `json:"allRoots"`
 }
 
 // catDefaultWriteResponse 是 POST /api/v1/cat-default 的回执。
@@ -417,6 +469,10 @@ type catDefaultWriteResponse struct {
 	OK bool `json:"ok"`
 	// RemovedToolNames 被剔除的池外工具名
 	RemovedToolNames []string `json:"removedToolNames"`
+	// RemovedRoots 被剔除的池外根 id
+	RemovedRoots []string `json:"removedRoots"`
+	// RootsPoolUnavailable 根池不可用
+	RootsPoolUnavailable bool `json:"rootsPoolUnavailable"`
 }
 
 // handleCatDefaultGet 服务 GET /api/v1/cat-default——新猫默认模板。
@@ -426,6 +482,8 @@ func (d *Deps) handleCatDefaultGet(w http.ResponseWriter, r *http.Request) {
 	defaultToolNames := ""
 	defaultInjectList := []string{}
 	defaultPacks := []string{}
+	defaultEnabledRoots := []string{}
+	defaultInjectDisabled := []string{}
 	defaultUserInjectIdleOnly := false
 	if tpl, err := config.LoadCatDefault(d.catDefaultPath()); err == nil {
 		baseRole = tpl.BaseRole
@@ -437,6 +495,12 @@ func (d *Deps) handleCatDefaultGet(w http.ResponseWriter, r *http.Request) {
 		if tpl.DefaultPacks != nil {
 			defaultPacks = tpl.DefaultPacks
 		}
+		if tpl.DefaultEnabledRoots != nil {
+			defaultEnabledRoots = tpl.DefaultEnabledRoots
+		}
+		if tpl.DefaultInjectDisabled != nil {
+			defaultInjectDisabled = tpl.DefaultInjectDisabled
+		}
 		defaultUserInjectIdleOnly = tpl.DefaultUserInjectIdleOnly
 	}
 	writeJSON(w, catDefaultResponse{
@@ -445,13 +509,16 @@ func (d *Deps) handleCatDefaultGet(w http.ResponseWriter, r *http.Request) {
 		DefaultPersona:            defaultPersona,
 		DefaultToolNames:          defaultToolNames,
 		DefaultInjectList:         defaultInjectList,
+		DefaultInjectDisabled:     defaultInjectDisabled,
 		DefaultPacks:              defaultPacks,
+		DefaultEnabledRoots:       defaultEnabledRoots,
 		DefaultUserInjectIdleOnly: defaultUserInjectIdleOnly,
 		AllToolNames:              d.allToolNames(),
 		AllTools:                  d.allTools(),
 		DefectGroups:              d.defectGroups(),
 		StaleToolNames:            d.staleToolNames(defaultToolNames),
 		AllPacks:                  d.allPacks(),
+		AllRoots:                  d.allRoots(),
 	})
 }
 
@@ -467,16 +534,25 @@ func (d *Deps) handleCatDefaultPost(w http.ResponseWriter, r *http.Request) {
 		DefaultPersona:            fieldString(fields, "defaultPersona"),
 		DefaultInjectList:         filterInjectPaths(fieldStringArray(fields, "defaultInjectList"), d),
 		DefaultPacks:              trimItems(fieldStringArray(fields, "defaultPacks")),
+		DefaultInjectDisabled:     trimItems(fieldStringArray(fields, "defaultInjectDisabled")),
 		DefaultUserInjectIdleOnly: fieldBool(fields, "defaultUserInjectIdleOnly"),
 	}
 	var removed []string
 	tpl.DefaultToolNames, removed = d.validateToolNames(fieldString(fields, "defaultToolNames"))
+	// 默认受控根——与猫级同规：workspace 强制 + 全局池子集；剔除 / 池不可用出声（不静默）
+	removedRoots := []string{}
+	rootsPoolUnavailable := false
+	tpl.DefaultEnabledRoots, removedRoots, rootsPoolUnavailable = d.validateEnabledRoots(fieldStringArray(fields, "defaultEnabledRoots"))
 	if err := config.SaveCatDefault(d.catDefaultPath(), tpl); err != nil {
 		writeErr(w, "cat-default.cfg 写入失败: "+err.Error())
 		return
 	}
+	// 跟随广播——模板即改即同步（工具清单 / 前文注入 / 受控根）到 follow=true 的猫；生效仍为新会话
+	if d.Dispatch != nil {
+		d.Dispatch("catcfg.tplbroadcast")
+	}
 	d.log(1, "全局默认模板已保存（注入 "+itoa(len(tpl.DefaultInjectList))+" 条）")
-	writeJSON(w, catDefaultWriteResponse{OK: true, RemovedToolNames: removed})
+	writeJSON(w, catDefaultWriteResponse{OK: true, RemovedToolNames: removed, RemovedRoots: removedRoots, RootsPoolUnavailable: rootsPoolUnavailable})
 }
 
 // catDetailResponse 是 GET /api/v1/cat-detail 的响应体。

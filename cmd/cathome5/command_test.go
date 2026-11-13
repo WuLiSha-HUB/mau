@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"cathome5/host/config"
 	"cathome5/host/session"
 	"cathome5/host/toolpool"
 )
@@ -265,5 +266,75 @@ func TestCatChatAutoMountWiring(t *testing.T) {
 	}
 	if userCount, _ := sess.Pending.Len(); userCount != 1 {
 		t.Fatalf("投递应入队 1 条用户消息，实得 %d", userCount)
+	}
+}
+
+// TestCatCfgSetFollowAndBroadcast 全跟随三分支 + 模板广播——点亮同步 / 熄灭保持 / 广播生效。
+func TestCatCfgSetFollowAndBroadcast(t *testing.T) {
+	router, _, _ := newCommandRouter(t)
+	tpl := &config.CatDefault{
+		DefaultToolNames:      "text-read",
+		DefaultInjectList:     []string{"ccbp:A.md", "ccbp:B.md"},
+		DefaultInjectDisabled: []string{"ccbp:B.md"},
+		DefaultEnabledRoots:   []string{"ccbp", "bad-root"},
+	}
+	if err := config.SaveCatDefault(filepath.Join(router.DataRoot, "config", "cat-default.cfg"), tpl); err != nil {
+		t.Fatalf("写模板失败: %v", err)
+	}
+	cfgPath := filepath.Join(router.DataRoot, "sessions", "majordomo", "cat.cfg")
+	if err := config.SaveCatCfg(cfgPath, &config.CatCfg{ID: "majordomo", DisplayName: "majordomo"}); err != nil {
+		t.Fatalf("写 cat.cfg 失败: %v", err)
+	}
+	router.ValidateEnabledRoots = func(ids []string) ([]string, []string, bool) {
+		kept := []string{"workspace"}
+		removed := []string{}
+		for _, id := range ids {
+			if id == "ccbp" {
+				kept = append(kept, id)
+				continue
+			}
+			removed = append(removed, id)
+		}
+		return kept, removed, false
+	}
+	if got := router.catCfgSet("majordomo followDefaultTools true"); !strings.Contains(got, "已更新") {
+		t.Fatalf("工具跟随写入失败: %s", got)
+	}
+	cfg, _ := config.LoadCatCfg(cfgPath)
+	if !cfg.FollowDefaultTools || cfg.ToolNames != "text-read" {
+		t.Fatalf("工具跟随未同步模板: %+v", cfg)
+	}
+	if got := router.catCfgSet("majordomo followDefaultInject true"); !strings.Contains(got, "前文注入已同步模板启用集（1 行）") {
+		t.Fatalf("前文跟随回执不符: %s", got)
+	}
+	cfg, _ = config.LoadCatCfg(cfgPath)
+	if !cfg.FollowDefaultInject || strings.Join(cfg.InjectList, ",") != "ccbp:A.md" {
+		t.Fatalf("前文启用集未排除 disabled: %+v", cfg.InjectList)
+	}
+	if got := router.catCfgSet("majordomo followDefaultRoots true"); !strings.Contains(got, "受控根已同步模板（2 项）") {
+		t.Fatalf("受控根跟随回执不符: %s", got)
+	}
+	cfg, _ = config.LoadCatCfg(cfgPath)
+	if !cfg.FollowDefaultRoots || strings.Join(cfg.EnabledRoots, ",") != "workspace,ccbp" {
+		t.Fatalf("受控根未同步: %v", cfg.EnabledRoots)
+	}
+	// 模板改动 → 广播同步到跟随猫
+	tpl.DefaultToolNames = "file-tree"
+	tpl.DefaultInjectList = []string{"ccbp:C.md"}
+	tpl.DefaultInjectDisabled = nil
+	if err := config.SaveCatDefault(filepath.Join(router.DataRoot, "config", "cat-default.cfg"), tpl); err != nil {
+		t.Fatalf("改模板失败: %v", err)
+	}
+	got := router.Execute("catcfg.tplbroadcast")
+	if !strings.Contains(got, "1 只猫已跟随更新") {
+		t.Fatalf("广播回执不符: %s", got)
+	}
+	cfg, _ = config.LoadCatCfg(cfgPath)
+	if cfg.ToolNames != "file-tree" || strings.Join(cfg.InjectList, ",") != "ccbp:C.md" {
+		t.Fatalf("广播未同步: %+v", cfg)
+	}
+	// 非法值出声
+	if got := router.catCfgSet("majordomo followDefaultTools maybe"); !strings.Contains(got, "非法值") {
+		t.Fatalf("非法值未拒绝: %s", got)
 	}
 }
