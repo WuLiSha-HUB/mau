@@ -138,6 +138,31 @@ func (r *commandRouter) Handle(text string) bool {
 	return false
 }
 
+// HandleFor 按猫处理一条指令——每猫独立对话端口（d-1b）的指令面。
+//
+// 形态对齐 C# `HttpHostOptions.Dispatcher = line => DispatchInput(CatInputTarget(cat), line)`：
+// `Chat ` / `session.new` 落该猫会话；`cat.*` / `catcfg.*` / `delay.*` 与管理面同一执行体（不另写一份）。
+// 差异（记录在案）：消息自动挂载面只在主端口（默认猫）接线——每猫端口不做「上工 <项目>」即时挂载。
+func (r *commandRouter) HandleFor(catID string, sess *session.Session, text string) bool {
+	if session.HostRestarting() {
+		r.log(2, "宿主重启中——本条输入未受理（cat="+catID+"）", "RESTART")
+		return false
+	}
+	switch {
+	case strings.HasPrefix(text, "Chat "):
+		content := strings.TrimSpace(strings.TrimPrefix(text, "Chat "))
+		if content == "" || sess == nil {
+			return false
+		}
+		return sess.PostUser(content, "user", "", "")
+	case text == "session.new":
+		return r.sessionNewFor(catID, sess, "", "")
+	case strings.HasPrefix(text, sessionNewPrefix):
+		return r.sessionNewFor(catID, sess, strings.TrimSpace(strings.TrimPrefix(text, sessionNewPrefix)), "")
+	}
+	return r.Handle(text)
+}
+
 // sessionNew 执行默认猫会话重建——重读 cat.cfg → 重算声明面 → 构建注入面 → 清前文 / 视图 / 统计。
 //
 // 顺序对齐 C# ChatBridge.HandleSessionNew：声明面 → 注入提示词 → 清前文 → 留档 → 清视图 → 注入报告 → 重置事件。

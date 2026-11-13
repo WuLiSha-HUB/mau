@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.29.0"
+var version = "0.30.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -423,6 +423,47 @@ func main() {
 			return router.Handle(command)
 		},
 	}
+	// [段12b-3] 附属宿主实例装配（d-1a 组轻宿主 / d-1b 每猫独立对话端口）——
+	// 端口即身份：猫实例闭包绑定本猫会话，组实例闭包绑定组名（C# StartCatHost / StartGroupHost 同构）。
+	hostDeps := &hostInstanceDeps{
+		DataRoot:         dataRoot,
+		ConfigDir:        configDir,
+		HTMLRoot:         htmlRoot,
+		Version:          version,
+		Area:             band.Area,
+		FrontendTestPort: band.FrontendTestPort,
+		Band:             band,
+		Admin:            adminDeps,
+		Snapshot:         builder.Build,
+		DispatchCat: func(catID string, sess *session.Session, text string) bool {
+			return router.HandleFor(catID, sess, text)
+		},
+		Logf: func(level int, message, category string) {
+			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
+		},
+	}
+	catHosts := newCatHostManager(hostDeps)
+	groupHosts := newGroupHostManager(hostDeps, groups)
+	// 猫端口面——cat.start / cat.stop / cat.delete / 启动扫描共用同一实例表（单一端口真相源）
+	cats.startHost = catHosts.start
+	cats.stopHost = catHosts.stop
+	// 组宿主面——管理端端口 / 运行态读面与起停钩子（组行 port / running 的真实数据源）
+	adminDeps.GroupHostPort = groupHosts.port
+	adminDeps.GroupHostRunning = groupHosts.running
+	adminDeps.GroupHostStart = groupHosts.start
+	adminDeps.GroupHostStop = groupHosts.stop
+	// 组投递面——多猫注册表优先（目标猫可达判定 + 投递），未命中按「目标猫未运行」出声
+	adminDeps.CatKnown = func(key string) bool {
+		inst := cats.findDeliveryCat(key)
+		return inst != nil && inst.session != nil
+	}
+	adminDeps.CatDeliver = func(key, content, origin string) bool {
+		inst := cats.findDeliveryCat(key)
+		if inst == nil || inst.session == nil {
+			return false
+		}
+		return inst.session.PostUser(content, "user", "", origin)
+	}
 	server.BindAdmin(func(mux *http.ServeMux) { admin.Register(mux, adminDeps) })
 	// [段12d] 对话页条件面（d-2）——按 C# HttpHostOptions 构造期条件注册：
 	// 仅对话页实例（--page chat.html）注入；管理面板实例（index.html）保持 404（与 C# 管理端口同构）。
@@ -470,6 +511,14 @@ func main() {
 	router.AutoMount = adminDeps.TryAutoMountOnMessage
 	// 多猫注册表后置校验面——新猫继承 defaultEnabledRoots 时过滤池外根（与 cat-config 写面同源）
 	cats.validateRoots = adminDeps.ValidateEnabledRoots
+
+	// [段12e-2] 启动期端口面拉起（交互模式专属——`--run` headless 不监听任何端口）
+	// 猫：启动扫描标记 running 的猫各起一个独立对话端口（端口族分配，沿用上次端口优先）；
+	// 组：enabled 组各起一个轻宿主（9000-9099 向上寻路）——对齐 C# StartEnabledGroupHosts。
+	if !nonInteractive {
+		cats.startHostsOnBoot()
+		groupHosts.startEnabled()
+	}
 
 	if htmlRoot == "" {
 		boot.Report("HTML_ROOT_MISSING", observe.KindEnv, "外观层（静态页）", observe.StateEmpty,
@@ -679,6 +728,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	_ = server.Shutdown(ctx)
+	// 附属宿主实例收尾——每猫独立对话端口 + 组轻宿主（先停实例，再停共享子服务）
+	catHosts.stopAll()
+	groupHosts.stopAll()
 	close(tickStop)
 	<-tickerDone
 	wg.Wait()

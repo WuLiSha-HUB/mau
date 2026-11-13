@@ -60,6 +60,18 @@ type Deps struct {
 	Restart *RestartState
 	// OpenDir 打开目录通道（nil = 调 explorer.exe；单测注入替身不弹窗）
 	OpenDir func(path string) error
+	// GroupHostPort 组宿主端口查询（nil = 未接线——组轻宿主未起，恒 0）
+	GroupHostPort func(name string) int
+	// GroupHostRunning 组宿主运行态查询（nil = 未接线，恒 false）
+	GroupHostRunning func(name string) bool
+	// GroupHostStart 组宿主拉起（nil = 不拉起；返回是否成功——已运行幂等 true）
+	GroupHostStart func(name string) bool
+	// GroupHostStop 组宿主停止（nil = 不停止）
+	GroupHostStop func(name string)
+	// CatKnown 目标猫可达判定（组投递门禁；nil = 仅默认会话可按 key / 显示名命中）
+	CatKnown func(catKey string) bool
+	// CatDeliver 目标猫投递（组派单 / 订阅；nil = 投给默认会话）
+	CatDeliver func(catKey, content, origin string) bool
 }
 
 // Register 登记管理端第一批路由（段 1 / 段 2 / 段 4）。
@@ -123,6 +135,16 @@ func Register(mux *http.ServeMux, d *Deps) {
 	mux.HandleFunc("GET /api/v1/groups/{name}/messages", d.handleGroupsMessagesGet)
 	mux.HandleFunc("POST /api/v1/groups/messages", d.handleGroupsMessagesPost)
 	mux.HandleFunc("GET /api/v1/groups/host", d.handleGroupsHostGet)
+}
+
+// RegisterChatPageRoutes 对话页静态路由注册——chat.html 专用（不含管理 CRUD），可安全下发到每猫端口。
+//
+// 对齐 C# `AdminService.ChatImages.RegisterChatPageRoutes`：图片上传 / 取图 / 音频点播三件。
+// 每猫独立对话端口（d-1b）经 BindAdmin 注入本注册面——管理端 RouteRegistrar 不随实例下发。
+func RegisterChatPageRoutes(mux *http.ServeMux, d *Deps) {
+	mux.HandleFunc("POST /api/v1/chat-images", d.handleChatImagesUpload)
+	mux.HandleFunc("GET /api/v1/cache-image/{file...}", d.handleCacheImageGet)
+	mux.HandleFunc("GET /api/v1/audio/{file...}", d.handleAudioGet)
 }
 
 // writeJSON 写 JSON 响应——关闭 HTML 转义（中文直出）、去尾换行（同 C# JsonUtil.Serialize 紧凑形态）。

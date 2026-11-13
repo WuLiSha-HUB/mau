@@ -21,8 +21,8 @@ import (
 //   - cat.new 建猫（ticks id + 默认命名 + cat-default.cfg 模板继承 + 会话装配）；
 //   - cat.delete 删目录（sessions/<id> 整棵）。
 //
-// 形态差异（Go 单端口设计，见 L3 A 域）：多猫暂无独立对话端口——port 恒 0（未监听），
-// 会话层由 cat.chat / 组派单 / 订阅推送消费；每猫 HttpHost 与组轻宿主归后续轮。
+// 端口面（d-1b）由 main 注入 startHost / stopHost 钩子（每猫独立对话端口，见 hostinstance.go）；
+// 钩子为 nil（单测 / 未接线场景）= 无端口面，cat.start 回会话层口径。
 
 // dotNetTicksEpochOffset .NET ticks 与 Unix 纳秒的纪元偏移（0001-01-01 → 1970-01-01 = 62135596800 秒）。
 const dotNetTicksEpochOffset = 621355968000000000
@@ -138,8 +138,10 @@ type catInstance struct {
 	wiring *sessionWiring
 	// running 运行态（真值 = 运行态文件 / cat.start / cat.stop）
 	running bool
-	// port 监听端口（Go 单端口形态恒 0——未监听独立端口）
+	// port 监听端口（独立对话端口——d-1b；0 = 未监听）
 	port int
+	// bootPort 启动扫描读到的端口（拉起时优先复用；0 = 无）
+	bootPort int
 }
 
 // catRegistry 是多猫注册表——majordomo 单列 + 多猫列表（不含 majordomo，对齐 C# _cats）。
@@ -158,6 +160,10 @@ type catRegistry struct {
 	assemble func(catID string) *sessionWiring
 	// validateRoots 受控根白名单校验（新猫继承 defaultEnabledRoots 时过滤；nil = 原样）
 	validateRoots func(ids []string) (kept, removed []string, poolUnavailable bool)
+	// startHost 起猫独立对话端口（main 注入；nil = 无端口面——回执按会话层口径）
+	startHost func(inst *catInstance, preferred int) (int, error)
+	// stopHost 停猫独立对话端口（按猫 key；nil = 无）
+	stopHost func(catKey string)
 	// logf 出声回调（nil = 静默）
 	logf func(level int, message, category string)
 }
@@ -496,9 +502,11 @@ func (r *catRegistry) loadOnBoot() {
 		inst.session = wiring.Session
 		inst.wiring = wiring
 		inst.running = true
-		inst.port = rt.Port // Go 单端口形态：独立对话端口未实现，port 保 0
+		// 端口面在管理面就位后由 startHostsOnBoot 拉起（端口族分配，沿用上次端口优先）
+		inst.port = 0
+		inst.bootPort = rt.Port
 		r.mu.Unlock()
-		r.log(1, "启动扫描：已拉起猫「"+displayName+"」（会话层——无独立端口）", "CHAT")
+		r.log(1, "启动扫描：已补建猫「"+displayName+"」会话（端口面待拉起）", "CHAT")
 	}
 	if runtimeDirty {
 		r.mu.Lock()
@@ -511,8 +519,8 @@ func (r *catRegistry) loadOnBoot() {
 	}
 }
 
-// startCat 启动猫会话（cat.start）——对齐 C# HandleCatStart 的会话层语义：
-// 未找到 / 已运行 / 会话缺失补建 / 运行态落盘。端口面（独立对话端口）随 Go 单端口形态暂缺。
+// startCat 启动猫（cat.start）——对齐 C# HandleCatStart：会话缺失补建 → 分配端口 → 拉起 HttpHost →
+// 运行态落盘。端口面钩子为 nil（未接线 / 单测）时按会话层口径回执。
 func (r *catRegistry) startCat(key string) string {
 	inst := r.findCat(key)
 	if inst == nil {
@@ -521,14 +529,13 @@ func (r *catRegistry) startCat(key string) string {
 	r.mu.Lock()
 	running := inst.running
 	displayName := inst.displayName
+	port := inst.port
 	r.mu.Unlock()
 	if running {
 		portText := ""
-		r.mu.Lock()
-		if inst.port > 0 {
-			portText = " :" + strconv.Itoa(inst.port)
+		if port > 0 {
+			portText = " :" + strconv.Itoa(port)
 		}
-		r.mu.Unlock()
 		return "cat.start | 已在运行: " + displayName + portText
 	}
 	// 会话缺失（未建 / 已停）→ 补建
@@ -549,12 +556,64 @@ func (r *catRegistry) startCat(key string) string {
 		r.mu.Unlock()
 		r.log(1, "猫「"+displayName+"」会话已按磁盘重建（前文 / 视图 / 元数据）", "CHAT")
 	}
+	// 端口面——无钩子 = 会话层运行（旧口径）
+	if r.startHost == nil {
+		r.mu.Lock()
+		inst.running = true
+		inst.port = 0
+		r.mu.Unlock()
+		r.setRuntime(inst.id, true, 0)
+		r.log(1, "已启动猫「"+displayName+"」（会话层——无独立端口）", "CHAT")
+		return "cat.start | " + displayName + " | 已启动（会话层——无独立端口）"
+	}
+	newPort, err := r.startHost(inst, 0)
+	if err != nil {
+		return "cat.start | " + err.Error()
+	}
 	r.mu.Lock()
 	inst.running = true
+	inst.port = newPort
 	r.mu.Unlock()
-	r.setRuntime(inst.id, true, 0)
-	r.log(1, "已启动猫「"+displayName+"」（会话层——无独立端口）", "CHAT")
-	return "cat.start | " + displayName + " | 已启动（会话层——独立对话端口归后续轮）"
+	r.setRuntime(inst.id, true, newPort)
+	r.log(1, "已启动猫「"+displayName+"」，端口 "+strconv.Itoa(newPort), "CHAT")
+	return "cat.start | " + displayName + " | http://127.0.0.1:" + strconv.Itoa(newPort)
+}
+
+// startHostsOnBoot 启动扫描后的端口面拉起——会话已装配、管理面就位后调用。
+//
+// 对齐 C# LoadCatsOnBoot 的端口段：沿用上次端口（被占 / 非法则重新分配）；拉起失败按静默态保留条目
+// 并出声（运行态文件不改——下次启动再试）。
+func (r *catRegistry) startHostsOnBoot() {
+	if r.startHost == nil {
+		return
+	}
+	r.mu.Lock()
+	pending := make([]*catInstance, 0, len(r.cats))
+	for _, inst := range r.cats {
+		if inst.running && inst.session != nil && inst.port == 0 {
+			pending = append(pending, inst)
+		}
+	}
+	r.mu.Unlock()
+	for _, inst := range pending {
+		preferred := inst.bootPort
+		port, err := r.startHost(inst, preferred)
+		if err != nil {
+			r.log(2, "启动扫描：猫「"+inst.displayName+"」端口拉起失败（按静默态处理）："+err.Error(), "CHAT")
+			r.mu.Lock()
+			inst.running = false
+			inst.port = 0
+			inst.bootPort = 0
+			r.mu.Unlock()
+			continue
+		}
+		r.mu.Lock()
+		inst.port = port
+		inst.bootPort = 0
+		r.mu.Unlock()
+		r.setRuntime(inst.id, true, port)
+		r.log(1, "启动扫描：已拉起猫「"+inst.displayName+"」，端口 "+strconv.Itoa(port), "CHAT")
+	}
 }
 
 // stopCat 停止猫（cat.stop）——对齐 C# HandleCatStop：majordomo 禁停 / 未找到 / 已静默 / 忙拒绝 /
@@ -577,6 +636,10 @@ func (r *catRegistry) stopCat(key string) string {
 	}
 	if sess != nil && !sess.IsIdle() {
 		return "cat.stop | 忙——本轮未结束，请稍后再试: " + displayName
+	}
+	// 端口面——先停独立对话端口（释放端口 / 关通道），再释放会话内存（C# HandleCatStop 同序）
+	if r.stopHost != nil {
+		r.stopHost(inst.id)
 	}
 	// 会话内存释放（磁盘三面已物化：前文 jsonl / 视图 view.jsonl / 元数据 session.json）；
 	// 视图待推标记复位——无消费者时不得阻塞全局重启闸门（C# A297 同义）
@@ -608,6 +671,10 @@ func (r *catRegistry) deleteCat(key string) string {
 	displayName := inst.displayName
 	sess := inst.session
 	r.mu.Unlock()
+	// 端口面——运行中先停实例（停异常不阻断删除，对齐 C# HandleCatDelete）
+	if r.stopHost != nil {
+		r.stopHost(inst.id)
+	}
 	if sess != nil && sess.ViewBus != nil {
 		sess.ViewBus.ResetPending()
 	}

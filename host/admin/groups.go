@@ -13,7 +13,8 @@ import (
 // 本文件是配队（Group）数据面端点——对齐 C# `AdminService.Groups.cs` 与 `AdminRoutes.cs` 段 13 七条。
 //
 // 语义：组配置 / 成员 / 消息流归 group.Store（Data/group/<组名>/）；本文件只管 HTTP 装配与成员显示名解析。
-// 边界：组轻宿主（独立端口）归 P5——本文件的 port / running 恒 0 / false（未启动宿主）。
+// 组轻宿主（独立端口）由入口壳装配——本文件经 Deps 的 GroupHost* 钩子取端口 / 运行态 / 起停，
+// nil 钩子 = 未接线（port 恒 0 / running 恒 false，不是启动失败）。
 
 // groupMemberRow 是成员行——catKey 是稳定主键，显示名只是附属内容。
 type groupMemberRow struct {
@@ -246,11 +247,21 @@ func (d *Deps) catThemeColor(catKey string) int {
 	return cfg.ThemeColor
 }
 
-// groupHostPort 组宿主端口——Go 侧组轻宿主归 P5，未启动恒 0。
-func (d *Deps) groupHostPort(name string) int { return 0 }
+// groupHostPort 组宿主端口——未接线（无组轻宿主）时恒 0（不是启动失败，是能力未接）。
+func (d *Deps) groupHostPort(name string) int {
+	if d.GroupHostPort != nil {
+		return d.GroupHostPort(name)
+	}
+	return 0
+}
 
-// groupHostRunning 组宿主运行态——Go 侧组轻宿主归 P5，未启动恒 false。
-func (d *Deps) groupHostRunning(name string) bool { return false }
+// groupHostRunning 组宿主运行态——未接线时恒 false。
+func (d *Deps) groupHostRunning(name string) bool {
+	if d.GroupHostRunning != nil {
+		return d.GroupHostRunning(name)
+	}
+	return false
+}
 
 // handleGroupsPost 服务 POST /api/v1/groups——新建 / 改组（同名覆盖成员与项目）。
 func (d *Deps) handleGroupsPost(w http.ResponseWriter, r *http.Request) {
@@ -279,6 +290,10 @@ func (d *Deps) handleGroupsPost(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(result, "ok|") {
 		if created := d.Groups.GetGroup(name); created != nil && created.Enabled {
 			d.Groups.StartGroup(created.Name)
+			// 组轻宿主（d-1a）——启用组起独立端口（对齐 C# AdminService.Groups.StartGroupHost 调用点）
+			if d.GroupHostStart != nil {
+				d.GroupHostStart(created.Name)
+			}
 		}
 	}
 	writeMutation(w, result)
@@ -307,8 +322,15 @@ func (d *Deps) handleGroupsEnabled(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(result, "ok|") {
 		if enabled {
 			d.Groups.StartGroup(name)
+			if d.GroupHostStart != nil {
+				d.GroupHostStart(name)
+			}
 		} else {
 			d.Groups.StopGroup(name)
+			// 停用即停宿主（端口释放 / 通道关闭——对齐 C# StopGroupHost）
+			if d.GroupHostStop != nil {
+				d.GroupHostStop(name)
+			}
 		}
 	}
 	writeMutation(w, result)
@@ -325,6 +347,10 @@ func (d *Deps) handleGroupsDelete(w http.ResponseWriter, r *http.Request) {
 	if d.Groups == nil {
 		writeErr(w, "ERR|GROUP_FAIL|组数据面未接线")
 		return
+	}
+	// 删组先停宿主（端口释放；否则实例继续服务一个已不存在的组）
+	if d.GroupHostStop != nil {
+		d.GroupHostStop(name)
 	}
 	writeMutation(w, d.Groups.Delete(name))
 }
@@ -451,7 +477,7 @@ func (d *Deps) appendGroupMessage(w http.ResponseWriter, groupName, from, msgTyp
 			Warning: "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + useTo + "（消息已入组 #" + strconv.FormatInt(seq, 10) + "）"})
 		return
 	}
-	if d.Session == nil || !d.Session.PostUser(content, "user", "", origin) {
+	if !d.deliverCat(useTo, content, origin) {
 		writeJSON(w, groupDeliverResponse{OK: true, Detail: result, Delivered: false, Seq: seq,
 			Warning: "ERR|GROUP_DELIVER_FAIL|投递未受理: " + useTo + "（消息已入组 #" + strconv.FormatInt(seq, 10) + "）"})
 		return
@@ -459,12 +485,26 @@ func (d *Deps) appendGroupMessage(w http.ResponseWriter, groupName, from, msgTyp
 	writeJSON(w, groupDeliverResponse{OK: true, Detail: result, Delivered: true, Seq: seq, To: useTo})
 }
 
-// isKnownCat 投递目标可达判定——单猫形态：仅主干 key / 显示名。
+// isKnownCat 投递目标可达判定——多猫注册表接线优先（CatKnown），未接线回落单猫语义。
 func (d *Deps) isKnownCat(catKey string) bool {
 	if catKey == "" {
 		return false
 	}
+	if d.CatKnown != nil {
+		return d.CatKnown(catKey)
+	}
 	return catKey == d.CatID || catKey == d.DisplayName
+}
+
+// deliverCat 目标猫投递——多猫注册表接线优先（CatDeliver），未接线回落默认会话。
+func (d *Deps) deliverCat(catKey, content, origin string) bool {
+	if d.CatDeliver != nil {
+		return d.CatDeliver(catKey, content, origin)
+	}
+	if d.Session == nil {
+		return false
+	}
+	return d.Session.PostUser(content, "user", "", origin)
 }
 
 // handleGroupsHostGet 服务 GET /api/v1/groups/host——组轻宿主端口（前端「打开」寻址）。
@@ -547,4 +587,77 @@ func nonNil(items []string) []string {
 		return []string{}
 	}
 	return items
+}
+
+// groupInfoResponse 是组端口 GET /api/v1/group/info 的响应体（字段序 ok / group / userName）。
+type groupInfoResponse struct {
+	// OK 恒 true
+	OK bool `json:"ok"`
+	// Group 本组行（端口即组身份，不接受跨组参数）
+	Group groupRow `json:"group"`
+	// UserName 使用者显示名（全局设置 ui.user_name 投影；空 = 默认用户）
+	UserName string `json:"userName"`
+}
+
+// RegisterGroupHostRoutes 组轻宿主路由注册——端口即组身份（组名由闭包绑定）。
+//
+// 对齐 C# `CatHostService.GroupHost.cs` 的 RegisterGroupRoutes 四条：
+// [段1] 组信息与消息流 · [段2] 投递（组名由端口决定，body 不含 group）· [段3] 清空。
+// 主端口同名族的段 13 路由仍在主端口各自注册，两份互不影响（同名不同实例）。
+func RegisterGroupHostRoutes(mux *http.ServeMux, d *Deps, name string) {
+	bound := name
+	mux.HandleFunc("GET /api/v1/group/info", func(w http.ResponseWriter, r *http.Request) {
+		d.writeGroupInfo(w, bound)
+	})
+	mux.HandleFunc("GET /api/v1/group/messages", func(w http.ResponseWriter, r *http.Request) {
+		d.buildGroupMessagesResult(w, r, bound)
+	})
+	mux.HandleFunc("POST /api/v1/group/messages", func(w http.ResponseWriter, r *http.Request) {
+		fields, ok := readBodyFields(r)
+		if !ok {
+			writeErr(w, "body 非 JSON")
+			return
+		}
+		if d.Groups == nil {
+			writeErr(w, "ERR|GROUP_FAIL|组数据面未接线")
+			return
+		}
+		d.appendGroupMessage(w,
+			bound,
+			strings.TrimSpace(fieldString(fields, "from")),
+			strings.TrimSpace(fieldString(fields, "type")),
+			fieldString(fields, "text"),
+			strings.TrimSpace(fieldString(fields, "refs")),
+			strings.TrimSpace(fieldString(fields, "to")))
+	})
+	mux.HandleFunc("POST /api/v1/group/clear", func(w http.ResponseWriter, r *http.Request) {
+		if d.Groups == nil {
+			writeErr(w, "ERR|GROUP_FAIL|组数据面未接线")
+			return
+		}
+		writeMutation(w, d.Groups.ClearMessages(bound))
+	})
+}
+
+// writeGroupInfo 单组信息——对齐 C# BuildGroupInfoResult：组行 + 使用者显示名。
+//
+// 组端口与主端口不同源：页面无法跨端口读全局配置，故 userName 随 info 一并下发。
+func (d *Deps) writeGroupInfo(w http.ResponseWriter, name string) {
+	if d.Groups == nil {
+		writeErr(w, "ERR|GROUP_FAIL|组数据面未接线")
+		return
+	}
+	summary := d.Groups.GetGroup(name)
+	if summary == nil {
+		writeErr(w, "ERR|GROUP_NOT_FOUND|组不存在: "+name)
+		return
+	}
+	userName := ""
+	if d.Store != nil && d.Schema != nil {
+		userName = strings.TrimSpace(d.Store.Resolve(d.Schema, "ui.user_name").Value)
+	}
+	if userName == "" {
+		userName = "默认用户"
+	}
+	writeJSON(w, groupInfoResponse{OK: true, Group: d.buildGroupRow(*summary), UserName: userName})
 }
