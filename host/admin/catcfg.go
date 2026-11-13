@@ -742,6 +742,10 @@ func (d *Deps) handleCatDetail(w http.ResponseWriter, r *http.Request) {
 	name := d.DisplayName
 	running := d.Running
 	port := d.Port
+	if d.MajorPort != nil {
+		// 默认猫对话端口（管理面板形态下独立分配）——与 GET /api/v1/cats 的 port 同源
+		port = d.MajorPort()
+	}
 	var sess *session.Session
 	if special {
 		sess = d.sessionFor("majordomo")

@@ -216,6 +216,23 @@ func (v *ViewBus) ResetAll() {
 	v.mu.Unlock()
 }
 
+// BuildFullReadOnly 构建全量帧但不重置待推标记（只读观测面）。
+//
+// 多实例共享同一会话时（管理面板 + 默认猫对话端口）：推送方是唯一取帧者（TryTakeFrame），
+// 观测方取首帧不得吃掉对方尚未取走的追加块 / 临时区帧——否则对话页会丢块。
+func (v *ViewBus) BuildFullReadOnly() string {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	blocks := v.fullBlocksLocked()
+	items := make([]string, 0, len(blocks))
+	for _, block := range blocks {
+		items = append(items, block.ItemJSON())
+	}
+	return `{"v":2,"state":` + v.stateJSONText() +
+		`,"persist":{"mode":"full","items":[` + strings.Join(items, ",") + `]}` +
+		`,"live":` + v.liveJSON() + `}`
+}
+
 // buildFullLocked 构建全量帧（调用方持锁）。
 func (v *ViewBus) buildFullLocked() string {
 	blocks := v.fullBlocksLocked()

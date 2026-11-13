@@ -56,6 +56,10 @@ type Deps struct {
 	Running bool
 	// Port 默认会话监听端口
 	Port int
+	// MajorPort 默认猫对话端口查询（管理面板形态下 majordomo 走独立对话端口；
+	// nil = 回退 Port。读面（cat-detail）与面板「打开对话」的端口必须同源，
+	// 否则 majordomo 的行会打开管理页而不是对话页）。
+	MajorPort func() int
 	// Logf 观测日志出口（nil = 丢弃）
 	Logf func(category string, level int, message string)
 	// Apply 每猫配置落盘后的运行时生效回调（授权面实时 / 注入面新会话；nil = 不生效）

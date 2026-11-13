@@ -108,6 +108,13 @@ func (s *Session) BuildViewFullJSON() string {
 	return s.ViewBus.BuildFull()
 }
 
+// BuildViewFullJSONReadOnly 全量视图帧（只读）——多实例共享会话时的观测首帧：
+// 内容与 BuildViewFullJSON 一致，但不消耗待推标记（取帧者仍是唯一推送实例）。
+func (s *Session) BuildViewFullJSONReadOnly() string {
+	s.ViewBus.SetState(s.BuildStateJSON())
+	return s.ViewBus.BuildFullReadOnly()
+}
+
 // TakeViewFrameJSON 增量视图帧——每帧取（state 现取 + 追加 / 增量）；无变化返回空串（零字节）。
 func (s *Session) TakeViewFrameJSON() string {
 	s.ViewBus.SetState(s.BuildStateJSON())

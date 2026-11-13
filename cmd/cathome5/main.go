@@ -327,8 +327,15 @@ func main() {
 
 	// [段11] 静态页根
 	htmlRoot := resolveHTMLRoot(*htmlRootFlag, workspace)
-	// [段11b] 默认猫注册——majordomo 恒运行（主端口即其宿主面；无独立对话端口）
-	cats.setMajor(wiring, wiring.DisplayName, listenPort)
+	// [段11b] 默认猫注册——majordomo 恒运行。
+	// 对话面端口按形态定：`--page chat.html`（主端口即对话页）/ `--run`（headless，端口为配置推导值）
+	// 指向主端口；管理面板形态主端口是 index.html → 对话面由 [段12b-4] 的独立对话端口承载。
+	// （C# 同形：majordomo 对话端口恒独立于管理端口；面板「打开对话」按该端口拼 URL。）
+	majorPort := listenPort
+	if !nonInteractive && *pageFlag != "chat.html" {
+		majorPort = 0
+	}
+	cats.setMajor(wiring, wiring.DisplayName, majorPort)
 
 	// [段12] HTTP 外观层——路由装配 → 起服 → 250ms Pump
 	server := cathomehttp.New(cathomehttp.Options{
@@ -368,9 +375,16 @@ func main() {
 	server.BindCommand(router.Handle)
 	server.BindCats(router.catsJSON)
 	server.BindFrame(frame.Current)
-	// [段12c] 视图推送面——chat 页唯一数据通道（P3-e）：首帧全量（连接建立补发）+ 每帧增量（无变化零字节）
-	server.BindView(wiring.Session.BuildViewFullJSON)
-	server.BindViewFrame(wiring.Session.TakeViewFrameJSON)
+	// [段12c] 视图推送面——chat 页唯一数据通道（P3-e）：首帧全量（连接建立补发）+ 每帧增量（无变化零字节）。
+	// 同一会话被两个以上实例共享时增量只能有一个取帧者：`--page chat.html` 形态主端口即对话页（取帧）；
+	// 管理面板形态增量归 [段12b-4] 的默认猫对话端口实例，主端口首帧走只读构建器
+	// （不消耗待推标记——管理面板不订阅 view，但观测连接不得吃掉对话页尚未取走的块）。
+	if *pageFlag == "chat.html" {
+		server.BindView(wiring.Session.BuildViewFullJSON)
+		server.BindViewFrame(wiring.Session.TakeViewFrameJSON)
+	} else {
+		server.BindView(wiring.Session.BuildViewFullJSONReadOnly)
+	}
 	wiring.Session.AttachView()
 	wiring.Session.AttachConnInfo(server.ClientCount)
 
@@ -425,6 +439,8 @@ func main() {
 	}
 	// 多猫寻址钩子（d-1c）——管理面 cat-config / cat-detail / 组列表成员面按 cat 取会话与运行态
 	adminDeps.SessionFor = cats.sessionByKey
+	// 默认猫对话端口读面（段12b-4 拉起后回写）——cat-detail 与面板「打开对话」同源
+	adminDeps.MajorPort = cats.majorPort
 	adminDeps.CatLookup = func(catKey string) (string, string, bool, int, *session.Session, bool) {
 		inst := cats.findCat(catKey)
 		if inst == nil {
@@ -469,6 +485,18 @@ func main() {
 	// 猫端口面——cat.start / cat.stop / cat.delete / 启动扫描共用同一实例表（单一端口真相源）
 	cats.startHost = catHosts.start
 	cats.stopHost = catHosts.stop
+	// [段12b-4] 默认猫对话端口（d-1b 补齐）——管理面板形态下 majordomo 与多猫一样走端口族：
+	// 面板「打开对话」按 GET /api/v1/cats 的 port 拼 URL，主端口是管理面板（index.html）时
+	// 必须指向独立对话端口（C# 同形：majordomo 对话页独立于管理端口，`cat.start majordomo` 仍不支持——
+	// 对齐 C# _cats 不含主干，本实例由启动链独占拉起，cat.stop / cat.delete 同样禁）。
+	if !nonInteractive && *pageFlag != "chat.html" {
+		if majorChatPort, err := catHosts.start(cats.major, 0); err == nil {
+			cats.setMajorPort(majorChatPort)
+			logs.Add("CatHome5", observe.LevelInfo, "默认猫对话端口已启动：majordomo | 端口 "+strconv.Itoa(majorChatPort), "CHAT", "", "", 0, frame.Current(), false)
+		} else {
+			logs.Add("CatHome5", observe.LevelWarn, "默认猫对话端口启动失败（面板「打开对话」暂不可用）："+err.Error(), "CHAT", "", "", 0, frame.Current(), false)
+		}
+	}
 	// 组宿主面——管理端端口 / 运行态读面与起停钩子（组行 port / running 的真实数据源）
 	adminDeps.GroupHostPort = groupHosts.port
 	adminDeps.GroupHostRunning = groupHosts.running

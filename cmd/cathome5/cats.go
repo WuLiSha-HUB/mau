@@ -180,14 +180,37 @@ func (r *catRegistry) log(level int, message, category string) {
 	}
 }
 
-// setMajor 注册默认猫（majordomo）——启动装配完成后调用（running 恒 true；port = 主端口）。
+// setMajor 注册默认猫（majordomo）——启动装配完成后调用（running 恒 true）。
+//
+// port 按宿主形态给：`--page chat.html` / `--run` 形态主端口即其对话面（port = 主端口）；
+// 管理面板形态先给 0，待默认猫对话端口实例拉起后由 setMajorPort 回写真实端口
+// （面板「打开对话」按 GET /api/v1/cats 的 port 拼 URL——给主端口会落回管理页）。
 func (r *catRegistry) setMajor(w *sessionWiring, displayName string, port int) {
 	if w == nil {
 		return
 	}
 	r.mu.Lock()
-	r.major = &catInstance{id: w.CatID, displayName: displayName, session: w.Session, wiring: w, running: true, port: port}
+	r.major = &catInstance{id: w.CatID, displayName: displayName, cfg: w.CatCfg, session: w.Session, wiring: w, running: true, port: port}
 	r.mu.Unlock()
+}
+
+// setMajorPort 回写默认猫的对话端口（管理面板形态下由独立对话端口实例分配后调用）。
+func (r *catRegistry) setMajorPort(port int) {
+	r.mu.Lock()
+	if r.major != nil {
+		r.major.port = port
+	}
+	r.mu.Unlock()
+}
+
+// majorPort 默认猫对话端口（0 = 未监听）。
+func (r *catRegistry) majorPort() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.major == nil {
+		return 0
+	}
+	return r.major.port
 }
 
 // pumpAll 全部会话推进（主循环每帧调用——每猫 Session.Pump 一条）。
