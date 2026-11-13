@@ -32,6 +32,8 @@ var BAND_REBUILD_MS = 50;   // 刻度重建节流——展开 / 折叠属高频�
 
 // ── 状态 ─────────────────────────────────────
 var bandItems = [];              // 可见行表 [{ row, role, type }]——重建时机 = 对话区子节点 / 展开态变化（A222 起供区段底色）
+var bandFoldEnabled = true;      // 刻度合并开关（A342 · 2026-11-13）——true = 连续同 data-type 折叠成一段（对话页 A222 行为）；
+                                 // false = 每条消息一道刻度（群聊页——每条消息独立，不合并）
 var bandSegs = [];               // 刻度段表 [{ row, last, type, err, scope }]——连续同 data-type 行折叠成段（A222）
 var bandDragging = false;
 var bandRebuildTimer = null;
@@ -122,6 +124,16 @@ function bandCollect() {
 /// 段内任一行带 `.err` → 整段标失败（红优先）；`.tb-scope` 同理（区间感由底块承担，本类仅沿用）
 function bandFoldSegs(items) {
     var segs = [];
+    // A342——合并关闭时一行一段（群聊页每条消息独立刻度；段级 err / scope 标记逐行保留）
+    if (bandFoldEnabled !== true) {
+        for (var n = 0; n < items.length; n = n + 1) {
+            var one = items[n];
+            var oneErr = !!(one.row.classList && one.row.classList.contains('err'));
+            var oneScope = !!(one.row.classList && one.row.classList.contains('tb-scope'));
+            segs.push({ row: one.row, last: one.row, type: one.type, err: oneErr, scope: oneScope });
+        }
+        return segs;
+    }
     for (var i = 0; i < items.length; i = i + 1) {
         var it = items[i];
         var cur = (segs.length > 0) ? segs[segs.length - 1] : null;
@@ -481,7 +493,12 @@ function bandPointerUp() {
 }
 
 /// 初始化——滚轮兜底注册 + 带体事件绑定 + 观察器（子节点 / 展开态变化重建，尺寸变化重排）
-function chatScrollInit() {
+/// @param {boolean} [fold] 刻度合并开关——缺省 / true = 连续同 data-type 折叠成一段（对话页默认）；
+///                         false = 每条一行一道刻度（群聊页：每条消息独立，不合并）
+function chatScrollInit(fold) {
+    if (fold === false) {
+        bandFoldEnabled = false;
+    }
     document.addEventListener('wheel', wheelForward, { passive: false });
     if (bandMsgs) {
         bandMsgs.addEventListener('scroll', bandThumbSync);

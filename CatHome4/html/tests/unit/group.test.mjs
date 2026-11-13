@@ -34,7 +34,7 @@ test('消息类型标签——派单 / 回执 / 讨论', () => {
   expect(window.gTypeLabel('')).toBe('讨论');
 });
 
-test('消息行——对话页 text 泡结构：首行 meta（类型 / 来源 / 序号）+ MD 正文', () => {
+test('消息行——A339 结构：头像 + 消息头（名称 / 类型徽标 / 序号）+ MD 正文气泡', () => {
   const row = window.gBuildRow({
     seq: 7,
     from: 'coder1',
@@ -43,25 +43,40 @@ test('消息行——对话页 text 泡结构：首行 meta（类型 / 来源 / 
     ts: 0,
     text: '完成：A302'
   });
-  expect(row.className).toBe('chat-row assistant');
+  expect(row.className).toBe('chat-row assistant grp-row');
   expect(row.getAttribute('data-type')).toBe('text');
+  expect(row.querySelector('.grp-avatar').textContent).toBe('C');
   const bubble = row.querySelector('.chat-bubble');
   expect(bubble).not.toBeNull();
-  const meta = bubble.querySelector('.msg-meta');
-  expect(meta.textContent).toContain('#7');
-  expect(meta.textContent).toContain('Coder（coder1）');
-  expect(meta.textContent).toContain('回执');
+  // 需求①：头行与气泡分离——头在气泡之外（.chat-bubble 内不再有头）
+  const headEl = row.querySelector('.grp-body > .grp-head');
+  expect(headEl).not.toBeNull();
+  expect(bubble.querySelector('.grp-head')).toBeNull();
+  const head = headEl.textContent;
+  expect(head).toContain('#7');
+  expect(head).toContain('Coder（coder1）');
+  expect(head).toContain('回执');
+  expect(headEl.querySelector('.grp-kind').getAttribute('data-kind')).toBe('receipt');
   expect(bubble.querySelector('.md-block').textContent).toBe('完成：A302');
+});
+
+test('A339 小时间戳——HH:mm 进头行，完整时刻挂 title', () => {
+  expect(window.gShortTime(0)).toBe('');
+  const ts = new Date(2026, 10, 13, 9, 5, 0).getTime();
+  const row = window.gBuildRow({ seq: 1, from: 'coder1', type: 'note', ts: ts, text: 'x' });
+  const t = row.querySelector('.grp-head .grp-time');
+  expect(t.textContent).toBe('09:05');
+  expect(t.getAttribute('title')).toContain('2026-11-13 09:05:00');
 });
 
 test('消息行——人靠右（user 泡）· 显示名等于 key 时只显示一次', () => {
   const human = window.gBuildRow({ seq: 1, from: '', type: 'note', ts: 0, text: '甲' });
-  expect(human.className).toBe('chat-row user');
+  expect(human.className).toBe('chat-row user grp-row');
   expect(human.getAttribute('data-type')).toBe('user');
-  expect(human.querySelector('.msg-meta').textContent).toContain('默认用户');
+  expect(human.querySelector('.grp-head').textContent).toContain('默认用户');
   const same = window.gBuildRow({ seq: 2, from: 'coder1', displayName: 'coder1', type: 'note', ts: 0, text: '乙' });
-  expect(same.querySelector('.msg-meta').textContent).toContain('coder1');
-  expect(same.querySelector('.msg-meta').textContent).not.toContain('（coder1）');
+  expect(same.querySelector('.grp-head').textContent).toContain('coder1');
+  expect(same.querySelector('.grp-head').textContent).not.toContain('（coder1）');
 });
 
 test('消息行——派单目标与关联单号进首行；MD 渲染出结构标签', () => {
@@ -76,10 +91,10 @@ test('消息行——派单目标与关联单号进首行；MD 渲染出结构�
     ts: 0,
     text: '**加急** 处理 A310'
   });
-  const meta = row.querySelector('.msg-meta').textContent;
-  expect(meta).toContain('派单');
-  expect(meta).toContain('→ @Coder');
-  expect(meta).toContain('关联 #7');
+  const head = row.querySelector('.grp-head').textContent;
+  expect(head).toContain('派单');
+  expect(head).toContain('→ @Coder');
+  expect(head).toContain('关联 #7');
   expect(row.querySelector('.md-block strong').textContent).toBe('加急');
 });
 
@@ -167,27 +182,31 @@ test('A313 消息操作——猫消息发送方名字可点，点击把该猫填
     { key: 'coder1', displayName: 'Coder' },
     { key: 'majordomo', displayName: '雾理莎' }
   ]);
-  const toSel = document.getElementById('toSel');
-  toSel.value = '';
+  const btn = document.getElementById('grpAtBtn');
+  window.gTarget = '';
   const row = window.gBuildRow({ seq: 3, from: 'coder1', displayName: 'Coder', type: 'note', ts: 0, text: '甲' });
-  const who = row.querySelector('.msg-meta .mm-who');
-  expect(who.className).toContain('mm-who-pick');
+  const who = row.querySelector('.grp-head .grp-who');
+  expect(who.className).toContain('g-who-pick');
   expect(who.getAttribute('role')).toBe('button');
   who.click();
-  expect(toSel.value).toBe('coder1');
-  expect(document.getElementById('groupMsg').textContent).toContain('已填入 @coder1');
+  expect(window.gTarget).toBe('coder1');
+  expect(btn.textContent).toBe('@ Coder');
+  // 常规动作不写提示文本（2026-11-13 莎定——外围只留气泡）
+  expect(document.getElementById('groupMsg').textContent).toBe('');
   // 人（user 泡）不挂入口——点名字无 @ 语义
   const human = window.gBuildRow({ seq: 4, from: '', type: 'note', ts: 0, text: '乙' });
-  expect(human.querySelector('.msg-meta .mm-who-pick')).toBeNull();
+  expect(human.querySelector('.grp-head .g-who-pick')).toBeNull();
 });
 
-test('A313 @ 快捷填入——发送方不在组内成员时只提示，不改选择器', () => {
+test('A313 @ 快捷填入——发送方不在组内成员时只提示，不改目标', () => {
   window.gFillTargets([{ key: 'coder1', displayName: 'Coder' }]);
-  const toSel = document.getElementById('toSel');
-  toSel.value = '';
+  window.gTarget = '';
   window.gPickTarget('outsider');
-  expect(toSel.value).toBe('');
-  expect(document.getElementById('groupMsg').textContent).toContain('不在组内成员');
+  expect(window.gTarget).toBe('');
+  // 失败出声（唯一保留的提示通道）——文本 + .err 才显示
+  const msg = document.getElementById('groupMsg');
+  expect(msg.textContent).toContain('不在组内成员');
+  expect(msg.classList.contains('err')).toBe(true);
 });
 
 test('A313 消息操作——单条复制走前端剪贴板，复制原文（不含 meta）', async () => {
@@ -231,7 +250,7 @@ test('使用者署名——组 info 的 userName 投影到人消息；缺省回�
 test('使用者署名——info 晚于消息首屏到达时回填既有行（同一节点，不重建）', async () => {
   window.gUserName = '默认用户';
   window.gRenderMessages([{ seq: 1, from: '', type: 'note', ts: 0, text: '甲' }]);
-  const who = document.querySelector('.chat-row.user .msg-meta .mm-who');
+  const who = document.querySelector('.chat-row.user .grp-head .grp-who');
   expect(who.textContent).toBe('默认用户');
   globalThis.fetch = async () => ({
     json: async () => ({
@@ -243,7 +262,7 @@ test('使用者署名——info 晚于消息首屏到达时回填既有行（同
   window.gLoadInfo();
   await new Promise((resolve) => setTimeout(resolve, 0));
   // 同一节点被就地改写——不重建行（滚动位置与既有引用都不动）
-  expect(document.querySelector('.chat-row.user .msg-meta .mm-who')).toBe(who);
+  expect(document.querySelector('.chat-row.user .grp-head .grp-who')).toBe(who);
   expect(who.textContent).toBe('莎');
 });
 
@@ -296,4 +315,172 @@ test('A320 气泡着色——只写行内 --gc-color，不再挂底色标记', (
   const other = window.gBuildRow({ seq: 4, from: 'zz', displayName: '乙', type: 'note', ts: 0, text: 'y' });
   window.gApplyCatTheme(other, 'zz');
   expect(other.style.getPropertyValue('--gc-color')).toBe('#ffffff');
+});
+
+// A341——类型筛选 × 猫筛选叠加（2026-11-13 莎定）
+test('A341 筛选——类型切换只留该类型，猫筛选只留该猫，两层叠加取交集', () => {
+  const box = document.getElementById('chatMsgs');
+  const t0 = new Date(2026, 10, 13, 9, 0, 0).getTime();
+  box.textContent = '';
+  window.gRenderMessages([
+    { seq: 1, from: 'c1', displayName: '丙', type: 'note', ts: t0, text: '丙-讨论' },
+    { seq: 2, from: 'c1', displayName: '丙', type: 'receipt', ts: t0 + 1000, text: '丙-回执' },
+    { seq: 3, from: 'a1', displayName: '甲', type: 'delegation', ts: t0 + 2000, text: '甲-派单' },
+    { seq: 4, from: '', type: 'note', ts: t0 + 3000, text: '人-讨论' }
+  ]);
+  const visible = () => Array.prototype.filter
+    .call(box.querySelectorAll('.chat-row'), (r) => !r.classList.contains('grp-hidden'))
+    .map((r) => r.getAttribute('data-kind') + ':' + (r.getAttribute('data-from') || 'human'));
+
+  expect(visible().length).toBe(4);
+  // 类型：回执
+  window.gSetFilterKind('receipt');
+  expect(visible()).toEqual(['receipt:c1']);
+  // 叠加：甲 + 回执 → 空，并出声
+  window.gToggleCatFilter('a1');
+  expect(visible()).toEqual([]);
+  expect(box.querySelector('.group-filter-empty')).not.toBeNull();
+  // 叠加：甲 + 派单 → 命中一条；空态提示被摘掉
+  window.gSetFilterKind('delegation');
+  expect(visible()).toEqual(['delegation:a1']);
+  expect(box.querySelector('.group-filter-empty')).toBeNull();
+  // 取消猫筛选（再点同球）→ 派单仅甲那条
+  window.gToggleCatFilter('a1');
+  expect(window.gFilterCat).toBe('');
+  // 回到全部
+  window.gSetFilterKind('all');
+  expect(visible().length).toBe(4);
+});
+
+test('A341 球列选中态——点球挂 .sel，换球转移，再点取消', () => {
+  const el = document.getElementById('groupCats');
+  el.textContent = '';
+  window.gCatNodes = {};
+  window.gRenderCats([
+    { key: 'c1', displayName: '丙', admin: false, running: true, themeColor: 1, runState: 'idle', context: 0 },
+    { key: 'a1', displayName: '甲', admin: true, running: true, themeColor: 2, runState: 'idle', context: 0 }
+  ]);
+  window.gFilterCat = '';
+  const items = el.querySelectorAll('.gc-item');
+  // 管理员球排前：items[0] = a1（甲），items[1] = c1（丙）
+  items[1].click();
+  expect(window.gFilterCat).toBe('c1');
+  expect(items[1].classList.contains('sel')).toBe(true);
+  items[0].click();
+  expect(window.gFilterCat).toBe('a1');
+  expect(items[1].classList.contains('sel')).toBe(false);
+  expect(items[0].classList.contains('sel')).toBe(true);
+  items[0].click();
+  expect(window.gFilterCat).toBe('');
+  expect(items[0].classList.contains('sel')).toBe(false);
+  // 复位，避免影响后续用例
+  window.gFilterCat = '';
+  window.gSetFilterKind('all');
+});
+
+test('A341 时间分割线随筛选重算——隐藏行不参与相邻判定', () => {
+  const box = document.getElementById('chatMsgs');
+  const t0 = new Date(2026, 10, 13, 9, 0, 0).getTime();
+  box.textContent = '';
+  window.gRenderMessages([
+    { seq: 1, from: 'a1', displayName: '甲', type: 'note', ts: t0, text: '甲1' },
+    { seq: 2, from: 'c1', displayName: '丙', type: 'note', ts: t0 + 10 * 60 * 1000, text: '丙1' },
+    { seq: 3, from: 'a1', displayName: '甲', type: 'note', ts: t0 + 120 * 60 * 1000, text: '甲2' }
+  ]);
+  // 全量：丙1 → 甲2 跨 110 分钟 → 一条分割线
+  expect(box.querySelectorAll('.grp-divider').length).toBe(1);
+  // 只看甲：甲1 → 甲2 跨 120 分钟 → 仍一条（且不因隐藏行错位）
+  window.gToggleCatFilter('a1');
+  expect(box.querySelectorAll('.grp-divider').length).toBe(1);
+  window.gToggleCatFilter('a1');
+  window.gSetFilterKind('all');
+});
+
+// A340 补充（2026-11-13 莎定）——类型徽标排在显示名之前
+test('A340 消息头——类型徽标排在显示名之前', () => {
+  const row = window.gBuildRow({ seq: 1, from: 'coder1', displayName: 'Coder', type: 'delegation', ts: 0, text: 'x' });
+  const head = row.querySelector('.grp-head');
+  expect(head.children[0].className).toContain('grp-kind');
+  expect(head.children[1].className).toContain('grp-who');
+});
+
+// A340 补充（2026-11-13 莎定）——时间分割线：相邻两行 ts 差 > 1h 时插一条（纯前端渲染，重算幂等）
+test('A340 时间分割线——相邻 > 1h 插一条，恰好 1h 不插', () => {
+  const box = document.getElementById('chatMsgs');
+  // 筛选态复位（用例独立：筛选会隐藏行、连带影响相邻判定）
+  window.gFilterCat = '';
+  window.gFilterKind = 'all';
+  const t0 = new Date(2026, 10, 13, 9, 0, 0).getTime();
+  box.textContent = '';
+  window.gRenderMessages([
+    { seq: 1, from: 'coder1', type: 'note', ts: t0, text: '甲' },
+    { seq: 2, from: 'coder1', type: 'note', ts: t0 + 10 * 60 * 1000, text: '乙' },
+    { seq: 3, from: 'coder1', type: 'note', ts: t0 + 90 * 60 * 1000, text: '丙' }
+  ]);
+  const divs = box.querySelectorAll('.grp-divider');
+  expect(divs.length).toBe(1);
+  expect(divs[0].textContent).toContain('10:30');
+  // 首行之前不插
+  expect(box.firstElementChild.classList.contains('chat-row')).toBe(true);
+  // 重算幂等——不叠线
+  window.gApplyDividers();
+  expect(box.querySelectorAll('.grp-divider').length).toBe(1);
+  // 恰好 1h（不严格大于）不插
+  box.textContent = '';
+  window.gRenderMessages([
+    { seq: 1, from: 'coder1', type: 'note', ts: t0, text: '甲' },
+    { seq: 2, from: 'coder1', type: 'note', ts: t0 + 3600000, text: '乙' }
+  ]);
+  expect(box.querySelectorAll('.grp-divider').length).toBe(0);
+});
+
+// A342——滚动带：关闭合并后每条独立成刻度；刻度色取行内 --gc-color（= 气泡描边色同源机制）
+test('A342 滚动带——合并关闭后每条一行一段，人侧行挂气泡线色', () => {
+  const mk = (type) => {
+    const d = document.createElement('div');
+    d.className = 'chat-row';
+    d.setAttribute('data-type', type);
+    return { row: d, role: 'reply', type: type };
+  };
+  // 群聊页：body 引导里 chatScrollInit(false) 把 bandFoldEnabled 置 false
+  window.bandFoldEnabled = false;
+  expect(window.bandFoldSegs([mk('text'), mk('text'), mk('text')]).length).toBe(3);
+  // 打开合并（对话页行为）——连续同 data-type 折叠
+  window.bandFoldEnabled = true;
+  expect(window.bandFoldSegs([mk('text'), mk('text'), mk('user')]).length).toBe(2);
+  // 人侧行同样挂线色变量——刻度与气泡共用同一色源
+  const human = window.gBuildRow({ seq: 1, from: '', type: 'note', ts: 0, text: '甲' });
+  expect(human.style.getPropertyValue('--gc-color')).toBe('var(--ch-bubble-line-user)');
+  const cat = window.gBuildRow({ seq: 2, from: 'a1', type: 'note', ts: 0, text: '乙' });
+  expect(cat.style.getPropertyValue('--gc-color').length).toBeGreaterThan(0);
+  window.bandFoldEnabled = false;
+});
+test('@ 目标浮层——按钮开合、列表含「无 @」与成员、选中态与标签同步', () => {
+  window.gFillTargets([
+    { key: 'coder1', displayName: 'Coder', admin: false, subscriber: false },
+    { key: 'majordomo', displayName: '雾理莎', admin: true, subscriber: true }
+  ]);
+  const pop = document.getElementById('grpAtPopover');
+  const btn = document.getElementById('grpAtBtn');
+  const list = document.getElementById('grpAtList');
+  expect(pop.classList.contains('on')).toBe(false);
+  btn.click();
+  expect(pop.classList.contains('on')).toBe(true);
+  expect(list.querySelectorAll('.grp-at-row').length).toBe(3);
+  expect(list.children[0].getAttribute('data-key')).toBe('');
+  expect(list.textContent).toContain('★ 🔔 雾理莎');
+  // 点行选中 → 目标写入、浮层收起、按钮标签同步
+  list.children[2].click();
+  expect(window.gTarget).toBe('majordomo');
+  expect(pop.classList.contains('on')).toBe(false);
+  expect(btn.textContent).toBe('@ 雾理莎');
+  // 再开 → 点「无 @」清空
+  btn.click();
+  list.children[0].click();
+  expect(window.gTarget).toBe('');
+  expect(btn.textContent).toBe('@ 无');
+  // 成员名单变化把当前目标挤掉 → 回落不 @（不静默留着无效目标）
+  window.gPickTarget('coder1');
+  window.gFillTargets([{ key: 'majordomo', displayName: '雾理莎' }]);
+  expect(window.gTarget).toBe('');
 });

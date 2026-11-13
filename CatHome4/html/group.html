@@ -7,40 +7,69 @@
     <link rel="stylesheet" href="css/tokens.css?v=__V__">
     <link rel="stylesheet" href="css/chat.css?v=__V__">
     <style>
-        /* 群聊页专属补充（A311）——布局 / 气泡 / MD 全部复用 chat.css，本段只补对话页没有的三处：
-           ① @ 目标行（与内容列同左缘）② 消息首行 meta（来源 / 类型 / 目标）③ 空态与尾部提示 */
-        .group-from-row { display: grid; grid-template-columns: var(--ch-col-left) var(--ch-col-w) 1fr; align-items: center; padding: 4px 0; }
-        .group-at-box { grid-column: 2; display: flex; align-items: center; gap: 6px; min-width: 0; }
-        .group-at { color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
-        #toSel { flex: 1; min-width: 0; background: var(--ch-bg-panel); border: 1px solid var(--ch-line); border-radius: 4px; color: var(--ch-fg); padding: 4px 8px; font-family: inherit; font-size: var(--ch-fs-tag); }
-        #toSel:focus { outline: none; border-color: var(--ch-focus); }
-        #groupMsg { grid-column: 3; margin-left: 8px; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
-        /* 消息首行——略大字号描述来源类型与目标（A311 莎定）；时间靠右弱化 */
-        .msg-meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: var(--ch-fs-strong); color: var(--ch-fg-muted); white-space: normal; word-break: break-all; }
-        .msg-meta .mm-kind { color: var(--ch-chat-ai-fg); }
-        .msg-meta .mm-who { color: var(--ch-identity); }
-        .msg-meta .mm-target { color: var(--ch-state-run); }
-        .msg-meta .mm-refs { color: var(--ch-state-all); }
-        .msg-meta .mm-seq { color: var(--ch-fg-faint); font-size: var(--ch-fs-tag); }
-        .msg-meta .mm-time { margin-left: auto; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
-        /* A313 消息操作——发送方名字可点（@ 快捷填入）；单条复制按钮（图标复用 md-copy 的线条双框） */
-        .msg-meta .mm-who-pick { cursor: pointer; }
-        .msg-meta .mm-who-pick:hover { text-decoration: underline; }
-        .msg-meta .msg-copy-btn { background: none; border: none; cursor: pointer; color: var(--ch-fg-muted); line-height: 0; padding: 2px; border-radius: 4px; opacity: 0.35; transition: opacity 0.15s; }
-        .chat-bubble:hover .msg-meta .msg-copy-btn { opacity: 1; }
-        .msg-meta .msg-copy-btn:hover { background: var(--ch-hover-overlay); color: var(--ch-fg-strong); }
-        .msg-meta .msg-copy-btn svg { display: block; }
-        .msg-meta .msg-copy-btn.done svg { display: none; }
-        .msg-meta .msg-copy-btn.done::after { content: '✓'; font-size: var(--ch-fs-tag); line-height: 1; }
-        .chat-row.user .msg-meta .msg-copy-btn { color: var(--ch-chat-user-fg); opacity: 0.6; }
-        /* 人（user 泡）内首行字色——深底上按反色系走 */
-        .chat-row.user .msg-meta { color: var(--ch-chat-user-fg); }
-        .chat-row.user .msg-meta .mm-kind,
-        .chat-row.user .msg-meta .mm-who,
-        .chat-row.user .msg-meta .mm-target,
-        .chat-row.user .msg-meta .mm-refs { color: var(--ch-chat-user-fg); }
-        .chat-row.user .msg-meta .mm-seq,
-        .chat-row.user .msg-meta .mm-time { color: var(--ch-chat-user-fg); opacity: 0.75; }
+        /* 群聊页专属补充（A311 起；A340 重排——消息头与气泡分离 / 头像 / 类型徽标）
+           布局 / 气泡 / MD / 滚动带复用 chat.css，本段只补对话页没有的三处：
+           ① @ 目标行（与内容列同左缘）② 消息头（头像 + 显示名 + 类型徽标 + 小时间戳，气泡外独立一行）
+           ③ 左侧成员球列（主题色 / 六态灯点 / 前文 token） */
+        /* ═══ @ 目标选择（2026-11-13 莎定）——工业下拉框 → 对话页 Note/定时 同款小悬浮气泡 ═══
+           构成：输入区上方一枚胶囊按钮（显示当前 @ 目标）+ 点击展开的悬浮层（成员列表，点选即生效）
+           定位基准 = #chatinput（position: relative）——bottom:100% = 输入区顶边，再留 8px */
+        #grpAtWrap { position: absolute; bottom: calc(100% + 8px); left: 50%; transform: translateX(-50%); z-index: 60; display: flex; flex-direction: row; align-items: center; gap: 6px; }
+        #grpAtBtn { background: var(--ch-note-bg); border: 1px solid var(--ch-note-line); border-radius: 14px; color: var(--ch-note-fg); font-size: var(--ch-fs-tag); padding: 4px 14px; cursor: pointer; font-family: inherit; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; box-shadow: 0 2px 8px var(--ch-shadow-soft); user-select: none; }
+        #grpAtBtn:hover { border-color: var(--ch-note-line-hover); color: var(--ch-note-fg-hover); }
+        #grpAtBtn.on { border-color: var(--ch-note-line-hover); color: var(--ch-note-fg-hover); }
+        /* 状态提示（2026-11-13 莎定——外围只留气泡）——常规状态不显示；仅失败（.err）出声 */
+        #groupMsg { display: none; color: var(--ch-err); font-size: var(--ch-fs-tag); }
+        #groupMsg.err { display: inline; }
+        #grpAtPopover { position: absolute; bottom: calc(100% + 46px); left: 50%; transform: translateX(-50%); background: var(--ch-bg-page); border: 1px solid var(--ch-line); border-radius: 8px; width: min(360px, 80vw); max-height: 50vh; display: none; flex-direction: column; box-shadow: 0 8px 32px var(--ch-shadow-strong); z-index: 61; }
+        #grpAtPopover.on { display: flex; }
+        .grp-at-pop-head { padding: 8px 14px; border-bottom: 1px solid var(--ch-line-faint); color: var(--ch-identity); font-weight: bold; font-size: var(--ch-fs-tag); }
+        #grpAtList { display: flex; flex-direction: column; gap: 2px; padding: 8px; overflow-y: auto; flex: 1; }
+        .grp-at-row { display: flex; align-items: baseline; gap: 6px; background: none; border: 1px solid transparent; border-radius: 4px; color: var(--ch-fg-muted); font-family: inherit; font-size: var(--ch-fs-tag); padding: 4px 8px; text-align: left; cursor: pointer; word-break: break-all; }
+        .grp-at-row:hover { background: var(--ch-bg-hover); color: var(--ch-fg); }
+        .grp-at-row.on { border-color: var(--ch-note-line); color: var(--ch-note-fg-hover); }
+        .grp-at-row .at-mark { flex: 0 0 auto; color: var(--ch-warn); }
+        .grp-at-row .at-key { color: var(--ch-fg-faint); }
+        /* ═══ A340 消息头分离——头像 + 显示名 + 类型徽标 + 小时间戳（气泡内不再承载头行）═══
+           头像 = 主题色圆 + 猫名首字（与左列球同源）；主题色写在行内变量 --gc-color（气泡描边 / 刻度 / 头名统一取用） */
+        .chat-row.grp-row { gap: 10px; align-items: flex-start; }
+        .chat-row.grp-row.user { flex-direction: row-reverse; }
+        /* 行距（A340 补充 · 2026-11-13 莎定）——群聊页自管行距：每行固定 10px 上边距（页内 gap 归零，分割线同吃同一节奏） */
+        #chatMsgs { gap: 0; }
+        #chatMsgs > .chat-row.grp-row { margin-top: 30px; }
+        #chatMsgs > .group-hint,
+        #chatMsgs > .group-empty { margin-top: 30px; }
+        /* 时间分割线（A340 补充）——纯前端渲染的「—— 时刻 ——」居中横线；不是消息条目，不进视图层、不占滚动带刻度 */
+        .grp-divider { display: flex; align-items: center; gap: 10px; margin-top: 30px; color: var(--ch-fg-faint); font-size: var(--ch-fs-tag); line-height: 1.4; }
+        .grp-divider::before,
+        .grp-divider::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--ch-line); }
+        .grp-divider span { flex: 0 0 auto; }
+        .grp-avatar { flex: 0 0 auto; width: 34px; height: 34px; margin-top: 2px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: bold; line-height: 1; color: var(--ch-bg-page); background: var(--gc-color, var(--ch-fg-inverse)); box-shadow: 0 0 0 1px var(--ch-line); user-select: none; }
+        .grp-body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+        .chat-row.grp-row.user .grp-body { align-items: flex-end; }
+        .grp-head { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; margin: 0 2px 5px; font-size: var(--ch-fs-tag); color: var(--ch-fg-weak); line-height: 1.4; }
+        .chat-row.grp-row.user .grp-head { justify-content: flex-end; }
+        .grp-who { font-size: var(--ch-fs-strong); font-weight: bold; color: var(--gc-color, var(--ch-identity)); }
+        .grp-who.g-who-pick { cursor: pointer; }
+        .grp-who.g-who-pick:hover { text-decoration: underline; }
+        /* 类型徽标——描边胶囊（色相 = 消息语义：派单蓝 / 回执青 / 讨论灰） */
+        .grp-kind { flex: 0 0 auto; padding: 0 5px; border-radius: 3px; border: 1px solid currentColor; line-height: 1.5; }
+        .grp-kind[data-kind="delegation"] { color: var(--ch-info); }
+        .grp-kind[data-kind="receipt"] { color: var(--ch-ok); }
+        .grp-kind[data-kind="note"] { color: var(--ch-state-all); }
+        .grp-target { color: var(--ch-state-run); }
+        .grp-refs { color: var(--ch-state-all); }
+        .grp-seq { color: var(--ch-fg-faint); }
+        /* 小时间戳——默认靠右；人（user 侧）右对齐时随头部顺序左置 */
+        .grp-time { margin-left: auto; color: var(--ch-fg-weak); }
+        .chat-row.grp-row.user .grp-time { margin-left: 0; }
+        /* 单条复制按钮（A313 件，落点移到消息头）——猫消息 hover 显形 */
+        .grp-head .msg-copy-btn { background: none; border: none; cursor: pointer; color: var(--ch-fg-muted); line-height: 0; padding: 2px; border-radius: 4px; opacity: 0.35; transition: opacity 0.15s; }
+        .chat-row:hover .grp-head .msg-copy-btn { opacity: 1; }
+        .grp-head .msg-copy-btn:hover { background: var(--ch-hover-overlay); color: var(--ch-fg-strong); }
+        .grp-head .msg-copy-btn svg { display: block; }
+        .grp-head .msg-copy-btn.done svg { display: none; }
+        .grp-head .msg-copy-btn.done::after { content: '✓'; font-size: var(--ch-fs-tag); line-height: 1; }
         .group-empty { color: var(--ch-fg-weak); padding: 0 12px; }
         /* 清空动作——勾选确认后才可用（危险动作防误触） */
         #chatClearWrap { display: flex; align-items: center; gap: 4px; color: var(--ch-fg-weak); font-size: var(--ch-fs-tag); }
@@ -49,7 +78,8 @@
         #chatClear:disabled { opacity: 0.45; cursor: not-allowed; }
         /* ═══ A319 成员球列——左预留带内竖列（与对话页「全部/精简」开关同一条竖轴：左缘 / 宽 = --ch-send-w）═══
            构成：主题色球（猫名首字 · 管理员球顶挂 👑）+ 右下状态灯点（六态同源色）+ 下方前文 token
-           top / max-height 由 group.js 按对话区矩形写入（fixed，不随对话滚动） */
+           top / max-height 由 group.js 按对话区矩形与切换条高度写入（fixed，不随对话滚动）
+           A341：整球可点——点击高亮并只显示该猫发言（再点取消） */
         #groupCats { position: fixed; left: calc(var(--ch-col-left) - var(--ch-send-w) - 6px); top: 0; width: var(--ch-send-w); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: center; overflow-y: auto; scrollbar-width: none; z-index: 6; }
         #groupCats::-webkit-scrollbar { width: 0; height: 0; }
         .gc-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 auto; }
@@ -72,6 +102,23 @@
         #chatMsgs .chat-row.assistant .chat-bubble { --bubble-line: var(--gc-color, var(--ch-bubble-line-text)); }
         /* 刻度——scroll.js 在段首行带 --gc-color 时复制该变量并挂 gc-tint（无主题色的页面不受影响；失败红优先） */
         .sb-tick.gc-tint[data-type]:not(.err) { background: var(--gc-color); }
+        /* 状态区占位（2026-11-13 莎定）——与对话页六态行同容器；当前只放占位字样，后续接线真实计时 */
+        .grp-status-ph { color: var(--ch-fg-weak); }
+        /* ═══ A341 筛选（2026-11-13 莎定）——消息类型切换条（左预留带上段，四格竖排）+ 球列点选高亮 ═══
+           类型与猫两层筛选叠加：例如「主持人 + 讨论」只显示该猫的讨论；隐藏走行级 .grp-hidden */
+        #groupKindBar { position: fixed; left: calc(var(--ch-col-left) - var(--ch-send-w) - 6px); top: 0; width: var(--ch-send-w); display: flex; flex-direction: column; border: 1px solid var(--ch-line); border-radius: var(--ch-radius-bubble); background: var(--ch-bg-panel); overflow: hidden; z-index: 7; }
+        .gk-btn { font-family: inherit; font-size: var(--ch-fs-tag); color: var(--ch-fg-weak); background: transparent; border: none; border-bottom: 1px solid var(--ch-line-faint); padding: 5px 0; cursor: pointer; transition: background 0.15s, color 0.15s; }
+        .gk-btn:last-child { border-bottom: none; }
+        .gk-btn:hover { background: var(--ch-bg-hover); color: var(--ch-fg); }
+        .gk-btn.on[data-kind="all"] { background: var(--ch-bg-accent); color: var(--ch-fg-inverse); font-weight: bold; }
+        .gk-btn.on[data-kind="note"] { background: var(--ch-state-all); color: var(--ch-bg-page); font-weight: bold; }
+        .gk-btn.on[data-kind="receipt"] { background: var(--ch-ok); color: var(--ch-bg-page); font-weight: bold; }
+        .gk-btn.on[data-kind="delegation"] { background: var(--ch-info); color: var(--ch-bg-page); font-weight: bold; }
+        .gc-item { cursor: pointer; }
+        .gc-item.sel .gc-ball { box-shadow: 0 0 0 2px var(--gc-color), 0 0 10px color-mix(in srgb, var(--gc-color) 45%, transparent); }
+        .gc-item.sel .gc-name { color: var(--ch-fg-strong); font-weight: bold; }
+        .chat-row.grp-hidden { display: none; }
+        .group-filter-empty { color: var(--ch-fg-weak); padding: 0 12px; margin-top: 30px; }
     </style>
 </head>
 <body>
@@ -88,30 +135,41 @@
         <button id="chatRefresh" title="刷新——重新拉取组信息与消息">刷新</button>
     </div>
 
-    <!-- ═══ 成员球列（A319）——左侧竖排：主题色球 + 猫名首字 + 状态灯点 + 前文 token ═══ -->
-    <div id="groupCats" title="组内成员——球色 = 猫主题色；右下点 = 运行态；下方数字 = 前文 token"></div>
+    <!-- ═══ 消息类型切换（A341）——左预留带上段竖排：全部 / 讨论 / 回执 / 派单（与猫筛选叠加） ═══ -->
+    <div id="groupKindBar" title="消息类型筛选——与左侧猫筛选叠加（例如「主持人 + 讨论」只显示该猫的讨论）">
+        <button type="button" class="gk-btn on" data-kind="all">全部</button>
+        <button type="button" class="gk-btn" data-kind="note">讨论</button>
+        <button type="button" class="gk-btn" data-kind="receipt">回执</button>
+        <button type="button" class="gk-btn" data-kind="delegation">派单</button>
+    </div>
+
+    <!-- ═══ 成员球列（A319）——左侧竖排：主题色球 + 猫名首字 + 状态灯点 + 前文 token（A341 起可点筛选） ═══ -->
+    <div id="groupCats" title="组内成员——点球只显示该猫发言（再点取消）；球色 = 猫主题色；右下点 = 运行态；下方数字 = 前文 token"></div>
 
     <!-- ═══ 消息区——与对话页同一容器 id（列宽 / gap / 原生滚动条隐藏 / 自绘带几何全部同源） ═══ -->
     <div id="chatMsgs"></div>
     <!-- 自绘滚动带（js/chat/fx/scroll.js 原样复用）——视口指示块 + 消息刻度 + 点击跳转 + 拖拽 -->
     <div id="chatScrollBand"><div id="sbScopes"></div><div id="sbThumb"></div><div id="sbTicks"></div></div>
 
-    <!-- ═══ @ 目标行——与内容列同左缘（端口即组身份，页面不做组切换） ═══ -->
-    <div id="groupFromRow" class="group-from-row">
-        <div class="group-at-box">
-            <span class="group-at">@</span>
-            <select id="toSel" title="@ 组内成员——选中按派单投递（回执自动回组）；不选只记流水，由订阅渠道推送"></select>
-        </div>
-        <span id="groupMsg"></span>
-    </div>
-
-    <!-- ═══ 输入区——与对话页 #chatinput 同构（内容列 + 右预留带动作列） ═══ -->
+    <!-- ═══ 输入区——与对话页 #chatinput 同构（内容列 + 右预留带动作列）
+         @ 目标选择（2026-11-13 莎定）——悬浮胶囊按钮 + 成员浮层，绝对定位贴输入区上方：不占布局，输入框保持全尺寸 ═══ -->
     <div id="chatinput">
-        <textarea id="chatSendInput" rows="3" placeholder="输入消息…（Enter 发送；Shift+Enter 换行）"></textarea>
+        <div id="grpAtWrap">
+            <button type="button" id="grpAtBtn" title="@ 组内成员——选中按派单投递（回执自动回组）；不选只记流水，由订阅渠道推送">@ 无</button>
+            <span id="groupMsg"></span>
+        </div>
+        <div id="grpAtPopover">
+            <div class="grp-at-pop-head">选择 @ 目标</div>
+            <div id="grpAtList"></div>
+        </div>
+        <textarea id="chatSendInput" rows="5" placeholder="输入消息…（Enter 发送；Shift+Enter 换行）"></textarea>
         <div id="chatActions">
             <button id="chatSendBtn" class="ch-iabtn ch-iabtn-send">发送</button>
         </div>
     </div>
+
+    <!-- ═══ 状态区（2026-11-13 莎定）——与对话页 #chatStatus 同容器同位，先占位（后续接线六态计时） ═══ -->
+    <div id="chatStatus"><span class="st grp-status-ph">正在 Group 中…</span></div>
 
     <!-- 脚本顺序即依赖顺序：版本填充 → DOM 小件 → MD 渲染器 → MD 复制 → 滚动带 → 本页逻辑 -->
     <script src="js/ui-common.js?v=__V__"></script>
