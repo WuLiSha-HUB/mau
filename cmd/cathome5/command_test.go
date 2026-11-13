@@ -211,3 +211,59 @@ func TestCommandRouterHTTPRoutes(t *testing.T) {
 		t.Fatal("停机态应拒收 cat.*")
 	}
 }
+
+// TestHandleForAutoMountWiring 每猫端口 Chat 自动挂载接线——hook 判定后按 fresh 分流（fresh=false 普通投递）。
+func TestHandleForAutoMountWiring(t *testing.T) {
+	router, _, _ := newCommandRouter(t)
+	mounted := ""
+	router.AutoMountForCat = func(catID string, sess *session.Session, content string) (bool, bool) {
+		mounted = catID + "|" + content
+		return true, false
+	}
+	if !router.HandleFor("catX", router.Session, "Chat 上工 Demo") {
+		t.Fatal("应受理")
+	}
+	if mounted != "catX|上工 Demo" {
+		t.Fatalf("自动挂载未按猫触发：%q", mounted)
+	}
+	// fresh=false → 按普通输入投递（正文已剥前缀，入待处理队列一条用户消息）
+	userCount, _ := router.Session.Pending.Len()
+	if userCount != 1 {
+		t.Fatalf("普通投递应入队 1 条用户消息，实得 %d", userCount)
+	}
+	// 空内容不接管
+	if router.HandleFor("catX", router.Session, "Chat   ") {
+		t.Fatal("空内容不应受理")
+	}
+}
+
+// TestCatChatAutoMountWiring cat.chat 投递前挂载钩子——先挂载再投递（Cats.cs:383 顺序）。
+func TestCatChatAutoMountWiring(t *testing.T) {
+	dir := t.TempDir()
+	queue := session.NewDelayQueue(filepath.Join(dir, "delays.json"))
+	sess := session.NewSession("catA", session.NewContext(), nil, nil)
+	sess.SetDelayQueue(queue)
+	order := []string{}
+	router := &commandRouter{
+		DataRoot:    dir,
+		CatID:       "catA",
+		DisplayName: "A猫",
+		Session:     sess,
+		Pool:        &toolpool.Pool{},
+		Registry:    &toolpool.Registry{},
+		Logf:        func(level int, message, category string) {},
+		AutoMountOnCatChat: func(catID, content string) {
+			order = append(order, "mount:"+catID+"|"+content)
+		},
+	}
+	got := router.Execute("cat.chat catA 上工 Demo")
+	if !strings.HasPrefix(got, "cat.chat | 已投递: A猫") {
+		t.Fatalf("cat.chat 回执不符：%q", got)
+	}
+	if len(order) != 1 || order[0] != "mount:catA|上工 Demo" {
+		t.Fatalf("自动挂载未先于投递：%v", order)
+	}
+	if userCount, _ := sess.Pending.Len(); userCount != 1 {
+		t.Fatalf("投递应入队 1 条用户消息，实得 %d", userCount)
+	}
+}

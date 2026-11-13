@@ -57,7 +57,7 @@ func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsRes
 	cfg, err := config.LoadCatCfg(cfgPath)
 	if err != nil {
 		wiring.Err = "cat.cfg 读取失败（按默认值）: " + err.Error()
-		cfg = &config.CatCfg{ID: catID, DisplayName: catID}
+		cfg = &config.CatCfg{ID: catID, DisplayName: catID, MountAuto: true, ProjectMountExpert: true}
 	}
 	if cfg.ID != "" {
 		catID = cfg.ID

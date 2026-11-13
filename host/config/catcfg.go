@@ -56,12 +56,15 @@ type CatCfg struct {
 }
 
 // LoadCatCfg 读取每猫配置；文件缺失或 JSON 损坏返回错误。
+//
+// 缺省值预置与 C# CatCfgData 字段初始化器同口径：mountAuto / projectMountExpert 缺省 true
+// （文件未写该键 = 取缺省；显式 false 照实覆盖——json.Unmarshal 只覆盖出现过的键）。
 func LoadCatCfg(path string) (*CatCfg, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var cfg CatCfg
+	cfg := CatCfg{MountAuto: true, ProjectMountExpert: true}
 	if err := json.Unmarshal(StripBOM(raw), &cfg); err != nil {
 		return nil, err
 	}

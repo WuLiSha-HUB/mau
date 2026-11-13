@@ -391,7 +391,7 @@ func (r *catRegistry) createCat(name string) (*catInstance, string) {
 	}
 	r.mu.Unlock()
 
-	cfg := &config.CatCfg{ID: id, DisplayName: displayName}
+	cfg := &config.CatCfg{ID: id, DisplayName: displayName, MountAuto: true, ProjectMountExpert: true}
 	// 模板继承——新猫初值取 cat-default.cfg（模板缺失 = 空四字段，与 C# 同）
 	if tpl, err := config.LoadCatDefault(filepath.Join(r.dataRoot, "config", "cat-default.cfg")); err == nil && tpl != nil {
 		cfg.Persona = tpl.DefaultPersona

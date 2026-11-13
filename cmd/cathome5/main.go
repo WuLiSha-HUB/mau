@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.31.0"
+var version = "0.32.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -436,6 +436,15 @@ func main() {
 		}
 		return inst.id, name, inst.running, inst.port, inst.session, true
 	}
+	// 多猫挂载重建投递口——cat 目标前文 ≤1 条时由管理面回调触发该猫 session.new
+	// （对齐 C# DispatchInput(CatInputTarget(cat), "session.new")）
+	adminDeps.DispatchForCat = func(catID, command string) bool {
+		inst := cats.findCat(catID)
+		if inst == nil || inst.session == nil {
+			return false
+		}
+		return router.HandleFor(inst.id, inst.session, command)
+	}
 	// [段12b-3] 附属宿主实例装配（d-1a 组轻宿主 / d-1b 每猫独立对话端口）——
 	// 端口即身份：猫实例闭包绑定本猫会话，组实例闭包绑定组名（C# StartCatHost / StartGroupHost 同构）。
 	hostDeps := &hostInstanceDeps{
@@ -522,6 +531,11 @@ func main() {
 	router.ValidateEnabledRoots = adminDeps.ValidateEnabledRoots
 	router.FilterInjectPaths = adminDeps.FilterInjectPaths
 	router.AutoMount = adminDeps.TryAutoMountOnMessage
+	// 每猫端口 Chat / cat.chat 的「上工/开工 <项目>」自动挂载（d-1 遗留收口）——
+	// 每猫端口按 C# RouteChat → TryAutoMountOnMessage 按猫目标版（前文 ≤1 条带消息重建）；
+	// cat.chat 按 C# Cats.cs:383 → AutoMountForCat（只落盘不重建）
+	router.AutoMountForCat = adminDeps.TryAutoMountForCat
+	router.AutoMountOnCatChat = adminDeps.AutoMountForCat
 	// 多猫注册表后置校验面——新猫继承 defaultEnabledRoots 时过滤池外根（与 cat-config 写面同源）
 	cats.validateRoots = adminDeps.ValidateEnabledRoots
 

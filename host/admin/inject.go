@@ -14,6 +14,7 @@ import (
 	maufs "cathome5/mau/fs"
 
 	"cathome5/host/config"
+	"cathome5/host/session"
 )
 
 // 本文件是段 12「项目挂载」管理面——前文注入清单的「项目段」增删。
@@ -303,15 +304,102 @@ func parseExpertField(fields map[string]json.RawMessage) (bool, bool) {
 
 // applyInjectProject 项目挂载执行体——校验猫与项目 → 补件 → 重算清单 → 落盘 →（未开始对话时）重建。
 //
-// 多猫面归 P5：当前只有主干会话，非 majordomo 一律按「未找到猫」如实回执（与 C# 单猫形态同形）。
+// majordomo 走默认猫专用分支（静态面同步）；其余按 CatLookup 寻址（多猫分支——对齐 C# ApplyInjectProject：
+// id 精确 / 显示名 / id 前缀唯一；未命中 / 停机两句文案逐字）。
 // rebuild=false 只落盘并回传新清单，由调用方决定重建方式（消息自动挂载用——避免先重建再投消息的竞态）。
 func (d *Deps) applyInjectProject(catKey, project string, expert bool, expertSet bool, rebuild bool) (any, []string) {
 	proj := strings.TrimSpace(project)
-	if catKey != "majordomo" {
-		d.logInject(2, "项目挂载失败：未找到猫 "+(catKey))
+	if catKey == "majordomo" {
+		return d.applyInjectProjectDefault(proj, expert, expertSet, rebuild)
+	}
+	id, name, _, _, sess, ok := d.catLookup(catKey)
+	if !ok {
+		d.logInject(2, "项目挂载失败：未找到猫 "+catKey)
 		return injectFailResponse{OK: false, Reason: "未找到猫：" + catKey}, nil
 	}
-	return d.applyInjectProjectDefault(proj, expert, expertSet, rebuild)
+	if sess == nil {
+		d.logInject(2, "项目挂载失败：猫已停机 "+name)
+		return injectFailResponse{OK: false, Reason: "猫已停机（无会话）：" + name}, nil
+	}
+	return d.applyInjectProjectCat(id, name, sess, proj, expert, expertSet, rebuild)
+}
+
+// applyInjectProjectCat 多猫挂载执行体——cat.cfg 合并写 + 自报身份同步 +（未开始对话时）按猫重建。
+//
+// 语义逐条对齐 C# ApplyInjectProject 多猫分支：项目存在性 → 补件 → 专家模式 → 清单重算 →
+// ProjectMountAt 计时起点 → 落盘 → SetSelfTagMount →（fresh && rebuild）目标猫 session.new。
+func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Session, project string, expert bool, expertSet bool, rebuild bool) (any, []string) {
+	path := d.catCfgPath(catID)
+	cfg, err := config.LoadCatCfg(path)
+	if err != nil || cfg == nil {
+		d.logInject(2, "项目挂载失败：cat.cfg 不可读（"+path+"）")
+		return injectFailResponse{OK: false, Reason: "cat.cfg 不存在：" + catID}, nil
+	}
+	if project != "" && !d.projectDirExists(project) {
+		d.logInject(2, "项目挂载失败：项目不存在 "+project+"（cat="+displayName+"）")
+		return injectFailResponse{OK: false, Reason: "项目不存在：" + project}, nil
+	}
+	// 缺件骨架先补齐再算清单——否则清单按「文件存在才加」会漏掉刚生成的件
+	warnings := []string{}
+	made := d.ensureSkeletonsOnMount(project, &warnings)
+	for _, warning := range warnings {
+		d.logInject(2, "挂载补件（cat="+displayName+"）："+warning)
+	}
+	oldMount := cfg.ProjectMount
+	// 专家模式——未显式指定则沿用 cat.cfg 现值（缺省 true）
+	if expertSet {
+		cfg.ProjectMountExpert = expert
+	}
+	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, cfg.ProjectMountExpert)
+	cfg.InjectList = next
+	cfg.ProjectMount = project
+	msgCount := sessionMessageCountOf(sess)
+	// 自动取消计时起点——只在「挂好还没开始对话」时计时
+	if project != "" && msgCount <= 1 {
+		cfg.ProjectMountAt = time.Now().UnixMilli()
+	} else {
+		cfg.ProjectMountAt = 0
+	}
+	if err := config.SaveCatCfg(path, cfg); err != nil {
+		d.logInject(2, "项目挂载失败：cat.cfg 写入失败（"+err.Error()+"）")
+		return injectFailResponse{OK: false, Reason: "cat.cfg 写入失败: " + err.Error()}, nil
+	}
+	// 自报身份同步——项目 / 模式 / Job 清单进请求附加头容器（未挂载 = 空，适配层整组不发）
+	sess.SetSelfTagMount(project, MountModeText(project, cfg.ProjectMountExpert), BuildJobList(next))
+	// 会话未开始对话 → 立即重建（等同新会话重注入）；已有对话 → 只落盘，下个新会话生效
+	fresh := msgCount <= 1
+	rebuilt := fresh && rebuild
+	if rebuilt && d.DispatchForCat != nil {
+		d.DispatchForCat(catID, "session.new")
+	}
+	msg := ""
+	if project == "" {
+		if rebuilt {
+			msg = "已取消 Project 挂载——会话重建中"
+		} else {
+			msg = "已取消 Project 挂载——新会话生效"
+		}
+	} else {
+		if rebuilt {
+			msg = "已挂载 " + project + "——会话重建中"
+		} else {
+			msg = "已挂载 " + project + "——新会话生效"
+		}
+		if cfg.ProjectMountExpert {
+			msg = msg + mountExpertText(d.measureL3ExtraBytes(project))
+		} else {
+			msg = msg + " · L3 仅 readme"
+		}
+	}
+	if len(made) > 0 {
+		msg = msg + " · 补件 " + strconv.Itoa(len(made)) + " 件"
+	}
+	projectText := project
+	if projectText == "" {
+		projectText = "(空)"
+	}
+	d.logInject(1, "项目挂载：cat="+displayName+" project="+projectText+" injectList="+strconv.Itoa(len(next)))
+	return injectProjectWriteResponse{OK: true, Msg: msg, InjectList: compactListJSON(next)}, next
 }
 
 // applyInjectProjectDefault 主干（majordomo）项目挂载执行体——cat.cfg 合并写 +（未开始对话时）session.new。
@@ -408,7 +496,11 @@ func compactListJSON(list []string) string {
 
 // sessionMessageCount 当前会话前文条数（无会话按 0——与 C# DefaultSession == null 同口径）。
 func (d *Deps) sessionMessageCount() int {
-	sess := d.sessionFor("majordomo")
+	return sessionMessageCountOf(d.sessionFor("majordomo"))
+}
+
+// sessionMessageCountOf 指定会话前文条数（无会话 / 无上下文按 0——与 C# cat.Session == null 同口径）。
+func sessionMessageCountOf(sess *session.Session) int {
 	if sess == nil || sess.Context == nil {
 		return 0
 	}

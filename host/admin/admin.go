@@ -62,6 +62,8 @@ type Deps struct {
 	Apply func(catKey string, cfg *config.CatCfg)
 	// Dispatch 会话指令投递口（session.new 重建等；nil = 不重建，只落盘新会话生效）
 	Dispatch func(command string) bool
+	// DispatchForCat 按猫会话指令投递口（多猫挂载的 session.new 重建用；nil = 不重建，只落盘）
+	DispatchForCat func(catID, command string) bool
 	// Restart 宿主重启请求登记面（nil = 端点按未接线失败）
 	Restart *RestartState
 	// OpenDir 打开目录通道（nil = 调 explorer.exe；单测注入替身不弹窗）

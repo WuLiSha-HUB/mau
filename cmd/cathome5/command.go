@@ -59,6 +59,10 @@ type commandRouter struct {
 	Logf func(level int, message, category string)
 	// AutoMount 消息自动挂载（nil = 不挂载）——「上工/开工 <项目>」命中即接管投递
 	AutoMount func(content string) bool
+	// AutoMountForCat 每猫端口 Chat 消息自动挂载（nil = 不挂载）——返回 (已挂载, 前文≤1 可带消息重建)
+	AutoMountForCat func(catID string, sess *session.Session, content string) (bool, bool)
+	// AutoMountOnCatChat cat.chat 投递前自动挂载（nil = 不挂载）——只落盘不重建
+	AutoMountOnCatChat func(catID, content string)
 	// Apply 猫配置生效面（cat.cfg.set / catcfg.apply 落盘后调用；nil = 只落盘不生效）
 	Apply func(catKey string, cfg *config.CatCfg)
 	// ValidateToolNames 工具名单校验（池外名剔除；nil = 原样保留）
@@ -142,7 +146,8 @@ func (r *commandRouter) Handle(text string) bool {
 //
 // 形态对齐 C# `HttpHostOptions.Dispatcher = line => DispatchInput(CatInputTarget(cat), line)`：
 // `Chat ` / `session.new` 落该猫会话；`cat.*` / `catcfg.*` / `delay.*` 与管理面同一执行体（不另写一份）。
-// 差异（记录在案）：消息自动挂载面只在主端口（默认猫）接线——每猫端口不做「上工 <项目>」即时挂载。
+// 「上工/开工 <项目>」按猫自动挂载（d-1 遗留收口）——前文 ≤1 条时挂载 + 带消息重建接管投递，
+// 已有对话则只落盘、消息按普通输入投递（对齐 C# RouteChat → TryAutoMountOnMessage 按猫目标版）。
 func (r *commandRouter) HandleFor(catID string, sess *session.Session, text string) bool {
 	if session.HostRestarting() {
 		r.log(2, "宿主重启中——本条输入未受理（cat="+catID+"）", "RESTART")
@@ -153,6 +158,11 @@ func (r *commandRouter) HandleFor(catID string, sess *session.Session, text stri
 		content := strings.TrimSpace(strings.TrimPrefix(text, "Chat "))
 		if content == "" || sess == nil {
 			return false
+		}
+		if r.AutoMountForCat != nil {
+			if mounted, fresh := r.AutoMountForCat(catID, sess, content); mounted && fresh {
+				return r.sessionNewFor(catID, sess, content, "")
+			}
 		}
 		return sess.PostUser(content, "user", "", "")
 	case text == "session.new":
@@ -203,7 +213,7 @@ func (r *commandRouter) loadCfgFor(catID string) *config.CatCfg {
 	cfg, err := config.LoadCatCfg(path)
 	if err != nil {
 		r.log(2, "session.new 读取 cat.cfg 失败（按默认值）: "+err.Error(), "CHAT")
-		return &config.CatCfg{ID: catID, DisplayName: catID}
+		return &config.CatCfg{ID: catID, DisplayName: catID, MountAuto: true, ProjectMountExpert: true}
 	}
 	if cfg.ID == "" {
 		cfg.ID = catID
@@ -826,6 +836,9 @@ func (r *commandRouter) catSessionNewCommand(rest string) string {
 }
 
 // catChatCommand cat.chat——按猫投递对话（majordomo 不可自查）。
+//
+// 投递前自动挂载（C# CatHostService.Cats.cs:383 → AdminService.AutoMountForCat）：
+// 「上工/开工 <项目>」命中原样挂载并落盘，当前会话不动（清单下个新会话生效）；失败出声，不影响投递。
 func (r *commandRouter) catChatCommand(rest string) string {
 	space := strings.IndexByte(rest, ' ')
 	if space <= 0 {
@@ -845,6 +858,9 @@ func (r *commandRouter) catChatCommand(rest string) string {
 	}
 	if inst.session == nil {
 		return "cat.chat | 猫已停机（无会话）: " + inst.displayName
+	}
+	if r.AutoMountOnCatChat != nil {
+		r.AutoMountOnCatChat(inst.id, content)
 	}
 	inst.session.PostUser(content, "user", "", "")
 	return "cat.chat | 已投递: " + inst.displayName
