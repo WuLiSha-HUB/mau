@@ -53,7 +53,7 @@ func TestCommandRouterExecute(t *testing.T) {
 	if out := router.Execute("cat.new-session majordomo"); !strings.Contains(out, "已请求新会话: majordomo") {
 		t.Fatalf("cat.new-session 回执不符：%q", out)
 	}
-	if !router.pendingRebuild.pending {
+	if !router.pendingRebuild["majordomo"].pending {
 		t.Fatal("cat.new-session 应置待消费标志")
 	}
 	// 停机态——统一拒收

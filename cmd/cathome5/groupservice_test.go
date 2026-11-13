@@ -178,7 +178,7 @@ func TestGroupNewSession(t *testing.T) {
 	if !strings.Contains(reply, `"mode":"queued"`) || !strings.Contains(reply, "已排队 → 管家猫") {
 		t.Fatalf("自指应标 queued：%q", reply)
 	}
-	if !router.pendingRebuild.pending {
+	if !router.pendingRebuild["majordomo"].pending {
 		t.Fatal("自指重建应登记挂起请求")
 	}
 	if reply := svc.NewSession(`{"group":"g1","catId":"majordomo","to":"majordomo","reason":"再来一次"}`); reply != "ERR|GROUP_REBUILD_PENDING|本会话已有挂起的重建请求" {
@@ -245,19 +245,19 @@ func TestGroupCatCfg(t *testing.T) {
 // TestGroupRequestSessionRebuild 挂起重建登记——首个请求保留 first/origin，重复登记拒绝。
 func TestGroupRequestSessionRebuild(t *testing.T) {
 	router, _, _ := newCommandRouter(t)
-	if !router.requestSessionRebuild("初始", "group:g1:1:delegation") {
+	if !router.requestSessionRebuild("majordomo", "初始", "group:g1:1:delegation") {
 		t.Fatal("首个登记应成功")
 	}
-	if router.requestSessionRebuild("覆盖", "x") {
+	if router.requestSessionRebuild("majordomo", "覆盖", "x") {
 		t.Fatal("重复登记应拒绝")
 	}
-	if router.pendingRebuild.first != "初始" || router.pendingRebuild.origin != "group:g1:1:delegation" {
+	if router.pendingRebuild["majordomo"].first != "初始" || router.pendingRebuild["majordomo"].origin != "group:g1:1:delegation" {
 		t.Fatalf("挂起请求应保留首次内容：%+v", router.pendingRebuild)
 	}
 	if !router.ConsumePendingNewSession() {
 		t.Fatal("空闲时应消费挂起请求并执行重建")
 	}
-	if router.pendingRebuild.pending {
+	if router.pendingRebuild["majordomo"].pending {
 		t.Fatal("消费后应清空挂起")
 	}
 }
@@ -321,7 +321,7 @@ func TestGroupServiceSession(t *testing.T) {
 	if !router.ConsumePendingNewSession() {
 		t.Fatal("空闲消费应执行重建")
 	}
-	if router.pendingRebuild.pending {
+	if router.pendingRebuild["majordomo"].pending {
 		t.Fatal("消费后应清空挂起")
 	}
 	batch := router.Session.Pending.TakeAll(true)
@@ -333,7 +333,7 @@ func TestGroupServiceSession(t *testing.T) {
 // TestGroupSessionOrigin 重建来源锚——初始消息的 origin 透传到待处理队列。
 func TestGroupSessionOrigin(t *testing.T) {
 	router, _, _ := newCommandRouter(t)
-	router.sessionNewWithOrigin("开工", "group:g1:7:delegation")
+	router.sessionNewFor(router.CatID, router.Session, "开工", "group:g1:7:delegation")
 	batch := router.Session.Pending.TakeAll(true)
 	if len(batch) == 0 {
 		t.Fatal("初始消息应入队")

@@ -10,6 +10,7 @@ import (
 	"cathome5/host/admin"
 	"cathome5/host/config"
 	"cathome5/host/llm"
+	"cathome5/host/observe"
 	"cathome5/host/session"
 	"cathome5/host/toolpool"
 	maudb "cathome5/mau/db"
@@ -43,11 +44,13 @@ type sessionWiring struct {
 	Delays *session.DelayQueue
 }
 
-// wireSession 装配默认会话——cat.cfg + 前文 + 视图 + 工具面 + LLM 客户端。
+// wireCatSession 装配一只猫的会话——cat.cfg + 前文 + 视图 + 工具面 + LLM 客户端。
 //
 // 失败面全部降级出声：cat.cfg 缺失按默认值、前文缺失按空、LLM 端点缺失由请求期诚实报错。
-func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult *toolpool.BuildResult, schema *config.Schema, store *config.Store) *sessionWiring {
-	wiring := &sessionWiring{CatID: "majordomo", DisplayName: "majordomo"}
+// llmStore / delays 为共享实例（nil = 自建——单猫测试 / 直达场景）；多猫共用同一实例
+// （管理面写入即时可见 / 延迟队列单文件单写面，Pump 按 catKey 分发）。
+func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult *toolpool.BuildResult, schema *config.Schema, store *config.Store, llmStore *config.LlmAPIStore, delays *session.DelayQueue, catKey string) *sessionWiring {
+	wiring := &sessionWiring{CatID: catKey, DisplayName: catKey}
 	catID := wiring.CatID
 	catDir := filepath.Join(dataRoot, "sessions", catID)
 	cfgPath := filepath.Join(catDir, "cat.cfg")
@@ -89,8 +92,11 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	wiring.Session = sess
 
 	// 延迟队列（c-2）——timer 排程注入 + state.delay 段数据源（落盘 runtime/delays.json，跨重启保留）
-	delays := session.NewDelayQueue(filepath.Join(dataRoot, "runtime", "delays.json"))
-	delays.Load()
+	// 多猫共享单实例（C# 静态类 + 全局表等价物）：条目自持 cat 归属，Pump 由注册表按 catKey 分发。
+	if delays == nil {
+		delays = session.NewDelayQueue(filepath.Join(dataRoot, "runtime", "delays.json"))
+		delays.Load()
+	}
 	sess.SetDelayQueue(delays)
 	wiring.Delays = delays
 	// 加载包数据面（c-2）——池解析三道门（config）+ 受控根路径展开 + 文本读取（与前文注入同源）
@@ -115,13 +121,15 @@ func wireSession(dataRoot string, workspace *config.WorkspaceConfig, toolsResult
 	session.IsPrivilegedTool = toolsResult.Registry.IsPrivilegedName
 	sess.SetToolSpecs(session.ResolveSessionTools(catID, poolSpecs))
 
-	// LLM 客户端——端点池 + 密钥 + 全局配置读取（存储与管理面共用同一实例）
-	llmStore := config.LoadLlmAPIStore(
-		filepath.Join(dataRoot, "config", "llm-api.json"),
-		filepath.Join(dataRoot, "secrets", "llm-api.cfg"),
-	)
-	if llmStore.LastError() != "" {
-		wiring.Err = llmStore.LastError()
+	// LLM 客户端——端点池 + 密钥 + 全局配置读取（存储与管理面共用同一实例；多猫共享传入实例）
+	if llmStore == nil {
+		llmStore = config.LoadLlmAPIStore(
+			filepath.Join(dataRoot, "config", "llm-api.json"),
+			filepath.Join(dataRoot, "secrets", "llm-api.cfg"),
+		)
+		if llmStore.LastError() != "" {
+			wiring.Err = llmStore.LastError()
+		}
 	}
 	wiring.LLMStore = llmStore
 	pool := llm.NewPoolFromStore(llmStore)
@@ -347,23 +355,43 @@ func hasDBRoot(workspace *config.WorkspaceConfig) bool {
 	return false
 }
 
-// PumpDelays 延迟队列泵——主循环每帧调用：到点条目按序转入归属会话即时队。
+// attachSessionRuntime 会话运行时后置接线——机制面（toolRT）构造之后可用的全部依赖回填。
 //
-// 停机态（宿主重启中）不投递——条目保留，由重启后的新宿主加载后投递；
-// 归属会话不存在——条目丢弃并出声（不静默）。对齐 C# `ChatBridge.DeliverDelay`。
-func (w *sessionWiring) PumpDelays() {
-	if w.Delays == nil || w.Session == nil {
+// 装配顺序：会话层先于机制面构造（机制面要用会话句柄）→ 本函数把机制面句柄回填给会话；
+// 默认猫启动、cat.start 补建与启动扫描共用同一接线点（单一实现，不复制）。
+func attachSessionRuntime(w *sessionWiring, toolRT *toolRuntime, store *config.Store, schema *config.Schema, logs *observe.LogStore, frame *observe.FrameCounter) {
+	if w == nil || w.Session == nil || toolRT == nil {
 		return
 	}
-	w.Delays.Pump(func(catKey, content, source string) bool {
-		if session.HostRestarting() {
-			return false
-		}
-		if catKey != w.CatID {
-			session.Logf("CatHome5", 2, "延迟条目归属会话不存在——已丢弃: cat="+catKey, "DELAY")
-			return true
-		}
-		w.Session.PostSystemMessage(source, content, "")
-		return true
-	})
+	sess := w.Session
+	// info 的 db 段数据源回填——闭包按调用时刻读取，回填即生效
+	w.DBSvc = toolRT.DBSvc
+	// 工具工单面——非内置工具 Post → 组 Flow 认领执行 → 100ms Tick 收回执
+	sess.SetToolOffice(&oaToolOffice{oa: toolRT.OA})
+	// 轮末总结工单面（SVC/LLMSimpleRequest）与播报面（kokoro → audio.Join → Enqueue）
+	sess.SetRoundSummaryOffice(&oaRoundSummaryOffice{oa: toolRT.OA})
+	sess.SetRoundSummarySpeaker(newSummarySpeaker(toolRT.Py, toolRT.Audio, func(key string) string {
+		return store.Resolve(schema, key).Value
+	}, func(level int, message string) {
+		logs.Add("CatHome5", level, message, "CHAT", "", "", 0, frame.Current(), false)
+	}))
+	// 浏览器生命周期——timeback 开锚预热（browser_vision）/ 域回收关闭（有头实例保活）
+	sess.Timeback.Browser = toolRT.Browser
+	// 图片注入路径规范化——`<rootId>:<rel>` → 绝对路径（与 text-* / cs-* 同一根解析实现）
+	if toolRT.FileService != nil {
+		fileService := toolRT.FileService
+		sess.SetImagePathResolver(func(path string) string {
+			full, err := fileService.Resolve(path, false)
+			if err != nil {
+				return ""
+			}
+			return full
+		})
+	}
+	// 库级授权登记——默认猫全放，其余按 cat.cfg dbLibs 白名单（空集合 = 无库权限）
+	dbLibs := []string{}
+	if w.CatCfg != nil {
+		dbLibs = w.CatCfg.DBLibs
+	}
+	maudb.RegisterCat(w.CatID, strings.EqualFold(w.CatID, "majordomo"), dbLibs)
 }

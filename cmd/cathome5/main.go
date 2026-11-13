@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.28.0"
+var version = "0.29.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -224,19 +224,22 @@ func main() {
 	logs.Add("CatHome5", observe.LevelInfo, "tools.boot | 组 "+itoa(toolsResult.BrickGroups)+" | 池 "+itoa(toolsResult.Pool.MemberCount())+" 件 | 注册表 "+itoa(len(toolsResult.Registry.GetAllNames()))+" 件 | 缺陷 "+itoa(len(toolsResult.Pool.Defects())), "TOOL", "", "", 0, frame.Current(), false)
 
 	// [段9c] 会话装配——cat.cfg + 前文 + 视图 + 工具面 + LLM 客户端（P3-c）
-	wiring := wireSession(dataRoot, workspace, toolsResult, schema, store)
+	// 多猫面（d-1）：端点池与延迟队列共享单实例（管理面写入即时可见 / 单文件单写面）。
+	llmStore := config.LoadLlmAPIStore(
+		filepath.Join(dataRoot, "config", "llm-api.json"),
+		filepath.Join(dataRoot, "secrets", "llm-api.cfg"),
+	)
+	delays := session.NewDelayQueue(filepath.Join(dataRoot, "runtime", "delays.json"))
+	delays.Load()
+	wiring := wireCatSession(dataRoot, workspace, toolsResult, schema, store, llmStore, delays, "majordomo")
+	if llmStore.LastError() != "" {
+		wiring.Err = llmStore.LastError()
+	}
 	if wiring.Err != "" {
 		boot.Report("SESSION_DEGRADED", observe.KindConfig, "会话层", observe.StateFallback,
 			wiring.Err, "检查 sessions/<id>/cat.cfg 是否存在且为合法 JSON", "S4")
 	}
 	logs.Add("CatHome5", observe.LevelInfo, "session.boot | cat="+wiring.CatID+" | 前文 "+itoa(wiring.Session.Context.Count())+" 条 | 工具面 "+itoa(len(wiring.Authorized))+" 件 | 视图 "+itoa(len(wiring.Session.Views.Blocks()))+" 块", "CHAT", "", "", 0, frame.Current(), false)
-	builder.Sessions = func() []any {
-		entry := wiring.Session.StateEntry()
-		entry["id"] = wiring.CatID
-		entry["name"] = wiring.DisplayName
-		entry["lastContextChangeAt"] = wiring.Session.Context.LastChangeAt()
-		return []any{entry}
-	}
 
 	// [段9d] 机制面装配——DataBox / OA / 帧序 Runner / 积木表 / 工具组注册（P4 c-1）
 	visionSvc := llm.NewVisionService(store, schema, wiring.LLMStore, func(level int, message string) {
@@ -266,45 +269,50 @@ func main() {
 	}, &llmStreamAdapter{client: wiring.Client}, groupSvc)
 	logs.Add("CatHome5", observe.LevelInfo,
 		"toolset.boot | 组 "+itoa(len(toolRT.Groups))+" | 跳过 "+itoa(len(toolRT.Skipped)), "TOOL", "", "", 0, frame.Current(), false)
-	// [段9d-0] info 的 db 段数据源回填——会话层先于机制面构造，服务实例此处才存在（闭包按调用时刻读取）
-	wiring.DBSvc = toolRT.DBSvc
-	// [段9d-1] 库级授权登记——默认猫全放，其余按 cat.cfg dbLibs 白名单（空集合 = 无库权限）
+	// [段9d-0] 会话运行时后置接线——info db 段回填 / 工单面 / 轮末总结 / 播报 / 浏览器 / 图片注入路径
+	// （机制面先于会话可用；每猫装配共用同一接线函数——cat.start / 启动扫描补建会话时同样调用）
+	attachSessionRuntime(wiring, toolRT, store, schema, logs, frame)
 	if toolRT.DBSvc != nil {
 		dbLibs := []string{}
 		if wiring.CatCfg != nil {
 			dbLibs = wiring.CatCfg.DBLibs
 		}
-		db.RegisterCat(wiring.CatID, strings.EqualFold(wiring.CatID, "majordomo"), dbLibs)
 		logs.Add("CatHome5", observe.LevelInfo,
 			"db.boot | cat="+wiring.CatID+" | 库根 "+toolRT.DBSvc.Root()+" | dbLibs="+itoa(len(dbLibs)), "DB", "", "", 0, frame.Current(), false)
 	}
-	// 工具工单面接线——非内置工具 Post → 组 Flow 认领执行 → 100ms Tick 收回执
-	wiring.Session.SetToolOffice(&oaToolOffice{oa: toolRT.OA})
-	// 轮末总结工单面接线——SVC/LLMSimpleRequest（挂单方 #2；开关与 LLM 配置在 wireSession 已装配）
-	wiring.Session.SetRoundSummaryOffice(&oaRoundSummaryOffice{oa: toolRT.OA})
-	// 轮末总结播报面接线（A247/A265）——kokoro 合成 → audio.Join 拼接 → Enqueue 播放（失败只记日志）
-	wiring.Session.SetRoundSummarySpeaker(newSummarySpeaker(toolRT.Py, toolRT.Audio, func(key string) string {
-		return store.Resolve(schema, key).Value
-	}, func(level int, message string) {
-		logs.Add("CatHome5", level, message, "CHAT", "", "", 0, frame.Current(), false)
-	}))
-	// 浏览器生命周期接线——timeback 开锚预热（browser_vision）/ 域回收关闭（有头实例保活）
-	wiring.Session.Timeback.Browser = toolRT.Browser
-	// 图片注入路径规范化——`<rootId>:<rel>` → 绝对路径（与 text-* / cs-* 同一根解析实现）
-	if toolRT.FileService != nil {
-		fileService := toolRT.FileService
-		wiring.Session.SetImagePathResolver(func(path string) string {
-			full, err := fileService.Resolve(path, false)
-			if err != nil {
-				return ""
-			}
-			return full
-		})
-	}
 
-	// [段9e] 可观测面接线——cats 段（Flow 注册表 + self_desc 自述）/ boxes 段（DataBox 截面）
+	// [段9d-1] 多猫注册表（d-1）——majordomo 注册 + 启动扫描（sessions/*/cat.cfg → 注册表；running 猫补建会话）
+	cats := newCatRegistry(dataRoot)
+	cats.logf = func(level int, message, category string) {
+		logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
+	}
+	cats.assemble = func(catID string) *sessionWiring {
+		catWiring := wireCatSession(dataRoot, workspace, toolsResult, schema, store, llmStore, delays, catID)
+		if catWiring == nil || catWiring.Session == nil {
+			return catWiring
+		}
+		attachSessionRuntime(catWiring, toolRT, store, schema, logs, frame)
+		return catWiring
+	}
+	cats.loadOnBoot()
+
+	// [段9e] 可观测面接线——cats 段（Flow 注册表 + self_desc 自述）/ boxes 段（DataBox 截面）/ sessions 段（全部已建会话）
 	builder.Cats = func() []observe.Cat { return snapshotCats(toolRT.Runner, toolRT.DB) }
 	builder.Boxes = func() []observe.Box { return snapshotBoxes(toolRT.DB) }
+	builder.Sessions = func() []any {
+		entries := []any{}
+		for _, inst := range cats.entries() {
+			if inst.session == nil {
+				continue
+			}
+			entry := inst.session.StateEntry()
+			entry["id"] = inst.id
+			entry["name"] = inst.displayName
+			entry["lastContextChangeAt"] = inst.session.Context.LastChangeAt()
+			entries = append(entries, entry)
+		}
+		return entries
+	}
 
 	// [段10] 端口解析——flag > http.port 配置 > 端口段主端口
 	listenPort := band.MainPort
@@ -319,6 +327,8 @@ func main() {
 
 	// [段11] 静态页根
 	htmlRoot := resolveHTMLRoot(*htmlRootFlag, workspace)
+	// [段11b] 默认猫注册——majordomo 恒运行（主端口即其宿主面；无独立对话端口）
+	cats.setMajor(wiring, wiring.DisplayName, listenPort)
 
 	// [段12] HTTP 外观层——路由装配 → 起服 → 250ms Pump
 	server := cathomehttp.New(cathomehttp.Options{
@@ -350,6 +360,7 @@ func main() {
 		DisplayName: wiring.DisplayName,
 		Running:     true,
 		Port:        listenPort,
+		Cats:        cats,
 		Logf: func(level int, message, category string) {
 			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
 		},
@@ -392,14 +403,20 @@ func main() {
 			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
 		},
 		Apply: func(catKey string, cfg *config.CatCfg) {
+			// 按猫寻址（多猫面）——目标会话未装配（静默）时只落盘不生效
+			inst := cats.findAny(catKey)
+			if inst == nil || inst.session == nil || inst.wiring == nil {
+				return
+			}
 			// 授权面实时——名单落盘即改本次运行的可调工具集（注入面仍新会话刷新）
-			applySessionAuth(toolsResult.Registry, wiring.Session, catKey, cfg.ToolNames)
+			applySessionAuth(toolsResult.Registry, inst.session, inst.id, cfg.ToolNames)
 			// 端点面实时——apiConfigId / reasoningEffort 经同步访问器切换（猫级覆盖，不改端点池）
-			if wiring.Client != nil {
-				wiring.Client.SetBinding(cfg.APIConfigID, cfg.ReasoningEffort)
+			if inst.wiring.Client != nil {
+				inst.wiring.Client.SetBinding(cfg.APIConfigID, cfg.ReasoningEffort)
 			}
 			// 库白名单实时——dbLibs 落盘即改本猫可访问库集合
-			db.RegisterCat(catKey, strings.EqualFold(catKey, "majordomo"), cfg.DBLibs)
+			db.RegisterCat(inst.id, strings.EqualFold(inst.id, "majordomo"), cfg.DBLibs)
+			cats.refreshCfg(inst.id, cfg)
 		},
 		Restart: restartState,
 		Dispatch: func(command string) bool {
@@ -451,6 +468,8 @@ func main() {
 	router.ValidateEnabledRoots = adminDeps.ValidateEnabledRoots
 	router.FilterInjectPaths = adminDeps.FilterInjectPaths
 	router.AutoMount = adminDeps.TryAutoMountOnMessage
+	// 多猫注册表后置校验面——新猫继承 defaultEnabledRoots 时过滤池外根（与 cat-config 写面同源）
+	cats.validateRoots = adminDeps.ValidateEnabledRoots
 
 	if htmlRoot == "" {
 		boot.Report("HTML_ROOT_MISSING", observe.KindEnv, "外观层（静态页）", observe.StateEmpty,
@@ -465,6 +484,8 @@ func main() {
 		dataRoot, listenPort, band.Area, *pageFlag, func(level int, message, category string) {
 			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
 		})
+	// 多会话 Idle 判据——全局闸门等全部已建会话（多猫面；majordomo 恒在列）
+	gate.setSessionsProvider(cats.sessions)
 	// 自启面（外壳件 2）——仅交互模式启用（非交互探针不得改写 HKCU Run）；托盘切换经 channel 回主线程执行
 	var autoStart autoStartPoller
 	var trayToggle chan struct{}
@@ -498,9 +519,10 @@ func main() {
 					handleAutoStartToggle(store, schema, logs)
 				case <-ticker.C:
 					toolRT.Runner.Tick()
-					wiring.Session.Pump()
-					// 延迟队列泵（c-2）——到点条目转 sys 注入队（停机态保留；对齐 C# ChatBridge.PumpDelays）
-					wiring.PumpDelays()
+					// 全部会话推进（多猫面——majordomo 与已启动猫逐条 Pump）
+					cats.pumpAll()
+					// 延迟队列泵（c-2）——共享队列到点条目按 catKey 分发（停机态保留；对齐 C# ChatBridge.PumpDelays）
+					cats.pumpDelays(delays)
 					// 组订阅巡检（p4-3）——静默窗口到期且订阅者有未读时汇总推送（对齐 C# RunInteractive 的 PumpIdle 位点）
 					groupForward.Pump()
 					// 按猫新会话请求（cat.new-session）——仅 Idle 时执行（轮内不重建）
@@ -542,8 +564,8 @@ func main() {
 			gate:   gate,
 			tick: func() {
 				toolRT.Runner.Tick()
-				wiring.Session.Pump()
-				wiring.PumpDelays()
+				cats.pumpAll()
+				cats.pumpDelays(delays)
 				router.ConsumePendingNewSession()
 			},
 			state: func() (string, int, int) {

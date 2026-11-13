@@ -134,7 +134,7 @@ func TestCommandRouterCatTexts(t *testing.T) {
 		{"cat.delete other", "cat.delete | 未找到猫: other"},
 		{"cat.start other", "cat.start | 未找到猫: other"},
 		{"cat.start majordomo", "cat.start | 已在运行: majordomo :8079"},
-		{"cat.new X", "ERR|NOT_IMPLEMENTED|多猫面未实现（单猫形态）: cat.new"},
+		{"cat.new X", "ERR|NOT_IMPLEMENTED|多猫面未接线（cat.new）"},
 		{"cat.session.new other", "cat.session.new | ERR|CAT_OFFLINE|猫未运行: other"},
 	}
 	for _, item := range cases {

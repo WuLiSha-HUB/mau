@@ -323,7 +323,7 @@ func (s *hostGroupService) NewSession(argsJSON string) string {
 		if router == nil {
 			return "ERR|HOSTCMD_NO_SERVICE|宿主指令服务未就绪"
 		}
-		if !router.requestSessionRebuild(first, origin) {
+		if !router.requestSessionRebuild(to, first, origin) {
 			return "ERR|GROUP_REBUILD_PENDING|本会话已有挂起的重建请求"
 		}
 	} else {
@@ -496,18 +496,19 @@ func (s *hostGroupService) resolveCatDisplayName(catKey string) string {
 	return cfg.DisplayName
 }
 
-// findDeliveryCat 投递寻址——单猫形态：majordomo / 会话 id / 显示名命中即默认会话；其余 nil。
+// findDeliveryCat 投递寻址——多猫注册表优先，默认会话按 id / 显示名命中（对齐 C# FindDeliveryCat）。
 //
-// 对齐 C# CatHostService.FindDeliveryCat 的特殊会话薄壳分支（多猫注册表归 d-1）。
+// 返回 nil = 未找到 / 会话缺失（调用方按「未运行」出声跳过，不静默）。
 func (s *hostGroupService) findDeliveryCat(key string) *session.Session {
 	router := s.router()
-	if router == nil || router.Session == nil || key == "" {
+	if router == nil || key == "" {
 		return nil
 	}
-	if key == "majordomo" || key == router.CatID || key == router.Session.DisplayNameSnapshot() {
-		return router.Session
+	inst := router.catInstanceOf(key)
+	if inst == nil {
+		return nil
 	}
-	return nil
+	return inst.session
 }
 
 // handleCatInfoOne 单猫运行态统计——与 cat.info 单条同源（只把「全猫」范围收到「一只」）。
@@ -521,14 +522,15 @@ func (s *hostGroupService) handleCatInfoOne(key string) string {
 	if key == "" {
 		return "ERR|BAD_ARGS|缺少猫寻址键"
 	}
-	if key != "majordomo" && key != router.CatID {
+	inst := router.catInstanceOf(key)
+	if inst == nil {
 		return "ERR|CAT_NOT_FOUND|未找到猫: " + key
 	}
 	// [段1] 头行——运行面字段（会话观测字段随正文条目 JSON 全量给出）
-	id := "majordomo"
-	name := "majordomo"
-	running := router.Running
-	port := router.Port
+	id := inst.id
+	name := inst.displayName
+	running := inst.running
+	port := inst.port
 	var head strings.Builder
 	head.WriteString(`{"ok":true,"tool":"group-catinfo","cat":`)
 	head.WriteString(bricks.JSONRelaxedString(id))
@@ -546,7 +548,7 @@ func (s *hostGroupService) handleCatInfoOne(key string) string {
 		runningText = "运行中"
 	}
 	// [段2] 正文——单猫条目（与 cat.info 的 cats 元素同构）
-	entry := router.buildCatInfoEntry(name)
+	entry := router.buildCatInfoEntry(inst)
 	var sb strings.Builder
 	sb.WriteString(head.String())
 	sb.WriteString("\n")

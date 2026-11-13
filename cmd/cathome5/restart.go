@@ -39,8 +39,10 @@ const (
 type restartGate struct {
 	// state 重启登记面
 	state *admin.RestartState
-	// sess 默认会话（Idle 判据 + 失败回执注入）
+	// sess 默认会话（失败回执注入目标）
 	sess *session.Session
+	// sessionsFn 全部已建会话（多猫面 Idle 判据；nil = 只判 sess）
+	sessionsFn func() []*session.Session
 	// runner 帧序宿主（Flow 空闲判据）
 	runner *runtime.Runner
 	// oa 工单撮合器（在途判据）
@@ -121,12 +123,30 @@ func (g *restartGate) Tick() bool {
 	return false
 }
 
+// setSessionsProvider 注入多会话列表（多猫面——全局 Idle 判据遍历全部已建会话；nil = 只判默认会话）。
+func (g *restartGate) setSessionsProvider(fn func() []*session.Session) {
+	if g == nil {
+		return
+	}
+	g.sessionsFn = fn
+}
+
 // describeBlocker 全局 Idle 判据——空串 = 可执行接力；否则逐项列出未就绪卡点。
 func (g *restartGate) describeBlocker() string {
 	parts := make([]string, 0, 4)
-	if g.sess != nil && !g.sess.IsIdle() {
-		name, _, _ := g.sess.GetRunState()
-		parts = append(parts, "会话「"+g.sess.DisplayName+"」非 Idle（运行态 "+name+"）")
+	sessions := []*session.Session{}
+	if g.sessionsFn != nil {
+		sessions = g.sessionsFn()
+	}
+	if len(sessions) == 0 && g.sess != nil {
+		sessions = append(sessions, g.sess)
+	}
+	for _, sess := range sessions {
+		if sess == nil || sess.IsIdle() {
+			continue
+		}
+		name, _, _ := sess.GetRunState()
+		parts = append(parts, "会话「"+sess.DisplayName+"」非 Idle（运行态 "+name+"）")
 	}
 	if g.runner != nil {
 		for _, entry := range g.runner.Entries() {
@@ -144,8 +164,10 @@ func (g *restartGate) describeBlocker() string {
 	if open, work := g.oa.InFlight(); open+work > 0 {
 		parts = append(parts, "OA 在途（待认领 "+strconv.Itoa(open)+" / 执行中 "+strconv.Itoa(work)+"）")
 	}
-	if g.sess != nil && g.sess.ViewBus != nil && g.sess.ViewBus.HasPendingContent() {
-		parts = append(parts, "视图推送仍有待推内容")
+	for _, sess := range sessions {
+		if sess != nil && sess.ViewBus != nil && sess.ViewBus.HasPendingContent() {
+			parts = append(parts, "视图推送仍有待推内容（"+sess.DisplayName+"）")
+		}
 	}
 	return strings.Join(parts, "；")
 }

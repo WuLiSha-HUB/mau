@@ -33,7 +33,7 @@ const (
 	catCfgSetPrefix = "cat.cfg.set "
 )
 
-// commandRouter 是会话指令路由——单会话形态（多猫分派归 P3-d 尾部）。
+// commandRouter 是会话指令路由——多猫形态（d-1：cat.* 全族按猫寻址；`Chat ` 投递默认猫）。
 type commandRouter struct {
 	// DataRoot 数据根（cat.cfg / cat-default.cfg 读取）
 	DataRoot string
@@ -43,21 +43,23 @@ type commandRouter struct {
 	Registry *toolpool.Registry
 	// Pool 工具池（注入报告工具组映射——OwnerFlow 数据源）
 	Pool *toolpool.Pool
-	// Session 目标会话
+	// Session 默认会话（majordomo——`Chat ` 投递目标）
 	Session *session.Session
-	// CatID 猫 key
+	// CatID 默认猫 key
 	CatID string
 	// DisplayName 显示名兜底（cat.cfg 读取失败时）
 	DisplayName string
-	// Running 主干运行态（cat.list / cat.info 运行面字段——服务在跑才应答指令）
+	// Running 主干运行态（单猫回落口径；多猫走 Cats 注册表）
 	Running bool
 	// Port 主干监听端口（cat.list / cat.info 端口字段）
 	Port int
+	// Cats 多猫注册表（nil = 单猫形态——测试 / 未接线场景按 majordomo 语义回落）
+	Cats *catRegistry
 	// Logf 出声回调（nil = 静默）
 	Logf func(level int, message, category string)
 	// AutoMount 消息自动挂载（nil = 不挂载）——「上工/开工 <项目>」命中即接管投递
 	AutoMount func(content string) bool
-	// Apply 猫配置生效面（cat.cfg.set 落盘后调用；nil = 只落盘不生效）
+	// Apply 猫配置生效面（cat.cfg.set / catcfg.apply 落盘后调用；nil = 只落盘不生效）
 	Apply func(catKey string, cfg *config.CatCfg)
 	// ValidateToolNames 工具名单校验（池外名剔除；nil = 原样保留）
 	ValidateToolNames func(raw string) (string, []string)
@@ -67,8 +69,8 @@ type commandRouter struct {
 	FilterInjectPaths func(items []string) []string
 	// pendingMu 保护 pendingRebuild
 	pendingMu sync.Mutex
-	// pendingRebuild 挂起的会话重建请求（cat.new-session 指令 / group-newsession 自指置位——Idle 时消费，轮内不重建）
-	pendingRebuild pendingRebuildRequest
+	// pendingRebuild 挂起的会话重建请求（cat key → 请求；Idle 时消费，轮内不重建）
+	pendingRebuild map[string]pendingRebuildRequest
 }
 
 // pendingRebuildRequest 是挂起的会话重建请求——重复登记不覆盖首次请求（C# ChatSession._pendingRebuild 同语义）。
@@ -136,19 +138,22 @@ func (r *commandRouter) Handle(text string) bool {
 	return false
 }
 
-// sessionNew 执行会话重建——重读 cat.cfg → 重算声明面 → 构建注入面 → 清前文 / 视图 / 统计。
+// sessionNew 执行默认猫会话重建——重读 cat.cfg → 重算声明面 → 构建注入面 → 清前文 / 视图 / 统计。
 //
 // 顺序对齐 C# ChatBridge.HandleSessionNew：声明面 → 注入提示词 → 清前文 → 留档 → 清视图 → 注入报告 → 重置事件。
 func (r *commandRouter) sessionNew(firstMessage string) bool {
-	return r.sessionNewWithOrigin(firstMessage, "")
+	return r.sessionNewFor(r.CatID, r.Session, firstMessage, "")
 }
 
-// sessionNewWithOrigin 执行会话重建（带初始消息来源锚）——origin 随初始消息投递（组派单用 group:<组>:<seq>:delegation）。
-func (r *commandRouter) sessionNewWithOrigin(firstMessage, origin string) bool {
-	cfg := r.loadCfg()
-	specs := r.rebuildSpecs(cfg)
+// sessionNewFor 执行指定猫的会话重建（带初始消息来源锚）——origin 随初始消息投递（组派单用 group:<组>:<seq>:delegation）。
+func (r *commandRouter) sessionNewFor(catID string, sess *session.Session, firstMessage, origin string) bool {
+	if sess == nil {
+		return false
+	}
+	cfg := r.loadCfgFor(catID)
+	specs := r.rebuildSpecsFor(catID, sess, cfg)
 	prompt, report, count := r.buildInjectSurface(cfg, specs)
-	summary := r.Session.Rebuild(session.SessionNewOptions{
+	summary := sess.Rebuild(session.SessionNewOptions{
 		DisplayName:      cfg.DisplayName,
 		ToolSpecs:        specs,
 		SystemPrompt:     prompt,
@@ -156,35 +161,35 @@ func (r *commandRouter) sessionNewWithOrigin(firstMessage, origin string) bool {
 		InjectCount:      count,
 	})
 	if firstMessage != "" {
-		if r.Session.PostUser(firstMessage, "user", "", origin) {
+		if sess.PostUser(firstMessage, "user", "", origin) {
 			summary += " · 已注入初始消息 " + strconv.Itoa(utf8.RuneCountInString(firstMessage)) + " 字"
 		} else {
 			summary += " · 初始消息未受理"
-			r.log(2, "会话重建后初始消息未受理: cat="+r.CatID, "CHAT")
+			r.log(2, "会话重建后初始消息未受理: cat="+catID, "CHAT")
 		}
 	}
 	r.log(1, summary, "CHAT")
 	return true
 }
 
-// loadCfg 读取目标猫配置——失败按默认值 + 出声（不阻断重建）。
-func (r *commandRouter) loadCfg() *config.CatCfg {
-	path := filepath.Join(r.DataRoot, "sessions", r.CatID, "cat.cfg")
+// loadCfgFor 读取目标猫配置——失败按默认值 + 出声（不阻断重建）。
+func (r *commandRouter) loadCfgFor(catID string) *config.CatCfg {
+	path := filepath.Join(r.DataRoot, "sessions", catID, "cat.cfg")
 	cfg, err := config.LoadCatCfg(path)
 	if err != nil {
 		r.log(2, "session.new 读取 cat.cfg 失败（按默认值）: "+err.Error(), "CHAT")
-		return &config.CatCfg{ID: r.CatID, DisplayName: r.DisplayName}
+		return &config.CatCfg{ID: catID, DisplayName: catID}
 	}
 	if cfg.ID == "" {
-		cfg.ID = r.CatID
+		cfg.ID = catID
 	}
 	return cfg
 }
 
-// rebuildSpecs 重算声明面——授权面按最新名单实时刷新，声明面按名单裁剪。
-func (r *commandRouter) rebuildSpecs(cfg *config.CatCfg) []session.ToolSpec {
-	authorized := applySessionAuth(r.Registry, r.Session, r.CatID, cfg.ToolNames)
-	defs := r.Registry.FilterToolSpecs(authorized, toolpool.IsDefaultCatKey(r.CatID))
+// rebuildSpecsFor 重算声明面——授权面按最新名单实时刷新，声明面按名单裁剪。
+func (r *commandRouter) rebuildSpecsFor(catID string, sess *session.Session, cfg *config.CatCfg) []session.ToolSpec {
+	authorized := applySessionAuth(r.Registry, sess, catID, cfg.ToolNames)
+	defs := r.Registry.FilterToolSpecs(authorized, toolpool.IsDefaultCatKey(catID))
 	specs := make([]session.ToolSpec, 0, len(defs))
 	for _, def := range defs {
 		specs = append(specs, session.ToolSpec{Name: def.Name, Description: def.Description, ParametersJSON: def.ParametersJSON})
@@ -233,24 +238,65 @@ func applySessionAuth(reg *toolpool.Registry, sess *session.Session, catKey, too
 	return authorized
 }
 
-// catList 输出全猫清单——对齐 C# HandleCatList（头行 + 主干前置行；单猫形态恒一只）。
-//
-// 行分隔用 CRLF：C# Environment.NewLine 在 Windows 上即 \r\n——日志回执逐字对齐按此判。
+// catEntries 全猫条目（含默认猫）——注册表存在时取实况；nil 回落单猫语义（测试 / 未接线场景）。
+func (r *commandRouter) catEntries() []*catInstance {
+	if r.Cats != nil {
+		return r.Cats.entries()
+	}
+	return []*catInstance{{
+		id:          r.CatID,
+		displayName: r.catDisplayName(),
+		session:     r.Session,
+		running:     r.Running,
+		port:        r.Port,
+	}}
+}
+
+// catInstanceOf 单猫寻址（含默认猫）——nil 回落单猫语义（majordomo / 本会话 key / 默认会话显示名命中）。
+func (r *commandRouter) catInstanceOf(key string) *catInstance {
+	if r.Cats != nil {
+		return r.Cats.findAny(key)
+	}
+	if key == "majordomo" || key == r.CatID || (r.Session != nil && key == r.Session.DisplayNameSnapshot()) {
+		return &catInstance{id: r.CatID, displayName: r.catDisplayName(), session: r.Session, running: r.Running, port: r.Port}
+	}
+	return nil
+}
+
+// catStateText 运行态文本——「静默」/「运行中 :<port>」/「运行中」（port=0 = 无独立监听）。
+func catStateText(inst *catInstance) string {
+	if !inst.running {
+		return "静默"
+	}
+	if inst.port > 0 {
+		return "运行中 :" + strconv.Itoa(inst.port)
+	}
+	return "运行中"
+}
+
+// catList 输出全猫清单——对齐 C# HandleCatList（主干前置 + 多猫注册表）。
 func (r *commandRouter) catList() bool {
 	r.log(1, "cat 指令: "+r.buildCatListText(), "CMD")
 	return true
 }
 
 // buildCatListText 构建全猫清单文本（cat.list 指令与 host.command 共用同一实现）。
+//
+// 行分隔用 CRLF：C# Environment.NewLine 在 Windows 上即 \r\n——日志回执逐字对齐按此判。
 func (r *commandRouter) buildCatListText() string {
-	state := "静默"
-	if r.Running {
-		state = "运行中 :" + strconv.Itoa(r.Port)
-	}
+	entries := r.catEntries()
 	var sb strings.Builder
-	sb.WriteString("cat.list | 1 只猫")
+	sb.WriteString("cat.list | " + strconv.Itoa(len(entries)) + " 只猫")
 	sb.WriteString("\r\n")
-	sb.WriteString("  majordomo | majordomo | " + state + " | 主干会话（禁停禁删）")
+	for i, inst := range entries {
+		if i > 0 {
+			sb.WriteString("\r\n")
+		}
+		sb.WriteString("  " + inst.id + " | " + inst.displayName + " | " + catStateText(inst))
+		if toolpool.IsDefaultCatKey(inst.id) {
+			sb.WriteString(" | 主干会话（禁停禁删）")
+		}
+	}
 	return sb.String()
 }
 
@@ -265,61 +311,65 @@ func (r *commandRouter) catInfo() bool {
 
 // buildCatInfoJSON 构建全猫状态统计 JSON（cat.info 指令与 host.catinfo 共用同一实现）。
 func (r *commandRouter) buildCatInfoJSON() string {
-	entry := r.buildCatInfoEntry("majordomo")
+	entries := r.catEntries()
+	list := make([]catInfoEntry, 0, len(entries))
+	for _, inst := range entries {
+		list = append(list, r.buildCatInfoEntry(inst))
+	}
 	payload := catInfoResponse{
 		OK:    true,
 		Tool:  "cat.info",
 		Time:  catInfoTime{Now: time.Now().Format("2006-01-02 15:04:05")},
-		Count: 1,
-		Cats:  []catInfoEntry{entry},
+		Count: len(list),
+		Cats:  list,
 	}
 	return indentedJSON(payload)
 }
 
-// buildCatInfoEntry 构建单猫状态条目——cat.info 与 GET /api/v1/cats 同源（对齐 C# BuildCatInfoEntry 单一实现）。
-//
-// name 由调用方给：cat.info 恒 "majordomo"（C# 同口径）；cats 端点取 cat.cfg.displayName。
-func (r *commandRouter) buildCatInfoEntry(name string) catInfoEntry {
+// buildCatInfoEntry 构建单猫状态条目——cat.info / group-catinfo / GET /api/v1/cats 同源
+// （对齐 C# BuildCatInfoEntry 单一实现：会话缺失只输出运行面字段，不补空值）。
+func (r *commandRouter) buildCatInfoEntry(inst *catInstance) catInfoEntry {
 	entry := catInfoEntry{
-		ID:      "majordomo",
-		Name:    name,
-		Type:    "",
-		Special: true,
-		Running: r.Running,
-		Port:    r.Port,
+		ID:      inst.id,
+		Name:    inst.displayName,
+		Type:    inst.typ,
+		Special: toolpool.IsDefaultCatKey(inst.id),
+		Running: inst.running,
+		Port:    inst.port,
 	}
-	if r.Session != nil {
-		state := r.Session.StateEntry()
-		runMs := map[string]int64{}
-		if table, ok := state["runMs"].(map[string]int64); ok {
-			runMs = table
-		}
-		entry.Phase = valueText(state["phase"])
-		entry.RunState = valueText(state["runState"])
-		entry.RunMs = catInfoRunMs{
-			Idle:  0,
-			Wait:  runMs["wait"],
-			Link:  runMs["link"],
-			Think: runMs["think"],
-			Tool:  runMs["tool"],
-			Run:   runMs["run"],
-			Reply: runMs["reply"],
-		}
-		entry.Requests = valueInt64(state["requests"])
-		entry.Round = valueInt64(state["round"])
-		entry.MsgCount = valueInt(state["msgCount"])
-		entry.Pending = valueInt(state["pending"])
-		entry.NoteActive = valueBool(state["noteActive"])
-		entry.ContextCount = valueInt(state["contextCount"])
-		entry.Context = valueInt64(state["context"])
-		entry.ContextChars = valueInt64(state["contextChars"])
-		entry.LastActiveAt = valueInt64(state["lastActiveAt"])
-		entry.SessionPrompt = valueInt64(state["sessionPrompt"])
-		entry.SessionCompletion = valueInt64(state["sessionCompletion"])
-		entry.SessionCacheHit = valueInt64(state["sessionCacheHit"])
-		entry.SessionMiss = valueInt64(state["sessionMiss"])
-		entry.SessionRate = valueFloat(state["sessionRate"])
+	if inst.session == nil {
+		return entry
 	}
+	state := inst.session.StateEntry()
+	runMs := map[string]int64{}
+	if table, ok := state["runMs"].(map[string]int64); ok {
+		runMs = table
+	}
+	entry.Phase = valueText(state["phase"])
+	entry.RunState = valueText(state["runState"])
+	entry.RunMs = catInfoRunMs{
+		Idle:  0,
+		Wait:  runMs["wait"],
+		Link:  runMs["link"],
+		Think: runMs["think"],
+		Tool:  runMs["tool"],
+		Run:   runMs["run"],
+		Reply: runMs["reply"],
+	}
+	entry.Requests = valueInt64(state["requests"])
+	entry.Round = valueInt64(state["round"])
+	entry.MsgCount = valueInt(state["msgCount"])
+	entry.Pending = valueInt(state["pending"])
+	entry.NoteActive = valueBool(state["noteActive"])
+	entry.ContextCount = valueInt(state["contextCount"])
+	entry.Context = valueInt64(state["context"])
+	entry.ContextChars = valueInt64(state["contextChars"])
+	entry.LastActiveAt = valueInt64(state["lastActiveAt"])
+	entry.SessionPrompt = valueInt64(state["sessionPrompt"])
+	entry.SessionCompletion = valueInt64(state["sessionCompletion"])
+	entry.SessionCacheHit = valueInt64(state["sessionCacheHit"])
+	entry.SessionMiss = valueInt64(state["sessionMiss"])
+	entry.SessionRate = valueFloat(state["sessionRate"])
 	return entry
 }
 
@@ -469,33 +519,39 @@ func valueFloat(v any) float64 {
 	return 0
 }
 
-// catsJSON 构建 GET /api/v1/cats 响应体——对齐 C# BuildCatsJson（version + cats[]）。
+// catsJSON 构建 GET /api/v1/cats 响应体——对齐 C# BuildCatsJson（version + cats[]；主干前置）。
 //
 // 条目 = catInfoEntry 全字段 + 行内编辑三字段（apiConfigId / enabledRoots / reasoningEffort）；
 // enabledRoots 空表恒输出 []（C# string[0] 同形，非 null）。紧凑单行 + 中文直出（JsonUtil.Serialize 同形）。
 func (r *commandRouter) catsJSON() string {
-	name := "majordomo"
-	apiConfigID := ""
-	enabledRoots := []string{}
-	reasoningEffort := ""
-	path := filepath.Join(r.DataRoot, "sessions", r.CatID, "cat.cfg")
-	if cfg, err := config.LoadCatCfg(path); err == nil && cfg != nil {
-		if cfg.DisplayName != "" {
-			name = cfg.DisplayName
+	entries := r.catEntries()
+	list := make([]catsEntry, 0, len(entries))
+	for _, inst := range entries {
+		name := inst.displayName
+		apiConfigID := ""
+		enabledRoots := []string{}
+		reasoningEffort := ""
+		path := filepath.Join(r.DataRoot, "sessions", inst.id, "cat.cfg")
+		if cfg, err := config.LoadCatCfg(path); err == nil && cfg != nil {
+			if cfg.DisplayName != "" {
+				name = cfg.DisplayName
+			}
+			apiConfigID = cfg.APIConfigID
+			if cfg.EnabledRoots != nil {
+				enabledRoots = cfg.EnabledRoots
+			}
+			reasoningEffort = cfg.ReasoningEffort
 		}
-		apiConfigID = cfg.APIConfigID
-		if cfg.EnabledRoots != nil {
-			enabledRoots = cfg.EnabledRoots
+		entry := catsEntry{
+			catInfoEntry:    r.buildCatInfoEntry(inst),
+			APIConfigID:     apiConfigID,
+			EnabledRoots:    enabledRoots,
+			ReasoningEffort: reasoningEffort,
 		}
-		reasoningEffort = cfg.ReasoningEffort
+		entry.Name = name
+		list = append(list, entry)
 	}
-	entry := catsEntry{
-		catInfoEntry:    r.buildCatInfoEntry(name),
-		APIConfigID:     apiConfigID,
-		EnabledRoots:    enabledRoots,
-		ReasoningEffort: reasoningEffort,
-	}
-	return compactJSON(catsResponse{Version: 1, Cats: []catsEntry{entry}})
+	return compactJSON(catsResponse{Version: 1, Cats: list})
 }
 
 // catsEntry 是单猫列表条目——状态条目全字段 + 行内编辑三字段（键序对齐 C# BuildCatsJson 追加载荷）。
@@ -568,19 +624,19 @@ func (r *commandRouter) Execute(line string) string {
 	case trimmed == "cat.info":
 		return r.buildCatInfoJSON()
 	case trimmed == "cat.new" || strings.HasPrefix(trimmed, "cat.new "):
-		return "ERR|NOT_IMPLEMENTED|多猫面未实现（单猫形态）: cat.new"
+		return r.catNewCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.new")))
 	case strings.HasPrefix(trimmed, "cat.start "):
 		return r.catStartCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.start ")))
 	case strings.HasPrefix(trimmed, "cat.stop "):
-		return r.catSelfLockOrMissing(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.stop ")), "cat.stop", "强制自启，不可停止")
+		return r.catStopCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.stop ")))
 	case strings.HasPrefix(trimmed, "cat.delete "):
-		return r.catSelfLockOrMissing(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.delete ")), "cat.delete", "不可删除")
+		return r.catDeleteCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.delete ")))
 	case strings.HasPrefix(trimmed, "cat.session.new "):
 		return r.catSessionNewCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.session.new ")))
 	case strings.HasPrefix(trimmed, "cat.pause"):
-		return r.catSelfLockOrMissing(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.pause")), "cat.pause", "不可自查（主干会话不能对自己下中止指令）")
+		return r.catPauseCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.pause")))
 	case strings.HasPrefix(trimmed, "cat.continue"):
-		return r.catSelfLockOrMissing(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.continue")), "cat.continue", "不可自查（主干会话不能对自己下继续指令）")
+		return r.catContinueCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.continue")))
 	case strings.HasPrefix(trimmed, "cat.chat "):
 		return r.catChatCommand(strings.TrimSpace(strings.TrimPrefix(trimmed, "cat.chat ")))
 	case strings.HasPrefix(trimmed, "cat.new-session "):
@@ -616,28 +672,101 @@ func catCommandUsage() string {
 	return strings.Join(lines, "\r\n")
 }
 
-// catSelfLockOrMissing 单猫形态的管理族寻址——majordomo 自锁文本 / 其余 key 未找到猫。
-func (r *commandRouter) catSelfLockOrMissing(key, command, selfText string) string {
-	if key == "" {
-		return command + " | 用法: " + command + " <key>"
+// catNewCommand cat.new——建猫（ticks id + 默认命名 + 模板继承 + 会话装配；静默态待 cat.start）。
+func (r *commandRouter) catNewCommand(name string) string {
+	if r.Cats == nil {
+		return "ERR|NOT_IMPLEMENTED|多猫面未接线（cat.new）"
 	}
-	if key == "majordomo" || key == r.CatID {
-		return command + " | majordomo 为特殊会话——" + selfText
+	inst, errText := r.Cats.createCat(name)
+	if errText != "" {
+		return errText
 	}
-	return command + " | 未找到猫: " + key
+	return "cat.new | id=" + inst.id + " | name=" + inst.displayName + " | 静默态（cat.start 启动）"
 }
 
-// catStartCommand 单猫形态的 cat.start——majordomo 已在运行按 C# 同文案回报；其余 key 未找到猫。
+// catStartCommand cat.start——按猫寻址启动会话（对齐 C# HandleCatStart 的会话层语义）。
 //
-// 多猫新建 / 拉起（分配端口 + HttpHost）不在单猫形态内——majordomo 未运行（理论态）时明示未实现。
+// 形态差异：Go 单端口设计下无每猫独立对话端口（port=0），见 L3 A 域「单进程单端口」。
 func (r *commandRouter) catStartCommand(key string) string {
-	if key != "majordomo" && key != r.CatID {
+	if key == "" {
+		return "cat.start | 用法: cat.start <key>"
+	}
+	if r.Cats != nil {
+		return r.Cats.startCat(key)
+	}
+	if key != r.CatID {
 		return "cat.start | 未找到猫: " + key
 	}
 	if r.Running {
 		return "cat.start | 已在运行: " + r.catDisplayName() + " :" + strconv.Itoa(r.Port)
 	}
-	return "ERR|NOT_IMPLEMENTED|多猫面未实现（单猫形态）: cat.start"
+	return "ERR|NOT_IMPLEMENTED|多猫面未接线（cat.start）"
+}
+
+// catStopCommand cat.stop——多猫注册表停止（majordomo 禁停）。
+func (r *commandRouter) catStopCommand(key string) string {
+	if key == "" {
+		return "cat.stop | 用法: cat.stop <key>"
+	}
+	if r.Cats != nil {
+		return r.Cats.stopCat(key)
+	}
+	if key == "majordomo" || key == r.CatID {
+		return "cat.stop | majordomo 为特殊会话——强制自启，不可停止"
+	}
+	return "cat.stop | 未找到猫: " + key
+}
+
+// catDeleteCommand cat.delete——多猫注册表销毁（majordomo 禁删）。
+func (r *commandRouter) catDeleteCommand(key string) string {
+	if key == "" {
+		return "cat.delete | 用法: cat.delete <key>"
+	}
+	if r.Cats != nil {
+		return r.Cats.deleteCat(key)
+	}
+	if key == "majordomo" || key == r.CatID {
+		return "cat.delete | majordomo 为特殊会话——不可删除"
+	}
+	return "cat.delete | 未找到猫: " + key
+}
+
+// catPauseCommand cat.pause——按猫投递中止（majordomo 不可自查）。
+func (r *commandRouter) catPauseCommand(key string) string {
+	if key == "" {
+		return "cat.pause | 用法: cat.pause <key>"
+	}
+	if key == "majordomo" {
+		return "cat.pause | majordomo 为特殊会话——不可自查（主干会话不能对自己下中止指令）"
+	}
+	inst := r.catInstanceOf(key)
+	if inst == nil {
+		return "cat.pause | 未找到猫: " + key
+	}
+	if inst.session == nil {
+		return "cat.pause | 猫已停机（无会话）: " + inst.displayName
+	}
+	inst.session.RequestPause()
+	return "cat.pause | 已投递中止: " + inst.displayName
+}
+
+// catContinueCommand cat.continue——按猫投递继续（majordomo 不可自查）。
+func (r *commandRouter) catContinueCommand(key string) string {
+	if key == "" {
+		return "cat.continue | 用法: cat.continue <key>"
+	}
+	if key == "majordomo" {
+		return "cat.continue | majordomo 为特殊会话——不可自查（主干会话不能对自己下继续指令）"
+	}
+	inst := r.catInstanceOf(key)
+	if inst == nil {
+		return "cat.continue | 未找到猫: " + key
+	}
+	if inst.session == nil {
+		return "cat.continue | 猫已停机（无会话）: " + inst.displayName
+	}
+	inst.session.RequestContinue()
+	return "cat.continue | 已投递继续: " + inst.displayName
 }
 
 // catDisplayName 显示名兜底（C# cat.DisplayName 同口径）。
@@ -648,9 +777,7 @@ func (r *commandRouter) catDisplayName() string {
 	return r.CatID
 }
 
-// catSessionNewCommand 跨猫会话重建（C# RouteAdminLine 的 cat.session.new 分支）。
-//
-// 单猫形态：majordomo 可重建（须空闲）；其余 key 按 ERR|CAT_OFFLINE 原样带回。
+// catSessionNewCommand 跨猫会话重建（C# RouteAdminLine 的 cat.session.new 分支）——目标须空闲。
 func (r *commandRouter) catSessionNewCommand(rest string) string {
 	body := strings.TrimSpace(rest)
 	if body == "" {
@@ -673,7 +800,7 @@ func (r *commandRouter) catSessionNewCommand(rest string) string {
 	return "cat.session.new | 已重建会话: " + key + tail
 }
 
-// catChatCommand 单猫形态的 cat.chat——majordomo 自锁，其余未找到猫。
+// catChatCommand cat.chat——按猫投递对话（majordomo 不可自查）。
 func (r *commandRouter) catChatCommand(rest string) string {
 	space := strings.IndexByte(rest, ' ')
 	if space <= 0 {
@@ -684,36 +811,61 @@ func (r *commandRouter) catChatCommand(rest string) string {
 	if content == "" {
 		return "cat.chat | 内容不能为空"
 	}
-	return r.catSelfLockOrMissing(key, "cat.chat", "不可自查（主干会话不能对自己投递对话）")
+	if key == "majordomo" {
+		return "cat.chat | majordomo 为特殊会话——不可自查（主干会话不能对自己投递对话）"
+	}
+	inst := r.catInstanceOf(key)
+	if inst == nil {
+		return "cat.chat | 未找到猫: " + key
+	}
+	if inst.session == nil {
+		return "cat.chat | 猫已停机（无会话）: " + inst.displayName
+	}
+	inst.session.PostUser(content, "user", "", "")
+	return "cat.chat | 已投递: " + inst.displayName
 }
 
-// catNewSessionCommand 按猫请求新会话——majordomo 置待消费标志（Idle 时重建，轮内不重建）。
+// catNewSessionCommand 按猫请求新会话——置待消费标志（Idle 时重建，轮内不重建）。
 func (r *commandRouter) catNewSessionCommand(key string) string {
 	if key == "" {
 		return "cat.new-session | 用法: cat.new-session <key>"
 	}
-	if key != "majordomo" && key != r.CatID {
+	if key == "majordomo" {
+		r.requestSessionRebuild("majordomo", "", "")
+		return "cat.new-session | 已请求新会话: majordomo"
+	}
+	inst := r.catInstanceOf(key)
+	if inst == nil {
 		return "cat.new-session | 未找到猫: " + key
 	}
-	r.requestSessionRebuild("", "")
-	return "cat.new-session | 已请求新会话: majordomo"
+	if inst.session == nil {
+		return "cat.new-session | 猫已停机（无会话）: " + inst.displayName
+	}
+	r.requestSessionRebuild(inst.id, "", "")
+	return "cat.new-session | 已请求新会话: " + inst.displayName
 }
 
 // requestSessionRebuild 登记会话重建——轮末 / Idle 生效；重复登记返回 false（不覆盖首次请求）。
 //
 // 对齐 C# ChatSession.RequestSessionRebuild：首个请求的 first / origin 保留，后续登记一律拒绝。
-func (r *commandRouter) requestSessionRebuild(firstMessage, origin string) bool {
+func (r *commandRouter) requestSessionRebuild(catKey, firstMessage, origin string) bool {
+	if catKey == "" {
+		catKey = r.CatID
+	}
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
-	if r.pendingRebuild.pending {
+	if r.pendingRebuild == nil {
+		r.pendingRebuild = map[string]pendingRebuildRequest{}
+	}
+	if _, exists := r.pendingRebuild[catKey]; exists {
 		return false
 	}
-	r.pendingRebuild = pendingRebuildRequest{pending: true, first: firstMessage, origin: origin}
-	r.log(1, "会话重建已登记（轮末生效）: cat="+r.CatID, "CHAT")
+	r.pendingRebuild[catKey] = pendingRebuildRequest{pending: true, first: firstMessage, origin: origin}
+	r.log(1, "会话重建已登记（轮末生效）: cat="+catKey, "CHAT")
 	return true
 }
 
-// rebuildCatSession 跨猫会话重建——目标须空闲；供 Group 工具面与指令面共用（单猫形态目标恒 majordomo）。
+// rebuildCatSession 跨猫会话重建——目标须空闲；供 Group 工具面与指令面共用。
 //
 // 对齐 C# AdminService.RebuildCatSession：寻址 → 空闲判据 → 重建（带初始消息与来源锚）。
 func (r *commandRouter) rebuildCatSession(key, firstMessage, origin string) string {
@@ -721,52 +873,70 @@ func (r *commandRouter) rebuildCatSession(key, firstMessage, origin string) stri
 	if useKey == "" {
 		return "ERR|CAT_KEY_EMPTY|目标猫 key 不能为空"
 	}
-	if r.Session == nil || (useKey != "majordomo" && useKey != r.CatID) {
+	inst := r.catInstanceOf(useKey)
+	if inst == nil || inst.session == nil {
 		return "ERR|CAT_OFFLINE|猫未运行: " + useKey
 	}
-	if !r.Session.IsIdle() {
+	if !inst.session.IsIdle() {
 		return "ERR|CAT_BUSY|猫忙——仅在空闲时可重建: " + useKey
 	}
-	r.sessionNewWithOrigin(firstMessage, origin)
+	r.sessionNewFor(inst.id, inst.session, firstMessage, origin)
 	return "ok|" + useKey
 }
 
 // ConsumePendingNewSession 消费按猫新会话请求——仅 Idle 时执行（轮内不重建，避免冲掉在途回合）。
 //
-// 返回 true = 已执行重建。
+// 返回 true = 至少执行了一次重建。
 func (r *commandRouter) ConsumePendingNewSession() bool {
 	r.pendingMu.Lock()
-	pending := r.pendingRebuild
-	r.pendingMu.Unlock()
-	if !pending.pending {
+	if len(r.pendingRebuild) == 0 {
+		r.pendingMu.Unlock()
 		return false
 	}
-	if r.Session == nil || !r.Session.IsIdle() {
-		return false
+	keys := make([]string, 0, len(r.pendingRebuild))
+	for key := range r.pendingRebuild {
+		keys = append(keys, key)
 	}
-	r.pendingMu.Lock()
-	r.pendingRebuild = pendingRebuildRequest{}
 	r.pendingMu.Unlock()
-	return r.sessionNewWithOrigin(pending.first, pending.origin)
+	consumed := false
+	for _, key := range keys {
+		inst := r.catInstanceOf(key)
+		if inst == nil || inst.session == nil || !inst.session.IsIdle() {
+			continue
+		}
+		r.pendingMu.Lock()
+		pending, exists := r.pendingRebuild[key]
+		if exists {
+			delete(r.pendingRebuild, key)
+		}
+		r.pendingMu.Unlock()
+		if !exists {
+			continue
+		}
+		r.sessionNewFor(inst.id, inst.session, pending.first, pending.origin)
+		consumed = true
+	}
+	return consumed
 }
 
-// catCfgApply catcfg.apply——重读 cat.cfg 并走与 cat.cfg.set 同一生效面（单猫形态）。
+// catCfgApply catcfg.apply——重读 cat.cfg 并走与 cat.cfg.set 同一生效面（按猫寻址）。
 func (r *commandRouter) catCfgApply(key string) string {
 	if key == "" {
 		return "catcfg.apply | 用法: catcfg.apply <key>"
 	}
-	if key != "majordomo" && key != r.CatID {
+	inst := r.catInstanceOf(key)
+	if inst == nil {
 		return "catcfg.apply | 猫不存在: " + key
 	}
-	path := filepath.Join(r.DataRoot, "sessions", "majordomo", "cat.cfg")
+	path := filepath.Join(r.DataRoot, "sessions", inst.id, "cat.cfg")
 	cfg, err := config.LoadCatCfg(path)
 	if err != nil || cfg == nil {
-		return "catcfg.apply | cat.cfg 不存在: majordomo"
+		return "catcfg.apply | cat.cfg 不存在: " + inst.id
 	}
 	if r.Apply != nil {
-		r.Apply("majordomo", cfg)
+		r.Apply(inst.id, cfg)
 	}
-	return "catcfg.apply | majordomo | 已生效（前文项新会话生效）"
+	return "catcfg.apply | " + inst.displayName + " | 已生效（前文项新会话生效）"
 }
 
 // catCfgGetCommand 指令入口（cat.cfg.get）——结果落 CMD 日志（与 cat.list / cat.info 同口径）。
@@ -781,19 +951,16 @@ func (r *commandRouter) catCfgSetCommand(rest string) bool {
 	return true
 }
 
-// resolveCatCfgTarget 猫寻址 → cat.cfg 路径（单猫形态：majordomo / 本会话 id 命中，其余未找到）。
+// resolveCatCfgTarget 猫寻址 → cat.cfg 路径（多猫注册表；majordomo 亦按注册条目寻址）。
 func (r *commandRouter) resolveCatCfgTarget(key string) (id, path, errText string) {
 	if key == "" {
 		return "", "", "缺少猫寻址键"
 	}
-	if key == "majordomo" {
-		id = "majordomo"
-	} else if key == r.CatID {
-		id = r.CatID
-	} else {
+	inst := r.catInstanceOf(key)
+	if inst == nil {
 		return "", "", "未找到猫: " + key + "（cat.list 查看全部）"
 	}
-	return id, filepath.Join(r.DataRoot, "sessions", id, "cat.cfg"), ""
+	return inst.id, filepath.Join(r.DataRoot, "sessions", inst.id, "cat.cfg"), ""
 }
 
 // formatCatCfg cat.cfg 字段清单格式化——get / set 共用（写后读回对照用同一口径）。
