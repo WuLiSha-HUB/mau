@@ -34,7 +34,7 @@ import (
 //
 // 版本单点 = 仓库根 version.txt（构建时经 -ldflags "-X main.version=<版本>" 注入；
 // 不带 ldflags 时用本默认值——源码直跑与 CHANGELOG 对齐）。
-var version = "0.26.9"
+var version = "0.27.0"
 
 func main() {
 	// [段0] 部署链子命令分派（cathome5 deploy prepare|deploy|relaunch）——不进宿主启动链
@@ -457,6 +457,8 @@ func main() {
 			"未定位 html 根（源码区 CatHome4/html 或 --html-root）", "用 --html-root 指定静态页目录，或确认 workspace.json 的 mau 根可达", "S6")
 	}
 
+	// 组订阅巡检（p4-3）——静默窗口到期且订阅者有未读时汇总推送（主循环每帧调用，内部 1 秒节流；对应 C# GroupAutoForward.PumpIdle）
+	groupForward := &groupForwarder{svc: groupSvc}
 	// [段12f] 机制 ticker——100ms 帧序（对齐 C# 主循环）：组 Flow 驱动 → OA 结算 → 会话推进 → 重启闸门。
 	// 快照 / SSE 仍走 250ms Pump（观测面节拍与机制节拍分离）。
 	gate := newRestartGate(restartState, wiring.Session, toolRT.Runner, toolRT.OA, workspace,
@@ -499,6 +501,8 @@ func main() {
 					wiring.Session.Pump()
 					// 延迟队列泵（c-2）——到点条目转 sys 注入队（停机态保留；对齐 C# ChatBridge.PumpDelays）
 					wiring.PumpDelays()
+					// 组订阅巡检（p4-3）——静默窗口到期且订阅者有未读时汇总推送（对齐 C# RunInteractive 的 PumpIdle 位点）
+					groupForward.Pump()
 					// 按猫新会话请求（cat.new-session）——仅 Idle 时执行（轮内不重建）
 					router.ConsumePendingNewSession()
 					// 重启闸门（T3/T4）——通过后接力已拉起，主循环走退出通道
