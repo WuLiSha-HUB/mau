@@ -99,6 +99,28 @@ namespace SetUp
                 {
                     return Fail("步4 前置缺失：corpus/ch4 目录不存在——语料堆未就位。");
                 }
+                // 产物目录先清空——组翻译与 publish 都只覆盖不清理，跨版本残留（退役组 dll / 旧出口程序集）会混装进运行区
+                string[] purgeTargets = new string[]
+                {
+                    Path.Combine(repoRoot, "public", "app"),
+                    Path.Combine(repoRoot, "public", "src")
+                };
+                for (int p = 0; p < purgeTargets.Length; p = p + 1)
+                {
+                    if (!Directory.Exists(purgeTargets[p]))
+                    {
+                        continue;
+                    }
+                    try
+                    {
+                        Directory.Delete(purgeTargets[p], true);
+                        Console.WriteLine("[SetUp] 步4 前置清理：" + purgeTargets[p]);
+                    }
+                    catch (Exception ex)
+                    {
+                        return Fail("步4 前置清理失败：" + purgeTargets[p] + " —— " + ex.Message);
+                    }
+                }
                 string[] groupDirs = Directory.GetDirectories(corpusDir);
                 Array.Sort(groupDirs, StringComparer.OrdinalIgnoreCase);
                 List<string[]> groupBuilds = new List<string[]>();

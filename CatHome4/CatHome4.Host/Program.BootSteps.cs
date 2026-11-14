@@ -158,6 +158,8 @@ namespace CH4
                     fix = "内部一致性缺陷（需上报）——附启动报告与日志反馈";
                     level = 3;
                 }
+                // 启动期失败必须可见——S3（观测日志）之前的段失败时 LogStore 未就绪，Console 是唯一出口
+                Console.WriteLine("[BOOT] 段失败 " + stage + " | " + ex.GetType().Name + " | " + ex.Message);
                 StartupDegradation.Report(code, kind, ability, state, "启动段 " + stage + " 失败：" + ex.Message, fix, stage);
                 BootLog.Add(stage, "段失败 | " + ex.GetType().Name + " | " + ex.Message);
                 LogStore.Add("CatHome4", level, "boot.stage | " + stage + " | 失败：" + ex.Message, "BOOT");
