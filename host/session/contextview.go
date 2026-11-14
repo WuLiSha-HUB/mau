@@ -217,10 +217,23 @@ func buildKeyInfoItem(index int, item keyInfoItem) string {
 
 // BuildFullContextView 完整前文视图 JSON——GET /api/v1/fullctx 数据源。
 //
-// Go 侧无独立留档层（C# FullContextStore 的 append 留档面未移植）：条目源 = 内存前文
-// （与 /api/v1/context 同源）；tokens 按 chars ÷ ratio 折算，ratio 有实测（本会话最近请求
-// ctxTokens / chars）用实测，否则缺省 2.4 且 estimated=true——与 C# 前端标注语义一致。
+// 挂载留档（SetFullContext）时从 sessions_ctx 文本读——落盘权威 = 留档，视图只是读取面，
+// 读取前强制采集一次（展示面不受 30 秒节流滞后影响）；未挂载回落内存前文视图。
 func (s *Session) BuildFullContextView(max int) string {
+	s.mu.Lock()
+	store := s.fullCtx
+	s.mu.Unlock()
+	if store != nil {
+		return store.BuildView(max)
+	}
+	return s.buildMemoryFullContextView(max)
+}
+
+// buildMemoryFullContextView 内存前文视图——未挂载留档时的回退面（条目源 = 内存前文）。
+//
+// tokens 按 chars ÷ ratio 折算，ratio 有实测（本会话最近请求 ctxTokens / chars）用实测，
+// 否则缺省 2.4 且 estimated=true——与 C# 前端标注语义一致。
+func (s *Session) buildMemoryFullContextView(max int) string {
 	msgs := s.Context.Messages()
 	total := len(msgs)
 	start := 0

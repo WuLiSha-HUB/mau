@@ -261,6 +261,17 @@ func (n *NoteTracker) Snapshot() (tasks []string, current, done int) {
 	return out, n.current, n.done
 }
 
+// Clear 清空计划——回滚复位（状态段下一帧按空计划输出；无计划即「暂无计划」）。
+func (n *NoteTracker) Clear() {
+	n.mu.Lock()
+	n.tasks = nil
+	n.current = 0
+	n.done = 0
+	n.justCompleted = false
+	n.mu.Unlock()
+	n.notify()
+}
+
 // Restore 恢复落盘 Note——启动恢复（空计划不改内存态；索引越界夹取）。
 func (n *NoteTracker) Restore(tasks []string, current, done int) {
 	if len(tasks) == 0 {

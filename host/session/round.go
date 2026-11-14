@@ -691,6 +691,9 @@ func (s *Session) applyUsage(usageJSON string) {
 	}
 	r.mu.Unlock()
 
+	// A93 实测比值——最近一次请求的真实 prompt token + 当时前文字符数（留档头 token 折算来源）
+	chars := computeContextChars(s.Context.Messages())
+
 	s.mu.Lock()
 	s.sessionTokens.Prompt += parsed.Prompt
 	s.sessionTokens.CacheHit += parsed.CacheHit
@@ -701,6 +704,9 @@ func (s *Session) applyUsage(usageJSON string) {
 	s.roundTools = toolCount
 	s.roundPhases = phases
 	s.roundElapsedMs = elapsed
+	if parsed.Prompt > 0 && chars > 0 {
+		s.ctxCharsPerToken = float64(chars) / float64(parsed.Prompt)
+	}
 	s.mu.Unlock()
 	// A202 唯一常规落盘点——请求边界即物化点
 	s.SaveMeta()
@@ -966,6 +972,8 @@ func (s *Session) closeRound() {
 	r.toolDone = false
 	r.mu.Unlock()
 	s.Note.Restore(nil, 0, 0)
+	// 完整前文留档——本轮正常收尾强制采集一次（尾部不再依赖节流窗口或端点读取兜底）
+	s.CaptureFullContext(true)
 }
 
 // notePullInfo Note 自动拉起判定——剩余 ≥2 条才拉起（最后 1 条不拉起，全部完成天然跳过）。

@@ -33,6 +33,8 @@ func (s *Session) Rebuild(opts SessionNewOptions) string {
 	if opts.DisplayName != "" {
 		s.SetDisplayName(opts.DisplayName)
 	}
+	// 完整前文定稿——当前份转历史 + 份数轮转（清前文之前：留档保留完整旧前文）
+	s.FinalizeFullContext()
 	// 注入提示词 → 系统提示词；清前文（system 保留）
 	s.Context.SetSystemPrompt(opts.SystemPrompt)
 	s.Context.Clear()

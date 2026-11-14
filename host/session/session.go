@@ -4,6 +4,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ToolSpec 是会话注入面工具声明——wire 声明三字段。
@@ -118,6 +119,16 @@ type Session struct {
 	packResolver func(path string) (string, error)
 	// packReader 加载包文本读取（编码探测；nil = 未接线）
 	packReader func(absPath string) (string, error)
+	// fullCtx 完整前文留档（nil = 未挂载——视图回落内存前文）
+	fullCtx *FullContextStore
+	// ctxCharsPerToken 会话实测字符/token 比值（最近一次请求的 prompt token 反推；0 = 无实测）
+	ctxCharsPerToken float64
+	// ctxPatrolAt 上次前文巡检时刻（节流基准；零值 = 从未巡检）
+	ctxPatrolAt time.Time
+	// ctxRebuildFailed 上次前文重建失败标志——失败后巡检回落节流窗口（防每请求重试刷日志）
+	ctxRebuildFailed bool
+	// ctxPatrolInterval 前文巡检节流窗口（生产 60 秒；测试注入 0 = 每帧巡检）
+	ctxPatrolInterval time.Duration
 }
 
 // NewSession 建立会话实体（catKey 为空时先构造、SetCatKey 后补齐落盘面）。
@@ -132,6 +143,8 @@ func NewSession(catKey string, ctx *Context, store *SessionStore, views *ViewSto
 		Timeback: NewTimeback(catKey),
 		// 客户端标识兜底——装配层按产品版本覆盖（C# 默认 cat-home4 同口径）
 		clientID: DefaultClientID,
+		// 前文巡检节流窗口——生产 60 秒（测试注入 0 = 每帧巡检）
+		ctxPatrolInterval: contextPatrolInterval,
 	}
 	s.wireTimeback()
 	if catKey != "" {
@@ -312,6 +325,7 @@ func (s *Session) ResetStats() {
 	s.roundTokens = SessionTokens{}
 	s.contextTokens = 0
 	s.persistedContextTokens = 0
+	s.ctxCharsPerToken = 0
 	s.sessionID = NewSessionID()
 	s.createdAt = nowMillis()
 	s.mu.Unlock()

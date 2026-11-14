@@ -21,11 +21,15 @@ import (
 // 本文件是会话指令路由——对齐 mau:CatHome4/CatHome4.Admin/AdminService.InputRoutes.cs 的前缀 / 全等分派。
 //
 // 已落地：`Chat ` 投递、`session.new` / `session.new <内容>` 重建（P3-d d3-a）、
-// `cat.list` / `cat.info` 状态查询（d3-b）、`cat.*` / `catcfg.*` 管理族（c-6：单猫形态）与 `delay.*`（见 delaycommand.go）。
-// 未落地：session clear / session count / note.* / session.rollback / session.fork / reload（归 P3-d d3 尾部）。
+// `cat.list` / `cat.info` 状态查询（d3-b）、`cat.*` / `catcfg.*` 管理族（c-6：单猫形态）与 `delay.*`（见 delaycommand.go）、
+// `session.rollback <msgIndex>` 回滚（截断唯一通道——前文 / 视图 / Note / 会话重置同批）。
+// 未落地：session clear / session count / note.* / session.fork / reload（归 P3-d d3 尾部）。
 
 // sessionNewPrefix session.new 带初始消息的前缀（含尾空格，C# line.Substring(12) 同口径）。
 const sessionNewPrefix = "session.new "
+
+// sessionRollbackPrefix 会话回滚指令前缀（含尾空格——对齐 C# line.Substring(17).Trim()）。
+const sessionRollbackPrefix = "session.rollback "
 
 // catCfgGetPrefix / catCfgSetPrefix 每猫配置指令前缀（含尾空格——对齐 C# line.Substring(12).Trim()）。
 const (
@@ -122,6 +126,8 @@ func (r *commandRouter) Handle(text string) bool {
 		return r.sessionNew("")
 	case strings.HasPrefix(text, sessionNewPrefix):
 		return r.sessionNew(strings.TrimSpace(strings.TrimPrefix(text, sessionNewPrefix)))
+	case strings.HasPrefix(text, sessionRollbackPrefix):
+		return r.sessionRollbackOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackPrefix)))
 	case strings.HasPrefix(text, catCfgGetPrefix):
 		return r.catCfgGetCommand(strings.TrimSpace(strings.TrimPrefix(text, catCfgGetPrefix)))
 	case strings.HasPrefix(text, catCfgSetPrefix):
@@ -186,6 +192,8 @@ func (r *commandRouter) HandleFor(catID string, sess *session.Session, text stri
 		return r.sessionNewFor(catID, sess, "", "")
 	case strings.HasPrefix(text, sessionNewPrefix):
 		return r.sessionNewFor(catID, sess, strings.TrimSpace(strings.TrimPrefix(text, sessionNewPrefix)), "")
+	case strings.HasPrefix(text, sessionRollbackPrefix):
+		return r.sessionRollbackOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackPrefix)))
 	}
 	return r.Handle(text)
 }
@@ -221,6 +229,29 @@ func (r *commandRouter) sessionNewFor(catID string, sess *session.Session, first
 		}
 	}
 	r.log(1, summary, "CHAT")
+	return true
+}
+
+// sessionRollbackOn 执行指定会话的回滚——参数为前文消息索引（仅 assistant 正式回复可作切点）。
+//
+// 指令已识别即受理（返回 true）；失败以 ERR| 文本进日志（忙 / 越界 / 非正式回复三类）。
+// 每猫端口与主入口共用本实现——目标会话由调用方给（不在本方法内取默认猫）。
+func (r *commandRouter) sessionRollbackOn(sess *session.Session, arg string) bool {
+	if sess == nil {
+		r.log(2, "session.rollback | 会话未就绪（参数 "+arg+"）", "CHAT")
+		return false
+	}
+	idx, err := strconv.Atoi(arg)
+	if err != nil {
+		r.log(2, "session.rollback | 参数非法: "+arg+"（需要消息索引）", "CHAT")
+		return true
+	}
+	result := sess.Rollback(idx)
+	level := 1
+	if strings.HasPrefix(result, "ERR|") {
+		level = 2
+	}
+	r.log(level, "session.rollback | "+result, "CHAT")
 	return true
 }
 

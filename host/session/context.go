@@ -19,6 +19,8 @@ type Context struct {
 	systemPrompt string
 	// lastChangeAt 最后一次前文变动时刻（Unix 毫秒；0=从未变动）
 	lastChangeAt int64
+	// onAppend 消息追加回调（完整前文留档采集挂接点；nil = 未挂接）——解锁后调用，不在锁内执行
+	onAppend func()
 }
 
 // NewContext 建立空会话上下文。
@@ -56,21 +58,24 @@ func (c *Context) AddUserMessageWithImages(text, imagesJSON string) *Message {
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	msg := newMessage(RoleUser, text)
 	msg.ImagesJSON = imagesJSON
 	c.history = append(c.history, msg)
 	c.markChangedLocked()
+	c.mu.Unlock()
+	c.fireAppend()
 	return &msg
 }
 
 // AddAssistantMessage 追加助手文本回复。
 func (c *Context) AddAssistantMessage(text string) *Message {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.history = append(c.history, newMessage(RoleAssistant, text))
 	c.markChangedLocked()
-	return &c.history[len(c.history)-1]
+	msg := &c.history[len(c.history)-1]
+	c.mu.Unlock()
+	c.fireAppend()
+	return msg
 }
 
 // AddAssistantToolCalls 追加助手工具调用声明——tool_calls JSON 原样 + 思考内容（回传铁律）。
@@ -81,22 +86,23 @@ func (c *Context) AddAssistantToolCalls(toolCallsJSON, reasoning string) *Messag
 		return nil
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	msg := newMessage(RoleAssistant, "")
 	msg.ToolCallsJSON = toolCallsJSON
 	msg.ReasoningContent = reasoning
 	c.history = append(c.history, msg)
 	c.markChangedLocked()
+	c.mu.Unlock()
+	c.fireAppend()
 	return &msg
 }
 
 // AddToolResult 追加工具结果——与调用 ID 配对；同一 ToolCallID 只入册一次（幂等，重复返回 nil）。
 func (c *Context) AddToolResult(toolCallID, toolName, result string) *Message {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	for i := len(c.history) - 1; i >= 0; i-- {
-		msg := c.history[i]
-		if msg.Role == RoleTool && msg.ToolCallID == toolCallID {
+		existing := c.history[i]
+		if existing.Role == RoleTool && existing.ToolCallID == toolCallID {
+			c.mu.Unlock()
 			return nil
 		}
 	}
@@ -105,6 +111,8 @@ func (c *Context) AddToolResult(toolCallID, toolName, result string) *Message {
 	msg.ToolName = toolName
 	c.history = append(c.history, msg)
 	c.markChangedLocked()
+	c.mu.Unlock()
+	c.fireAppend()
 	return &msg
 }
 
@@ -269,6 +277,25 @@ func parseToolCallDecls(toolCallsJSON string) []toolDecl {
 		result = append(result, toolDecl{ID: id, Name: call.Function.Name})
 	}
 	return result
+}
+
+// SetOnAppend 设置消息追加回调（nil = 清除）——完整前文留档的采集挂接点。
+//
+// 回调在解锁后调用：回调内会读取前文（Messages），在锁内执行会与 RWMutex 重入相撞。
+func (c *Context) SetOnAppend(fn func()) {
+	c.mu.Lock()
+	c.onAppend = fn
+	c.mu.Unlock()
+}
+
+// fireAppend 触发消息追加回调（未挂接时零动作）。
+func (c *Context) fireAppend() {
+	c.mu.RLock()
+	hook := c.onAppend
+	c.mu.RUnlock()
+	if hook != nil {
+		hook()
+	}
 }
 
 // markChangedLocked 标记前文变动（调用方持锁）。

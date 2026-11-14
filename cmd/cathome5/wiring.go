@@ -90,6 +90,15 @@ func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsRes
 	reconcileViewOnLoad(views, messages)
 	sess := session.NewSession(catID, ctx, sessionStore, views)
 	sess.SetDisplayName(wiring.DisplayName)
+	// 完整前文留档（design-ch4-fullctx）——落盘 <data>/sessions_ctx；采集源 = 本会话前文。
+	// 份数读 chat.full_ctx_keep（读取器实时取值，立即生效）；比值取会话实测（usage 帧反推）。
+	sess.SetFullContext(session.NewFullContextStore(
+		filepath.Join(dataRoot, "sessions_ctx"),
+		catID,
+		func() []session.Message { return sess.Context.Messages() },
+		func() int { return session.ResolveFullCtxKeep(store.Resolve(schema, "chat.full_ctx_keep").Value) },
+		sess.ContextCharsPerToken,
+	))
 	// 桌宠种类——外观池解析（cat.cfg appearanceId 零值 = 跟随默认外观；池缺失 / 引用失效 = 空 = 无桌宠）
 	appearancePool := config.LoadAppearancePool(filepath.Join(dataRoot, "config", "appearance.json"))
 	sess.SetPetKind(resolvePetKind(appearancePool, cfg.AppearanceID))
