@@ -1,0 +1,2 @@
+# 部署脚本按 LF 入库——bash 对 CRLF 零容忍
+* text=auto eol=lf
