@@ -24,6 +24,9 @@ fi
 echo "      $(/usr/bin/node --version)"
 
 echo "[3/6] 检查应用目录与文件"
+# 运行用户须能读到整棵目录——scp / 手工拷贝常留下 700 或别的组，先归一
+chgrp -R "${RUN_USER}" "${APP_DIR}"
+chmod -R g+rX "${APP_DIR}"
 for f in server.js web/index.html deploy/linux-see-window.service; do
     if [ ! -r "${APP_DIR}/${f}" ]; then
         echo "      ERR：缺 ${APP_DIR}/${f}" >&2
