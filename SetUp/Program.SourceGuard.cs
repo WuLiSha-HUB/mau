@@ -12,7 +12,7 @@ namespace SetUp
     /// 判据 = 内容（逐文件 SHA256），不依赖写盘时刻——git 拉取同批落盘让 mtime 先后无保证（同秒误报），
     /// 复制保时刻时又会漏报，时间判据两个方向都失真（A270 实测：exe 21:31:02.888 / 源码 21:31:02.911，
     /// 内容一致却报落后）。
-    /// 规范：design-ch4-release.md §九（SetUp/ 源码与 SetUp.exe 同 commit）。
+    /// 规范：design-ch4-release.md §九（SetUp/ 源码与 SetUp 同 commit）。
     /// </summary>
     public static partial class Program
     {
@@ -25,7 +25,7 @@ namespace SetUp
         /// <summary>
         /// 自举代际自检——exe 内嵌快照与磁盘源码逐文件比对，不一致即返回告警文本（逐文件点名）。
         /// 不阻断（旧 exe 仍能自举），但必须出声——判例：段5b 资产复制随 1.8.154 进源码，
-        /// 根目录 SetUp.exe 仍是旧二进制，提示音整段缺失而报告全绿。
+        /// 根目录 SetUp 仍是旧二进制，提示音整段缺失而报告全绿。
         /// </summary>
         /// <param name="repoRoot">仓库根</param>
         /// <returns>告警文本（空串 = exe 内嵌源码与磁盘一致）</returns>
@@ -43,7 +43,7 @@ namespace SetUp
                 Dictionary<string, string> built = ReadEmbeddedSourceSnapshot();
                 if (built.Count == 0)
                 {
-                    return "SetUp.exe 未内嵌源码快照（构建期 EmbeddedResource 缺失）——代际自检不可用，请重发 exe（design-ch4-release §九）";
+                    return "SetUp 未内嵌源码快照（构建期 EmbeddedResource 缺失）——代际自检不可用，请重发 exe（design-ch4-release §九）";
                 }
                 // [段3] 磁盘侧——SetUp/ 下的 .cs，排除 bin / obj 构建产物
                 Dictionary<string, string> disk = ReadDiskSourceSnapshot(srcDir);
@@ -212,7 +212,7 @@ namespace SetUp
             {
                 return "";
             }
-            return "SetUp.exe 与 SetUp/ 源码内容不一致（exe 内嵌快照 ≠ 磁盘）——" + builder.ToString() + "——请重发 exe（design-ch4-release §九）";
+            return "SetUp 与 SetUp/ 源码内容不一致（exe 内嵌快照 ≠ 磁盘）——" + builder.ToString() + "——请重发 exe（design-ch4-release §九）";
         }
 
         /// <summary>

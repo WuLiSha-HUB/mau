@@ -29,8 +29,8 @@ namespace SetUp
 
             try
             {
-                // [段0a] 自举代际自检（A264）——运行中的 SetUp.exe 落后于 SetUp/ 源码即出声
-                // 不阻断：旧 exe 仍能自举；但必须可见（design-ch4-release §九：SetUp/ 源码与 SetUp.exe 同 commit）
+                // [段0a] 自举代际自检（A264）——运行中的 SetUp 落后于 SetUp/ 源码即出声
+                // 不阻断：旧 exe 仍能自举；但必须可见（design-ch4-release §九：SetUp/ 源码与 SetUp 同 commit）
                 long selfCheckMs = Environment.TickCount64;
                 string selfDetail = CheckSelfGeneration(repoRoot);
                 bool selfGenOk = selfDetail.Length == 0;

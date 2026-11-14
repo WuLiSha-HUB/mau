@@ -77,11 +77,11 @@ namespace SetUp
                 return 0;
             }
 
-            // [段2] 仓库根检测——当前目录存在 Mau.sln 才继续（SetUp.exe 合法位置 = Mau 仓库根）
+            // [段2] 仓库根检测——当前目录存在 Mau.sln 才继续（SetUp 合法位置 = Mau 仓库根）
             string repoRoot = ResolveRepoRoot(Environment.CurrentDirectory);
             if (repoRoot.Length == 0)
             {
-                Console.WriteLine("[SetUp] 错误：当前目录未找到 Mau.sln——SetUp.exe 必须位于 Mau 仓库根目录运行。");
+                Console.WriteLine("[SetUp] 错误：当前目录未找到 Mau.sln——SetUp 必须位于 Mau 仓库根目录运行。");
                 Pause();
                 return 1;
             }
@@ -106,7 +106,7 @@ namespace SetUp
             {
                 if (args.Length < 2)
                 {
-                    Console.WriteLine("[SetUp] deploy 需要目标目录参数：SetUp.exe deploy <目标目录>");
+                    Console.WriteLine("[SetUp] deploy 需要目标目录参数：SetUp deploy <目标目录>");
                     exitCode = 1;
                 }
                 else
@@ -157,12 +157,12 @@ namespace SetUp
         {
             Console.WriteLine("SetUp —— CH4/Mau 一键部署工具");
             Console.WriteLine("用法:");
-            Console.WriteLine("  SetUp.exe            打印本帮助（等同 -h / --help）");
-            Console.WriteLine("  SetUp.exe prepare    重建全发布链（public/ + Mau-public/）");
-            Console.WriteLine("  SetUp.exe deploy <目录>  部署正式运行实例到目标目录（原子切换——现行更名 _old 留作回退源）");
-            Console.WriteLine("  SetUp.exe sync-html [--target <运行区目录>] [--no-run] [--report <路径>]");
+            Console.WriteLine("  SetUp            打印本帮助（等同 -h / --help）");
+            Console.WriteLine("  SetUp prepare    重建全发布链（public/ + Mau-public/）");
+            Console.WriteLine("  SetUp deploy <目录>  部署正式运行实例到目标目录（原子切换——现行更名 _old 留作回退源）");
+            Console.WriteLine("  SetUp sync-html [--target <运行区目录>] [--no-run] [--report <路径>]");
             Console.WriteLine("                           外观层静态资源镜像同步：源区 html → 产物区 + 运行区（--target 缺省从运行中宿主反推）");
-            Console.WriteLine("  SetUp.exe relaunch [--mode <full|incr|host>] --wait-pid <pid> --target <目录> [--majordomopush <串>] [--report <路径>]");
+            Console.WriteLine("  SetUp relaunch [--mode <full|incr|host>] --wait-pid <pid> --target <目录> [--majordomopush <串>] [--report <路径>]");
             Console.WriteLine("                           宿主自更新接力（--mode 缺省 full）：等旧宿主退出 → 全链 prepare / 纯搬运 / 原地 → 原子切换 → 自启新宿主（回执注入）");
             Console.WriteLine("前置：.NET 10 Runtime + SDK；本 exe 须位于 Mau 仓库根（含 Mau.sln）。");
         }

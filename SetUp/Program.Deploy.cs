@@ -41,7 +41,7 @@ namespace SetUp
             string hostExe = Path.Combine(sourceDir, PlatformServices.Paths.HostExeName);
             if (!File.Exists(hostExe))
             {
-                return Fail("public/app/ 下的宿主可执行文件不存在——请先运行 SetUp.exe prepare 重建发布链。");
+                return Fail("public/app/ 下的宿主可执行文件不存在——请先运行 SetUp prepare 重建发布链。");
             }
 
             // [段2b-4] 准备段——外观层对齐 + 复制 _new + config 模板 + version.txt（与 incr 重启链共用同一实现）
