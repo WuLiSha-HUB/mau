@@ -136,7 +136,12 @@ namespace SetUp
 
                 // [段5] 步5：dotnet publish CatHome4 -c Debug -o public\app（宿主部署区）
                 long hostMs = Environment.TickCount64;
-                bool hostOk = RunProcess("dotnet", "publish " + Path.Combine("CatHome4", "CatHome4.Desktop.Win", "CatHome4.Desktop.Win.csproj") + " -c Debug -o " + Path.Combine("public", "app"), repoRoot);
+                // 出口按平台选：Windows = 桌面壳（WinExe）；非 Windows = headless（net10.0——Linux 无 WinForms 运行时，
+                // 发布桌面壳会得到要求 Microsoft.WindowsDesktop.App 的 runtimeconfig，宿主直接起不来）
+                string hostProj = OperatingSystem.IsWindows()
+                    ? Path.Combine("CatHome4", "CatHome4.Desktop.Win", "CatHome4.Desktop.Win.csproj")
+                    : Path.Combine("CatHome4", "CatHome4.csproj");
+                bool hostOk = RunProcess("dotnet", "publish " + hostProj + " -c Debug -o " + Path.Combine("public", "app"), repoRoot);
                 _steps.Add(new StepReport() { Step = 5, Name = "publish CatHome4 -> public/app", Ok = hostOk, Ms = Environment.TickCount64 - hostMs });
                 if (!hostOk)
                 {
