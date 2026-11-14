@@ -165,6 +165,23 @@ func (r *commandRouter) HandleFor(catID string, sess *session.Session, text stri
 			}
 		}
 		return sess.PostUser(content, "user", "", "")
+	case text == "cat.pause":
+		// 本地猫控·中止（对齐 C# InputRoutes RoutePause / LocalCatControlOnly）——无参形式仅每猫端口可命中，
+		// 作用于本端口绑定的会话；主入口裸 cat.pause 仍归管理族报「用法: cat.pause <key>」。
+		if sess == nil {
+			return false
+		}
+		sess.RequestPause()
+		r.log(1, "cat.pause | 已投递中止（本端口会话）: "+catID, "CMD")
+		return true
+	case text == "cat.continue":
+		// 本地猫控·继续（对齐 C# InputRoutes RouteContinue）——同上，仅每猫端口无参形式。
+		if sess == nil {
+			return false
+		}
+		sess.RequestContinue()
+		r.log(1, "cat.continue | 已投递继续（本端口会话）: "+catID, "CMD")
+		return true
 	case text == "session.new":
 		return r.sessionNewFor(catID, sess, "", "")
 	case strings.HasPrefix(text, sessionNewPrefix):

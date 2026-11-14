@@ -338,3 +338,45 @@ func TestCatCfgSetFollowAndBroadcast(t *testing.T) {
 		t.Fatalf("非法值未拒绝: %s", got)
 	}
 }
+
+// TestHandleForLocalCatControl 本地猫控——每猫端口无参 cat.pause / cat.continue 作用于本端口会话
+// （对齐 C# InputRoutes RoutePause / RouteContinue + LocalCatControlOnly）；主入口裸 cat.pause 仍归管理族报用法。
+func TestHandleForLocalCatControl(t *testing.T) {
+	router, _, logs := newCommandRouter(t)
+	sess := router.Session
+
+	// 每猫端口·无参 cat.pause——受理 + 出声
+	if !router.HandleFor("majordomo", sess, "cat.pause") {
+		t.Fatal("每猫端口无参 cat.pause 应受理")
+	}
+	if len(*logs) != 1 || !strings.Contains((*logs)[0], "CMD|cat.pause | 已投递中止（本端口会话）: majordomo") {
+		t.Fatalf("无参 cat.pause 日志不符: %v", *logs)
+	}
+
+	// 每猫端口·无参 cat.continue——受理 + 出声
+	*logs = nil
+	if !router.HandleFor("majordomo", sess, "cat.continue") {
+		t.Fatal("每猫端口无参 cat.continue 应受理")
+	}
+	if len(*logs) != 1 || !strings.Contains((*logs)[0], "CMD|cat.continue | 已投递继续（本端口会话）: majordomo") {
+		t.Fatalf("无参 cat.continue 日志不符: %v", *logs)
+	}
+
+	// 主入口·裸 cat.pause——仍归管理族报用法（无参不命中本地猫控分支）
+	*logs = nil
+	if !router.Handle("cat.pause") {
+		t.Fatal("主入口裸 cat.pause 应归管理族受理")
+	}
+	if len(*logs) != 1 || !strings.Contains((*logs)[0], "cat.pause | 用法: cat.pause <key>") {
+		t.Fatalf("主入口裸 cat.pause 应报用法: %v", *logs)
+	}
+
+	// 带 key 形式——全等不命中本地分支，仍走管理族（未找到猫）
+	*logs = nil
+	if !router.HandleFor("majordomo", sess, "cat.pause other") {
+		t.Fatal("带 key 形式应归管理族受理")
+	}
+	if len(*logs) != 1 || !strings.Contains((*logs)[0], "cat.pause | 未找到猫: other") {
+		t.Fatalf("带 key 形式文案不符: %v", *logs)
+	}
+}
