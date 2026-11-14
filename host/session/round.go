@@ -97,8 +97,9 @@ const (
 	toolOfficeTimeoutFrames = int64(1200)
 	// missAlertThreshold 单次请求未命中缓存告警阈值
 	missAlertThreshold = 100000
-	// autoContinueMax 上游异常后自动继续上限
-	autoContinueMax = 12
+	// autoContinueMax 上游异常后自动继续上限（仅「真的切换过端点」才续跑——续跑是给换站后的
+	// 新端点一次机会，不是给同一个端点反复撞墙；12 轮 × 每轮 4 次请求的旧口径已判为无限重试）
+	autoContinueMax = 2
 	// autoContinueDelay 自动继续间隔
 	autoContinueDelay = 15 * time.Second
 )
@@ -894,7 +895,9 @@ func (s *Session) abortRoundError() {
 	r.llmToolCallsJSON = ""
 	r.emptyReplyRetry = 0
 	r.streamClosedRetry = false
-	autoContinuable := sawFailover || retried
+	// 自动续跑只给「真的切换过端点」的轮——重试耗尽后同端点重发必然再撞同一堵墙
+	// （判例：2026-11-14 图片请求 3.75 MB 超网关上限，12 轮 × 4 次 = 48 次空转）
+	autoContinuable := sawFailover
 	if autoContinuable && r.autoContinueCount < autoContinueMax {
 		r.autoContinueCount++
 		r.autoContinueDue = time.Now().Add(autoContinueDelay)

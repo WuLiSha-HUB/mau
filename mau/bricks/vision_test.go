@@ -60,20 +60,41 @@ func TestImageAnalyzeArgs(t *testing.T) {
 	}
 }
 
-// TestImageInject 登记回执——头 + 摘要行；参数面零容忍。
+// fakeImageGate 图片通道可用性替身。
+type fakeImageGate struct {
+	reason string
+	down   bool
+}
+
+// ImageChannelDown 返回固定降级态。
+func (f fakeImageGate) ImageChannelDown() (string, bool) { return f.reason, f.down }
+
+// TestImageInject 登记回执——头 + 摘要行；参数面零容忍；通道降级期拒绝。
 func TestImageInject(t *testing.T) {
-	if got, ok := ImageInject(`{"path":""}`); ok || got != "ERR|BAD_ARGS|缺参数 path（必填：path）" {
+	if got, ok := ImageInject(nil, `{"path":""}`); ok || got != "ERR|BAD_ARGS|缺参数 path（必填：path）" {
 		t.Fatalf("缺 path: %s ok=%v", got, ok)
 	}
-	if got, ok := ImageInject(`{"bogus":1}`); ok || !strings.HasPrefix(got, "ERR|BAD_ARGS|未知参数: bogus") {
+	if got, ok := ImageInject(nil, `{"bogus":1}`); ok || !strings.HasPrefix(got, "ERR|BAD_ARGS|未知参数: bogus") {
 		t.Fatalf("未知参数: %s ok=%v", got, ok)
 	}
-	got, ok := ImageInject(`{"path":"D:/a.png"}`)
+	got, ok := ImageInject(nil, `{"path":"D:/a.png"}`)
 	if !ok {
 		t.Fatalf("成功路径应返回 ok: %s", got)
 	}
 	want := `{"ok":true,"tool":"image-inject","target":"D:/a.png"}` + "\n" + "D:/a.png | 已登记（宿主批后段注入）"
 	if got != want {
 		t.Fatalf("回执不符:\n%s\nwant:\n%s", got, want)
+	}
+	// 通道降级期——直接拒绝 + 绕行提示（不发登记回执）
+	downGot, downOK := ImageInject(fakeImageGate{reason: "ERR|TRANSPORT|x", down: true}, `{"path":"D:/a.png"}`)
+	if downOK || !strings.HasPrefix(downGot, "ERR|VISION_UNAVAILABLE|") {
+		t.Fatalf("降级期应拒绝: %s ok=%v", downGot, downOK)
+	}
+	if !strings.Contains(downGot, "请绕行") {
+		t.Fatalf("降级回执应带绕行提示: %s", downGot)
+	}
+	// 通道可用——照常登记
+	if okGot, okOK := ImageInject(fakeImageGate{down: false}, `{"path":"D:/a.png"}`); !okOK || okGot != want {
+		t.Fatalf("通道可用应照常登记: %s ok=%v", okGot, okOK)
 	}
 }

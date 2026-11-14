@@ -18,6 +18,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"cathome5/host/config"
@@ -38,6 +39,10 @@ const (
 	visionClientTimeout = 600 * time.Second
 	// visionRawSummaryUnits 响应体诊断摘要长度（UTF-16 码元——C# string.Substring 同口径）
 	visionRawSummaryUnits = 300
+	// visionCooldownConfig 配置类不可用的熔断时长——配置不改就是同一个结果，长冷却
+	visionCooldownConfig = 10 * time.Minute
+	// visionCooldownTransient 暂时类不可用的熔断时长——网络 / 上游抖动，短冷却后半开
+	visionCooldownTransient = 60 * time.Second
 )
 
 // VisionService 是图像识别服务——image-analyze 工具的执行面。
@@ -52,6 +57,14 @@ type VisionService struct {
 	client *http.Client
 	// logf 日志出口（module=VISION / category=TOOL 由装配层固定）
 	logf func(level int, message string)
+	// mu 熔断态锁（Analyze 跨线程：工具面并发调用）
+	mu sync.Mutex
+	// downUntil 不可用到期时刻（零值 = 可用）
+	downUntil time.Time
+	// downReason 最近一次不可用原因（原始 ERR| 文本）
+	downReason string
+	// downFingerprint 熔断时的配置指纹（配置一变即复位——修好即用，不等冷却）
+	downFingerprint string
 }
 
 // NewVisionService 建立图像识别服务——配置实时读取（vision.* 全局键 + LLM 池配置）。
@@ -85,16 +98,25 @@ func (v *VisionService) log(level int, message string) {
 // 未配置视觉 API → ERR|API_NOT_CONFIGURED（配置后才可用，不做回退）；
 // 图片读取失败 / 超限 → ERR|IMAGE_*；请求失败 → ERR|TIMEOUT / TRANSPORT / HTTP_<码>。
 func (v *VisionService) Analyze(imagePath, question string) string {
+	// [段0] 自动回避——不可用熔断期内直接返回绕行提示，不再发请求（配置变更即复位）
+	if blocked, reply := v.cooldownBlocked(); blocked {
+		return reply
+	}
+
 	// [段1] 配置解析——api_config_id 未配置 / 无效 / 缺 key → API_NOT_CONFIGURED
 	endpoint, model, apiKey, configError := v.resolveConfig()
 	if configError != "" {
+		v.markDown(configError)
 		return configError
 	}
 
-	// [段2] 图片载荷——本地路径 base64 内联 / 回环私网本机抓取 / 公网 URL 直传（单一实现）
-	imageURL, imageError := ResolveImagePayload(imagePath)
+	// [段2] 图片载荷——本地图片先过降分辨率保护；回环私网本机抓取 / 公网 URL 直传
+	imageURL, imageError, shrinkNote := ResolveImagePayloadForVision(imagePath)
 	if imageError != "" {
 		return imageError
+	}
+	if shrinkNote != "" {
+		v.log(1, shrinkNote)
 	}
 
 	// [段3] 请求体——非流式 chat completions + user content 块数组（text + image_url）
@@ -105,10 +127,13 @@ func (v *VisionService) Analyze(imagePath, question string) string {
 	timeoutMs := v.readTimeoutMs()
 	raw, status, transportError := v.post(endpoint, apiKey, body, timeoutMs)
 	if transportError != "" {
+		v.markDown(transportError)
 		return transportError
 	}
 	if status < 200 || status > 299 {
-		return parseVisionErrorText(status, raw)
+		httpError := parseVisionErrorText(status, raw)
+		v.markDown(httpError)
+		return httpError
 	}
 
 	// [段5] 成功响应解析——choices[0].message.content + usage
@@ -119,9 +144,108 @@ func (v *VisionService) Analyze(imagePath, question string) string {
 		v.log(1, "图像识别消耗："+usageText)
 	}
 	if result == "" {
-		return "ERR|EMPTY_RESULT|图像识别响应无输出文本（响应头 300 字符: " + rawSummary + "——请检查端点是否兼容 chat completions 结构）"
+		emptyError := "ERR|EMPTY_RESULT|图像识别响应无输出文本（响应头 300 字符: " + rawSummary + "——请检查端点是否兼容 chat completions 结构）"
+		v.markDown(emptyError)
+		return emptyError
 	}
+	v.clearDown()
 	return result
+}
+
+// cooldownBlocked 熔断检查——返回（是否挡下, 绕行回执文本）。
+//
+// 判据：熔断中且配置指纹未变 → 挡下；配置已变 → 立即复位并放行一次试探。
+func (v *VisionService) cooldownBlocked() (bool, string) {
+	if v == nil {
+		return false, ""
+	}
+	fingerprint := v.configFingerprint()
+	v.mu.Lock()
+	until, reason, markedFingerprint := v.downUntil, v.downReason, v.downFingerprint
+	v.mu.Unlock()
+	if until.IsZero() || !time.Now().Before(until) {
+		return false, ""
+	}
+	if fingerprint != markedFingerprint {
+		v.clearDown()
+		v.log(1, "视觉 API 配置已变更——熔断复位，放行一次试探")
+		return false, ""
+	}
+	remaining := int(time.Until(until) / time.Second)
+	if remaining < 1 {
+		remaining = 1
+	}
+	reply := "ERR|VISION_UNAVAILABLE|当前视觉 API 不可用（" + trimText(reason, 160) + "；" + strconv.Itoa(remaining) +
+		" 秒内不再尝试）——请绕行：本轮不要再用 image-analyze，改用文字线索或已有描述；配置修好后自动恢复"
+	return true, reply
+}
+
+// markDown 按错误类别标记熔断——参数 / 本地图片类错误不熔断（不是 API 不可用）。
+func (v *VisionService) markDown(errText string) {
+	if v == nil {
+		return
+	}
+	cooldown := visionErrorCooldown(errText)
+	if cooldown <= 0 {
+		return
+	}
+	fingerprint := v.configFingerprint()
+	v.mu.Lock()
+	v.downUntil = time.Now().Add(cooldown)
+	v.downReason = errText
+	v.downFingerprint = fingerprint
+	v.mu.Unlock()
+	v.log(2, "视觉 API 不可用熔断："+trimText(errText, 200)+"（"+strconv.Itoa(int(cooldown/time.Second))+" 秒内不再尝试）")
+}
+
+// clearDown 复位熔断——一次成功即清空。
+func (v *VisionService) clearDown() {
+	if v == nil {
+		return
+	}
+	v.mu.Lock()
+	v.downUntil = time.Time{}
+	v.downReason = ""
+	v.downFingerprint = ""
+	v.mu.Unlock()
+}
+
+// configFingerprint 视觉配置指纹——键值变化 = 配置已改（熔断复位判据）。
+func (v *VisionService) configFingerprint() string {
+	if v == nil {
+		return ""
+	}
+	return v.configValue("vision.api_config_id") + "|" +
+		v.configValue("vision.endpoint") + "|" +
+		v.configValue("vision.model") + "|" +
+		v.configValue("vision.detail") + "|" +
+		v.configValue("vision.timeout_ms")
+}
+
+// visionErrorCode 取 ERR|<CODE>| 的 CODE 段。
+func visionErrorCode(errText string) string {
+	if !strings.HasPrefix(errText, "ERR|") {
+		return ""
+	}
+	rest := errText[len("ERR|"):]
+	if index := strings.Index(rest, "|"); index >= 0 {
+		return rest[:index]
+	}
+	return rest
+}
+
+// visionErrorCooldown 错误类别 → 熔断时长（0 = 不熔断）。
+//
+// 配置类（未配置 / 鉴权 / 模型不存在 / 结构不兼容）长冷却；网络类短冷却；
+// IMAGE_* / BAD_ARGS 属本地图片或参数问题——换张图就能成，不熔断。
+func visionErrorCooldown(errText string) time.Duration {
+	switch visionErrorCode(errText) {
+	case "API_NOT_CONFIGURED", "HTTP_400", "HTTP_401", "HTTP_403", "HTTP_404", "HTTP_422", "PARSE", "EMPTY_RESULT":
+		return visionCooldownConfig
+	case "TIMEOUT", "TRANSPORT", "HTTP_429", "HTTP_500", "HTTP_502", "HTTP_503", "HTTP_504":
+		return visionCooldownTransient
+	}
+	return 0
 }
 
 // resolveConfig 配置解析——vision.api_config_id → 池配置 → endpoint / model / key（可选覆盖）。

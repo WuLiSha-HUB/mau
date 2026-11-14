@@ -45,6 +45,8 @@ type BrickOptions struct {
 	Browser *bricks.BrowserService
 	// Vision 视觉识别服务（nil = vision.analyze 报 VISION_NO_SERVICE）
 	Vision bricks.VisionService
+	// ImageGate 图片通道可用性判定（nil = 不判定——image.inject 照常登记）
+	ImageGate bricks.ImageGate
 	// Ts ts 服务执行面（nil = ts-* 报 TS_NO_SERVICE）
 	Ts *bricks.TsService
 	// Proc 进程槽服务执行面（nil = proc-* 报 PROC_NO_SERVICE）
@@ -327,7 +329,7 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 			return bricks.ImageAnalyze(opts.Vision, argAt(args, 0))
 		},
 		"image.inject": func(args []string) (string, bool) {
-			return bricks.ImageInject(argAt(args, 0))
+			return bricks.ImageInject(opts.ImageGate, argAt(args, 0))
 		},
 		// ── TS（TsCat 五条认领线——node stdio 服务，进程与协议归服务层）──
 		"ts.check": func(args []string) (string, bool) {

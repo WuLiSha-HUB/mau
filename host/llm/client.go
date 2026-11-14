@@ -28,6 +28,10 @@ const fallbackModel = "deepseek-v4-flash"
 // 请求重试上限（同端点重试 3 次，共 4 次尝试）。
 const maxRetries = 3
 
+// 每轮请求的故障转移次数上限——主备来回切换会重置 retryCount，是无限请求的放大器
+// （判例 2026-11-14：端点探针在主备间反复判定可切，每切一次重试计数归零）。
+const maxFailovers = 2
+
 // Client 是 DeepSeek 兼容流式客户端——端点 / 模型 / 密钥实时解析（改配置即时生效）。
 type Client struct {
 	// Pool 端点池（可 nil——回落环境变量）
@@ -247,8 +251,15 @@ func (c *Client) httpClient() *http.Client {
 // 重试语义与 C# ChatStream 一致：传输错误 / 429 / 5xx 重试至多 3 次；
 // 无回应超时不重试（直接进故障转移判定）；4xx 不重试；流中断不重试（事件化给上层续传）。
 func (c *Client) Stream(ctx context.Context, messages []session.Message, tools []session.ToolSpec, userID string, emit func(Event)) {
-	body := BuildChatRequestBody(messages, tools, c.Params(), userID)
+	params := c.Params()
+	body, omittedImages := BuildChatRequestBodyBudget(messages, tools, params, userID)
+	if omittedImages > 0 {
+		logAt(1, "请求体预算：省略 "+itoa(omittedImages)+" 张图片（安全上限 3 MB——本地网关 4 MB 断连实测）")
+	}
+	sentWithImages := omittedImages == 0 && requestHasImages(messages)
+	imageDowngraded := false
 	retryCount := 0
+	failoverCount := 0
 	for {
 		endpoint := c.BaseURL()
 		if endpoint == "" {
@@ -283,6 +294,15 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 				return
 			}
 			netError := transportErrorText(sendErr, c.httpClient().Timeout)
+			// 图片通道自动回避：带图请求传输失败 → 标记降级 + 摘图重发一次（不占重试次数）
+			if sentWithImages && !imageDowngraded {
+				imageDowngraded = true
+				ImageChannelState.Mark(netError, imageChannelCooldown)
+				body, omittedImages = BuildChatRequestBodyBudget(messages, tools, params, userID)
+				sentWithImages = false
+				logAt(2, "图片通道降级：带图请求传输失败，已摘图重发（省略 "+itoa(omittedImages)+" 张）")
+				continue
+			}
 			noReplyTimeout := strings.HasPrefix(netError, "ERR|TRANSPORT|Timeout")
 			if !noReplyTimeout && retryCount < maxRetries {
 				retryCount++
@@ -294,7 +314,8 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 				emit(Event{Kind: EventRetryResume, Text: ""})
 				continue
 			}
-			if c.tryFailover(ctx, netError, emit) {
+			if failoverCount < maxFailovers && c.tryFailover(ctx, netError, emit) {
+				failoverCount++
 				retryCount = 0
 				continue
 			}
@@ -326,7 +347,8 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 				return
 			}
 			httpError := ParseErrorText(status, string(raw))
-			if c.tryFailover(ctx, httpError, emit) {
+			if failoverCount < maxFailovers && c.tryFailover(ctx, httpError, emit) {
+				failoverCount++
 				retryCount = 0
 				continue
 			}
@@ -334,6 +356,9 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 			return
 		}
 
+		if sentWithImages {
+			ImageChannelState.Reset()
+		}
 		TranslateSSE(response.Body, emit)
 		closeBody(response)
 		return

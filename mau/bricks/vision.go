@@ -26,6 +26,15 @@ type VisionService interface {
 	Analyze(imagePath, question string) string
 }
 
+// ImageGate 是图片通道可用性判定——宿主 LLM 面的图片通道降级态（nil = 不判定）。
+//
+// 语义：主模型请求体里的图像内容块发不出去时（本地网关请求体上限 / 对端断连），
+// image-inject 直接拒绝并提示绕行——不让「已登记」的假回执把模型拖进重试死路。
+type ImageGate interface {
+	// ImageChannelDown 返回（降级原因, 是否降级中）
+	ImageChannelDown() (string, bool)
+}
+
 // ImageAnalyze 执行 vision.analyze 工具——image-analyze 图像识别。
 func ImageAnalyze(vision VisionService, argsJSON string) (string, bool) {
 	if badArgs := Validate(argsJSON, "path question", "path", "", ""); badArgs != "" {
@@ -53,7 +62,10 @@ func ImageAnalyze(vision VisionService, argsJSON string) (string, bool) {
 }
 
 // ImageInject 执行 image.inject 工具——图片插入主干（登记回执；宿主批后段执行实际注入）。
-func ImageInject(argsJSON string) (string, bool) {
+//
+// 自动回避：图片通道降级期直接拒绝（ERR|VISION_UNAVAILABLE + 绕行提示），不发登记回执
+// ——否则批后段会把图注入前文，下一轮请求又撞同一堵墙（判例 2026-11-14 图片请求超网关上限）。
+func ImageInject(gate ImageGate, argsJSON string) (string, bool) {
 	if badArgs := Validate(argsJSON, "path", "path", "", ""); badArgs != "" {
 		return badArgs, false
 	}
@@ -61,6 +73,22 @@ func ImageInject(argsJSON string) (string, bool) {
 	if path == "" {
 		return "ERR|BAD_ARGS|缺少参数 path", false
 	}
+	if gate != nil {
+		if reason, down := gate.ImageChannelDown(); down {
+			return "ERR|VISION_UNAVAILABLE|当前视觉 API 不可用（" + truncateVisionReason(reason) +
+				"）——请绕行：本轮不要再用 image-inject / image-analyze，改用文字线索或让用户确认；恢复后自动可用", false
+		}
+	}
 	head := MetaHeadFields(toolImageInject, true, path, -1, nil)
 	return head + "\n" + path + " | 已登记（宿主批后段注入）", true
+}
+
+// truncateVisionReason 错误原因截断——按 rune 截 120 字（守卫回执不因长错误膨胀）。
+func truncateVisionReason(text string) string {
+	const limit = 120
+	runes := []rune(text)
+	if len(runes) <= limit {
+		return text
+	}
+	return string(runes[:limit]) + "…"
 }
