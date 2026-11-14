@@ -284,3 +284,50 @@ func TestContextAppendTriggersCapture(t *testing.T) {
 		t.Fatalf("留档未含追加消息：%q", headRunes(text, 300))
 	}
 }
+
+// TestPatrolFullContext 请求前巡检——头一致零动作 / 头漂移按留档重建 / 巡检时刻落基准。
+//
+// 消费点：launchLlm（round.go）每次请求前调用；判据见 design-ch4-ctx-rebuild §二。
+func TestPatrolFullContext(t *testing.T) {
+	dir := t.TempDir()
+	ctx := NewContext()
+	store := NewSessionStore(filepath.Join(dir, "s.jsonl"))
+	views := NewViewStore(filepath.Join(dir, "s.view.jsonl"))
+	sess := NewSession("cat-a", ctx, store, views)
+	full := NewFullContextStore(dir, "cat-a", ctx.Messages, func() int { return 3 }, func() float64 { return 0 })
+	full.interval = 0
+	sess.SetFullContext(full)
+	sess.ctxPatrolInterval = 0 // 关闭巡检节流：每次调用都查
+
+	base := []Message{
+		{Role: RoleSystem, Content: "系统提示"},
+		{Role: RoleUser, Content: "第一条"},
+		{Role: RoleAssistant, Content: "回复一"},
+	}
+	ctx.ReplaceMessages(base)
+	full.Capture(true)
+
+	// [1] 头一致 → 原样返回，前文不动
+	same := sess.PatrolFullContext(ctx.Messages())
+	if len(same) != len(base) || len(ctx.Messages()) != len(base) {
+		t.Fatalf("头一致不应改动前文：巡检返回 %d 条 / 前文 %d 条", len(same), len(ctx.Messages()))
+	}
+
+	// [2] 头漂移（前文丢头）→ 按留档重建
+	ctx.ReplaceMessages([]Message{
+		{Role: RoleSystem, Content: "系统提示（变体）"},
+		{Role: RoleUser, Content: "新的一轮"},
+	})
+	rebuilt := sess.PatrolFullContext(ctx.Messages())
+	if len(rebuilt) != len(base) {
+		t.Fatalf("重建后应回到留档 %d 条，得到 %d 条：%+v", len(base), len(rebuilt), rebuilt)
+	}
+	if ctx.Messages()[0].Content != "系统提示" {
+		t.Fatalf("前文未被替换为留档内容：%q", ctx.Messages()[0].Content)
+	}
+
+	// [3] 节流基准已落——后续请求按窗口节流
+	if sess.ctxPatrolAt.IsZero() {
+		t.Fatal("巡检时刻未记录（节流基准缺失）")
+	}
+}

@@ -188,6 +188,9 @@ func (r *deployRun) run() int {
 
 // prepare 构建 + 测试 + 收集产物到暂存区。
 func (r *deployRun) prepare() error {
+	if r.o.Repo == "" {
+		return fmt.Errorf("未定位施工仓（prepare 需 go.mod 作为构建 cwd）——用 --repo 或环境变量 CAT5_REPO 指定")
+	}
 	version, err := r.version()
 	if err != nil {
 		return err
@@ -226,29 +229,28 @@ func (r *deployRun) prepare() error {
 		return fmt.Errorf("写 version.txt 失败: %w", err)
 	}
 	for _, item := range []struct {
-		name string
-		src  string
-		dst  string
+		name   string
+		flag   string
+		target string
+		dst    string
 	}{
-		{"html", r.o.HTML, filepath.Join(staging, "html")},
-		{"corpus", r.o.Corpus, filepath.Join(staging, "corpus", "ch4")},
-		{"Bricks", r.o.Bricks, filepath.Join(staging, "Bricks")},
-		{"config", r.o.ConfigSrc, filepath.Join(staging, "config")},
+		{"html", r.o.HTML, "html", filepath.Join(staging, "html")},
+		{"corpus", r.o.Corpus, filepath.Join("corpus", "ch4"), filepath.Join(staging, "corpus", "ch4")},
+		{"Bricks", r.o.Bricks, "Bricks", filepath.Join(staging, "Bricks")},
+		{"config", r.o.ConfigSrc, "config", filepath.Join(staging, "config")},
 	} {
-		if item.src == "" {
-			continue
-		}
-		if _, err := os.Stat(item.src); err != nil {
-			return fmt.Errorf("源目录不可达（%s）: %s", item.name, item.src)
+		src, err := r.resolveProductSource(item.name, item.flag, item.target)
+		if err != nil {
+			return err
 		}
 		if err := os.RemoveAll(item.dst); err != nil {
 			return fmt.Errorf("清理旧产物失败（%s）: %w", item.name, err)
 		}
-		if err := copyTree(item.src, item.dst); err != nil {
+		if err := copyTree(src, item.dst); err != nil {
 			return fmt.Errorf("复制失败（%s）: %w", item.name, err)
 		}
 		files, _ := countTree(item.dst)
-		r.add(item.name, true, item.src+" → "+item.dst+"（"+strconv.Itoa(files)+" 文件）")
+		r.add(item.name, true, src+" → "+item.dst+"（"+strconv.Itoa(files)+" 文件）")
 	}
 	r.artifacts["exe"] = exePath
 	r.artifacts["version"] = version
@@ -257,6 +259,26 @@ func (r *deployRun) prepare() error {
 		return err
 	}
 	return nil
+}
+
+// resolveProductSource 产物源解析——显式 flag > 运行区现有（沿用）> 报错。
+//
+// 顺序理由：仓库当前不自持 html / corpus / Bricks / config 源（2026-11-14 实测仓库根无这四个目录，
+// `mau/bricks` 是 Go 包不是积木源），运行区那份就是唯一真相；沿用它是保真——
+// 运行区里手改过的前端（如 chat/blocks/text.js）不会被一个空源顶掉。
+// 显式 flag 仍可覆盖：跨机部署 / 从别处取源 / 想把运行区当基线重建时用。
+func (r *deployRun) resolveProductSource(name, explicit, targetRel string) (string, error) {
+	if explicit != "" {
+		return explicit, nil
+	}
+	if r.o.Target != "" && targetRel != "" {
+		candidate := filepath.Join(r.o.Target, targetRel)
+		if info, statErr := os.Stat(candidate); statErr == nil && info.IsDir() {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("源目录缺失（%s）：未给 --%s，运行区 %s 下也没有 %s——显式指定该 flag 或先建运行区",
+		name, strings.ToLower(name), r.o.Target, targetRel)
 }
 
 // resolveCsBridgeSource 桥产物源目录（--csbridge 覆盖；空 = <repo>/host/csbridge/bin/Debug/net10.0）。
@@ -369,7 +391,10 @@ func (r *deployRun) relaunch() (exitCode int) {
 	//        只有发起方 pid 会自退；历次失败自启 / 手动启动的实例仍持 dll 与目录 cwd → 原子切换改名必失败，
 	//        它们都是待替换运行区里的旧实例，属部署链自身的清理面（只清「可执行路径落在 target 下」的实例）。
 	//        先优雅关（≤2 s）、再强杀（≤3 s）、有强杀则 settle 1 s；命中与处置进报告 step，失败不阻断。
-	r.sweepStrayHosts()
+	// host 模式不做清扫：不替换运行区、不需要改名；且该模式下运行区里的实例可能就是用户手动起的那个。
+	if mode != "host" {
+		r.sweepStrayHosts()
+	}
 	// [段2] prepare 全链——仅 full（失败即不替换运行区）
 	prepOK := true
 	if mode == "full" {
@@ -466,15 +491,16 @@ func (r *deployRun) reportDeployResult(exitCode int) {
 }
 
 // sweepStrayHosts 同目录残留实例清扫（段1 之后、段2 之前——dll 锁必须先释放，原子切换改名才可能成功）。
-// 只作用于「可执行路径落在 target 下」的宿主实例（不碰其它运行区 / 现役实例）；有命中才记报告 step。
+// 只作用于「可执行路径落在 target 下」的宿主实例（不碰其它运行区 / 现役实例）；
+// 无命中 / 扫描失败也记报告 step——报告面必须能区分「清过且干净」与「压根没查」。
 func (r *deployRun) sweepStrayHosts() {
 	swept, err := hostKillInDir(r.o.Target)
 	if err != nil {
-		fmt.Println("[清扫残留] 宿主进程扫描失败（按无实例继续）: " + err.Error())
+		r.add("清扫残留", false, "宿主进程扫描失败（按无实例继续）: "+err.Error())
 		return
 	}
 	if len(swept.PIDs) == 0 {
-		fmt.Println("[清扫残留] 运行区无同目录宿主实例")
+		r.add("清扫残留", true, "运行区无同目录宿主实例")
 		return
 	}
 	detail := "另结束 " + strconv.Itoa(swept.Graceful+swept.Killed) + " 个同目录残留宿主实例（pid " +
@@ -897,12 +923,10 @@ func buildRestartPush(mode string, prepOK, replaced bool, version, target, pushI
 func runDeploy(args []string) int {
 	fs := flag.NewFlagSet("deploy", flag.ContinueOnError)
 	o := deployOptions{
-		Target:       defaultDeployTarget(),
-		Repo:         `D:\Mau\WorkSpace\CatHome5`,
-		HTML:         `D:\Mau\Mau\CatHome4\html`,
-		Corpus:       `D:\Mau\Mau\corpus\ch4`,
-		Bricks:       `D:\Mau\Mau\Bricks`,
-		ConfigSrc:    `D:\Mau\Mau\config`,
+		Target: defaultDeployTarget(),
+		Repo:   resolveRepoRoot(),
+		// 产物源缺省全部留空——prepare 按「显式 flag > 运行区现有」解析（见 resolveProductSource）：
+		// 仓库当前不自持 html / corpus / Bricks / config 源，运行区那份就是唯一真相（2026-11-14 实测）。
 		ProbeTimeout: 30,
 	}
 	registerDeployFlags(fs, &o)
@@ -934,24 +958,49 @@ func runDeploy(args []string) int {
 	return code
 }
 
-// defaultDeployTarget 运行区默认位置（决策 2：D:\Mau\MauOut5）。
+// defaultDeployTarget 运行区默认位置——CAT5_DEPLOY_TARGET > 当前 exe 所在运行区 > D:\Mau\MauOut5。
+//
+// 「exe 所在运行区」判据：同目录有 version.txt + html/，且目录名不是切换链中间态
+// （_staging / _new / _old / _relay）。运行实例里跑 `deploy prepare` 不带 --target 即可命中。
 func defaultDeployTarget() string {
 	if value := os.Getenv("CAT5_DEPLOY_TARGET"); value != "" {
 		return value
 	}
+	if exe, err := os.Executable(); err == nil {
+		if dir := filepath.Dir(exe); isRuntimeDir(dir) {
+			return dir
+		}
+	}
 	return `D:\Mau\MauOut5`
+}
+
+// isRuntimeDir 判定目录是否为运行区——version.txt 与 html/ 齐备，且不是同卷切换链的中间态。
+func isRuntimeDir(dir string) bool {
+	base := strings.ToLower(filepath.Base(dir))
+	for _, suffix := range []string{"_staging", "_new", "_old", "_relay"} {
+		if strings.HasSuffix(base, suffix) {
+			return false
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "version.txt")); err != nil {
+		return false
+	}
+	if info, err := os.Stat(filepath.Join(dir, "html")); err != nil || !info.IsDir() {
+		return false
+	}
+	return true
 }
 
 // registerDeployFlags 注册部署参数（子命令可前可后，解析前统一注册一次）。
 func registerDeployFlags(fs *flag.FlagSet, o *deployOptions) {
-	fs.StringVar(&o.Target, "target", o.Target, "运行区目录（默认 D:\\Mau\\MauOut5）")
-	fs.StringVar(&o.Repo, "repo", o.Repo, "施工仓根（go 构建与测试的 cwd）")
+	fs.StringVar(&o.Target, "target", o.Target, "运行区目录（默认 CAT5_DEPLOY_TARGET > exe 所在运行区 > D:\\Mau\\MauOut5）")
+	fs.StringVar(&o.Repo, "repo", o.Repo, "施工仓根（go 构建与测试的 cwd；默认 CAT5_REPO > exe/cwd 向上 go.mod）")
 	fs.StringVar(&o.Version, "version", "", "版本覆盖（空 = 读 <repo>/version.txt）")
 	fs.StringVar(&o.Staging, "staging", "", "暂存区（空 = <target>_staging）")
-	fs.StringVar(&o.HTML, "html", o.HTML, "前端源目录")
-	fs.StringVar(&o.Corpus, "corpus", o.Corpus, "语料源目录（ch4）")
-	fs.StringVar(&o.Bricks, "bricks", o.Bricks, "积木源目录")
-	fs.StringVar(&o.ConfigSrc, "config", o.ConfigSrc, "配置模板源目录")
+	fs.StringVar(&o.HTML, "html", o.HTML, "前端源目录（空 = 沿用运行区现有 html/）")
+	fs.StringVar(&o.Corpus, "corpus", o.Corpus, "语料源目录（空 = 沿用运行区现有 corpus/ch4）")
+	fs.StringVar(&o.Bricks, "bricks", o.Bricks, "积木源目录（空 = 沿用运行区现有 Bricks/）")
+	fs.StringVar(&o.ConfigSrc, "config", o.ConfigSrc, "配置模板源目录（空 = 沿用运行区现有 config/）")
 	fs.StringVar(&o.CsBridge, "csbridge", "", "cs 桥产物源目录（空 = <repo>/host/csbridge/bin/Debug/net10.0）")
 	fs.StringVar(&o.GoExe, "go", "", "go 可执行文件（空 = PATH / tools/go）")
 	fs.StringVar(&o.Mode, "mode", "incr", "relaunch 模式：full / incr / host")

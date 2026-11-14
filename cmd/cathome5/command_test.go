@@ -380,3 +380,24 @@ func TestHandleForLocalCatControl(t *testing.T) {
 		t.Fatalf("带 key 形式文案不符: %v", *logs)
 	}
 }
+
+// TestSplitInjectListPreservesSpaces 前文注入清单只按逗号拆——路径里的空格必须原样保留。
+//
+// 判例（2026-11-14）：injectList 曾与 toolNames 共用「逗号 + 空白」口径，
+// "ccbp:templates/industry standards/sprout" 被劈成 "ccbp:templates/industry" 且后半截静默丢弃。
+func TestSplitInjectListPreservesSpaces(t *testing.T) {
+	got := splitInjectList("ccbp:SOUL.md, ccbp:templates/industry standards/sprout ,ccbp:L3/Mau,, ")
+	want := []string{"ccbp:SOUL.md", "ccbp:templates/industry standards/sprout", "ccbp:L3/Mau"}
+	if len(got) != len(want) {
+		t.Fatalf("条目数不符：got %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("第 %d 项不符：got %q want %q", i, got[i], want[i])
+		}
+	}
+	// 标识符类清单保持原口径（逗号 + 空白都拆）——两条口径不互相污染
+	if items := splitCfgList("a, b\tc"); len(items) != 3 {
+		t.Fatalf("标识符清单口径变了：%v", items)
+	}
+}

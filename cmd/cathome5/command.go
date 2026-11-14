@@ -1353,7 +1353,7 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 		}
 		return applied, false, ""
 	case "injectList":
-		paths := splitCfgList(value)
+		paths := splitInjectList(value)
 		if r.FilterInjectPaths != nil {
 			paths = r.FilterInjectPaths(paths)
 		} else {
@@ -1507,6 +1507,27 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 }
 
 // splitCfgList 逗号 / 空白分隔清单解析——去空项（对齐 C# SplitList：',', ' ', '\t'）。
+//
+// 只用于标识符类清单（toolNames / packs / dbLibs / enabledRoots）——它们不含空格。
+// 前文注入清单是文件系统路径，走 splitInjectList。
 func splitCfgList(value string) []string {
 	return toolpool.SplitToolNameList(value)
+}
+
+// splitInjectList 前文注入清单解析——只按逗号拆，不按空白拆。
+//
+// 理由：注入项是文件系统路径，合法含空格（如 "templates/industry standards/sprout"）。
+// 模板面（cat-default.cfg 的 defaultInjectList）本就是 JSON 数组，空格原样保留；
+// 指令文本面若按空白拆，会把这样一条路径劈成两半，后半截当非法项丢掉（2026-11-14 判例：
+// config-cat-set majordomo injectList … 后 `ccbp:templates/industry standards/sprout` 变
+// `ccbp:templates/industry`，且无任何告警）。
+func splitInjectList(value string) []string {
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if item := strings.TrimSpace(part); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }

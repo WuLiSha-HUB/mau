@@ -158,17 +158,17 @@ func TestSweepStrayHostsReports(t *testing.T) {
 	if len(r.steps) != 1 || r.steps[0].OK || !strings.Contains(r.steps[0].Detail, "失败 1 个") {
 		t.Fatalf("有失败应记 ok=false 并标失败数：%+v", r.steps)
 	}
-	// 空命中 / 扫描失败：不记 step（出声在 stdout）
+	// 空命中 / 扫描失败：都记 step——报告面必须能区分「清过且干净」与「压根没查」
 	hostKillInDir = func(dir string) (hostSweepResult, error) { return hostSweepResult{}, nil }
 	r = &deployRun{o: deployOptions{Target: target}}
 	r.sweepStrayHosts()
-	if len(r.steps) != 0 {
-		t.Fatalf("空命中不应记 step：%+v", r.steps)
+	if len(r.steps) != 1 || r.steps[0].Name != "清扫残留" || !r.steps[0].OK || !strings.Contains(r.steps[0].Detail, "无同目录宿主实例") {
+		t.Fatalf("空命中应记一条 ok=true 的清扫残留步骤：%+v", r.steps)
 	}
 	hostKillInDir = func(dir string) (hostSweepResult, error) { return hostSweepResult{}, fmt.Errorf("tasklist 失败") }
 	r = &deployRun{o: deployOptions{Target: target}}
 	r.sweepStrayHosts()
-	if len(r.steps) != 0 {
-		t.Fatalf("扫描失败不应记 step：%+v", r.steps)
+	if len(r.steps) != 1 || r.steps[0].Name != "清扫残留" || r.steps[0].OK || !strings.Contains(r.steps[0].Detail, "tasklist 失败") {
+		t.Fatalf("扫描失败应记一条 ok=false 的清扫残留步骤：%+v", r.steps)
 	}
 }

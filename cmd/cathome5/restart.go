@@ -328,6 +328,34 @@ func (g *restartGate) resolveMauOut5() string {
 
 // resolveRepo 解析 CAT5 施工仓根——CAT5_REPO > exe 向上 go.mod > workspace/CatHome5。
 func (g *restartGate) resolveRepo() string {
+	if dir := resolveRepoRoot(); dir != "" {
+		return dir
+	}
+	if g.workspace != nil {
+		for _, root := range g.workspace.Roots {
+			if !strings.EqualFold(root.ID, "workspace") {
+				continue
+			}
+			// 常见名优先（现行 Mau / 历史 CatHome5），再扫一级子目录——判定认 go.mod 内容，不认目录名
+			for _, name := range []string{"Mau", "CatHome5"} {
+				candidate := filepath.Join(root.Path, name)
+				if isCathome5Repo(candidate) {
+					return candidate
+				}
+			}
+			if found := findRepoInWorkspace(root.Path); found != "" {
+				return found
+			}
+		}
+	}
+	return ""
+}
+
+// resolveRepoRoot 包级施工仓解析——CAT5_REPO > exe 向上 go.mod > cwd 向上 go.mod（找不到返回空）。
+//
+// 与 restartGate.resolveRepo 共用同一判据（isCathome5Repo），区别只在于本函数不依赖 workspace 根表，
+// 供 deploy CLI 等无 workspace 上下文的入口使用。
+func resolveRepoRoot() string {
 	if value := strings.TrimSpace(os.Getenv("CAT5_REPO")); value != "" {
 		if isCathome5Repo(value) {
 			return value
@@ -335,27 +363,46 @@ func (g *restartGate) resolveRepo() string {
 		return ""
 	}
 	if exe, err := os.Executable(); err == nil {
-		dir := filepath.Dir(exe)
-		for i := 0; i < 8; i++ {
-			if isCathome5Repo(dir) {
-				return dir
-			}
-			parent := filepath.Dir(dir)
-			if parent == dir {
-				break
-			}
-			dir = parent
+		if dir := findRepoUpward(filepath.Dir(exe), 8); dir != "" {
+			return dir
 		}
 	}
-	if g.workspace != nil {
-		for _, root := range g.workspace.Roots {
-			if !strings.EqualFold(root.ID, "workspace") {
-				continue
-			}
-			candidate := filepath.Join(root.Path, "CatHome5")
-			if isCathome5Repo(candidate) {
-				return candidate
-			}
+	if cwd, err := os.Getwd(); err == nil {
+		if dir := findRepoUpward(cwd, 8); dir != "" {
+			return dir
+		}
+	}
+	return ""
+}
+
+// findRepoUpward 自 dir 起向上查找施工仓（含自身，最多 maxDepth 级）。
+func findRepoUpward(dir string, maxDepth int) string {
+	for i := 0; i <= maxDepth; i++ {
+		if isCathome5Repo(dir) {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			break
+		}
+		dir = parent
+	}
+	return ""
+}
+
+// findRepoInWorkspace 在 workspace 根下一级子目录里找施工仓（按 go.mod 内容判定，不认目录名）。
+func findRepoInWorkspace(root string) string {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		candidate := filepath.Join(root, entry.Name())
+		if isCathome5Repo(candidate) {
+			return candidate
 		}
 	}
 	return ""

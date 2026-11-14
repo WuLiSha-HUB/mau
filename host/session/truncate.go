@@ -34,5 +34,11 @@ func (s *Session) TruncateMessages(keepCount int) {
 	s.mu.Lock()
 	s.contextTokens = 0
 	s.persistedContextTokens = 0
+	store := s.fullCtx
 	s.mu.Unlock()
+	// [段4] 留档对齐——截断后立即强制采集一次：留档是重建唯一源，不能保留已被回滚的消息
+	// （否则下一次头部漂移触发的重建会把它们拉回来——回滚被无声撤销）
+	if store != nil {
+		store.Capture(true)
+	}
 }

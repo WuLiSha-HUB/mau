@@ -1,6 +1,9 @@
 package session
 
-import "time"
+import (
+	"strconv"
+	"time"
+)
 
 // contextPatrolInterval 前文巡检节流窗口——生产 60 秒（测试注入 0 = 每帧巡检）。
 const contextPatrolInterval = 60 * time.Second
@@ -35,6 +38,66 @@ func (s *Session) CaptureFullContext(force bool) {
 	if store != nil {
 		store.Capture(force)
 	}
+}
+
+// PatrolFullContext 请求前巡检——前文首段与留档不一致则按留档重建（design-ch4-ctx-rebuild §二）。
+//
+// 触发面：launchLlm 前（每请求一次，经 ctxPatrolInterval 节流——生产 60 秒，测试注入 0 = 每次都查）。
+// 判据：留档头 == 前文头 → 零动作（回滚截掉的是尾部，头不变——不会被误判为丢头，回滚不撤销）；
+// 不一致 → 留档剥离重建 → 替换前文 + 落盘重写 + 留档对齐。
+// 失败语义：置 ctxRebuildFailed 并在**首次**失败出声（防每请求刷日志），节流窗口内不再重试；任一次成功即复位。
+// 返回本次请求应使用的消息序列（未重建 = 入参原样）。
+func (s *Session) PatrolFullContext(messages []Message) []Message {
+	s.mu.Lock()
+	store := s.fullCtx
+	last := s.ctxPatrolAt
+	interval := s.ctxPatrolInterval
+	s.mu.Unlock()
+	if store == nil || s.Context == nil {
+		return messages
+	}
+	if now := time.Now(); !last.IsZero() && interval > 0 && now.Sub(last) < interval {
+		return messages
+	}
+	s.mu.Lock()
+	s.ctxPatrolAt = time.Now()
+	s.mu.Unlock()
+	if store.HeadMatches(messages) {
+		s.mu.Lock()
+		s.ctxRebuildFailed = false
+		s.mu.Unlock()
+		return messages
+	}
+	rebuilt, err := store.TryRebuild(messages)
+	if err != nil || len(rebuilt) == 0 {
+		s.mu.Lock()
+		alreadyFailed := s.ctxRebuildFailed
+		s.ctxRebuildFailed = true
+		s.mu.Unlock()
+		if !alreadyFailed {
+			detail := "前文巡检：留档重建失败，本轮沿用现有前文"
+			if err != nil {
+				detail += "（" + err.Error() + "）"
+			}
+			logAt(fullCtxModule, 2, detail, LogCategoryChat)
+		}
+		return messages
+	}
+	// [段1] 替换前文——ReplaceMessages 走结构修复面（幂等）
+	s.Context.ReplaceMessages(rebuilt)
+	// [段2] 前文落盘重写——重建是 append-only 的合法例外（与 TruncateMessages 同口径）
+	if s.Store != nil {
+		s.Store.Rewrite(s.Context.Messages())
+	}
+	// [段3] 留档对齐——立即强制采集一次（重建后头部一致，后续增量以新头为锚）
+	store.Capture(true)
+	s.mu.Lock()
+	s.ctxRebuildFailed = false
+	s.contextTokens = 0
+	s.persistedContextTokens = 0
+	s.mu.Unlock()
+	logAt(fullCtxModule, 1, "前文巡检：留档头与前文不一致——已按留档重建（"+strconv.Itoa(len(rebuilt))+" 条）", LogCategoryChat)
+	return rebuilt
 }
 
 // FinalizeFullContext 会话定稿——当前份转历史 + 份数轮转（session.new 清前文之前调用）。

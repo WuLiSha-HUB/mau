@@ -461,6 +461,8 @@ func (s *Session) resetRoundCounters() {
 func (s *Session) launchLlm() {
 	r := s.roundState()
 	messages := s.Context.Messages()
+	// 前文巡检（design-ch4-ctx-rebuild §二）：首段与留档不一致 → 按留档重建；节流 60 s 见 ctxPatrolInterval
+	messages = s.PatrolFullContext(messages)
 	ctx, cancel := context.WithCancel(context.Background())
 	r.mu.Lock()
 	if r.cancel != nil {
