@@ -135,7 +135,7 @@ namespace SetUp
 
                 // [段5] 步5：dotnet publish CatHome4 -c Debug -o public\app（宿主部署区）
                 long hostMs = Environment.TickCount64;
-                bool hostOk = RunProcess("dotnet", "publish CatHome4\\CatHome4.csproj -c Debug -o public\\app", repoRoot);
+                bool hostOk = RunProcess("dotnet", "publish CatHome4\\CatHome4.Desktop.Win\\CatHome4.Desktop.Win.csproj -c Debug -o public\\app", repoRoot);
                 _steps.Add(new StepReport() { Step = 5, Name = "publish CatHome4 -> public/app", Ok = hostOk, Ms = Environment.TickCount64 - hostMs });
                 if (!hostOk)
                 {

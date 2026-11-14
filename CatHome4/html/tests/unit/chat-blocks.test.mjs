@@ -12,7 +12,7 @@
 //       本网守的是「声明面 ↔ 实现面不漂移」与「结构契约不破」。
 // ═══════════════════════════════════════════
 
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { bootChatPage } from './chat-env.mjs';
 
 beforeAll(async () => {
@@ -104,6 +104,79 @@ describe('块型渲染——结构契约', () => {
         const txt = window.persistRender({ type: 'text', msgIndex: 3, payload: { text: 'hi' } });
         expect(txt.getAttribute('data-type')).toBe('text');
         expect(txt.querySelector('.node-actions')).toBeTruthy();
+    });
+
+    it('追加路（auto=true）工具卡仍带气泡——第三参是追加路标志、不是行身份（2026-11-14 回归锚）', () => {
+        // 回归锚：推送新工具卡时 persistRender 第三参 = auto(true)，曾被 buildToolBlock 当成 type
+        //   → bodyClass(true) 回落 chat-plain（无气泡），刷新走 full 路（auto=false）才恢复。
+        const appended = window.persistRender({
+            type: 'toolcard',
+            msgIndex: 9,
+            payload: { name: 'ts-check', arguments: '{}', result: 'ok', toolIndex: 1, toolTotal: 1, order: '2' }
+        }, true);
+        expect(appended.getAttribute('data-type')).toBe('toolcard');
+        expect(appended.querySelectorAll('.chat-bubble').length).toBe(1);
+        expect(appended.querySelectorAll('.chat-plain').length).toBe(0);
+        // live 在途卡仍朴素（行身份随来源）
+        const live = window.buildToolBlock({ name: 'time', arguments: '{}', toolIndex: 1, toolTotal: 1 }, null, 'toolrun');
+        expect(live.querySelectorAll('.chat-bubble').length).toBe(0);
+        expect(live.querySelectorAll('.chat-plain').length).toBe(1);
+    });
+
+    it('roundsummary——有 audio 字段渲染播放按钮；full 路不触发播放', () => {
+        const node = window.persistRender({
+            type: 'roundsummary', msgIndex: 5, payload: { text: '总结', audio: 'summary_1.wav' }
+        });
+        expect(node.querySelectorAll('.chat-bubble.roundsummary').length).toBe(1);
+        const btn = node.querySelector('.rsm-audio-btn');
+        expect(btn).toBeTruthy();
+        expect(btn.textContent).toBe('▶ 播放');
+    });
+
+    it('音频自动播许可判据——单一出口；未取得激活时为 false', () => {
+        expect(typeof window.audioAllowedToAutoplay).toBe('function');
+        expect(window.audioAllowedToAutoplay()).toBe(false);
+    });
+
+    it('产物等待窗口单飞——一次 404 只排一次重试（2026-11-14 回归锚 · 防「反复播放」）', async () => {
+        // 回归锚：一次 404 会同时触发「元素 error 事件」与「play() 的 reject」两条失败路径；
+        //   各自排重试 → 多个 Audio 实例并发起播（莎报障「重试成功后反复播放」）。
+        //   判据 = 同一代际只重建一次元素；旧元素被弃用（摘监听 + 清源）后不再有机会发声。
+        vi.useFakeTimers();
+        const created = [];
+        const origAudio = window.Audio;
+        window.Audio = function () {
+            const self = this;
+            self.listeners = {};
+            self.paused = true;
+            self.preload = '';
+            self.src = '';
+            self.addEventListener = function (name, fn) { self.listeners[name] = fn; };
+            self.removeEventListener = function (name) { delete self.listeners[name]; };
+            self.play = function () {
+                const err = new Error('not ready');
+                err.name = 'NotSupportedError';
+                return Promise.reject(err);
+            };
+            self.pause = function () { self.paused = true; };
+            created.push(self);
+        };
+        try {
+            window.persistRender({
+                type: 'roundsummary', msgIndex: 7, payload: { text: 't', audio: 'b.wav' }
+            }, true);
+            expect(created.length).toBe(1);
+            // 第二条失败路径（元素 error 事件）——已排队，不得再起一路
+            expect(typeof created[0].listeners.error).toBe('function');
+            created[0].listeners.error();
+            expect(created.length).toBe(1);
+            // 走完第一个等待窗口（1s）——只重建一次
+            await vi.advanceTimersByTimeAsync(1500);
+            expect(created.length).toBe(2);
+        } finally {
+            window.Audio = origAudio;
+            vi.useRealTimers();
+        }
     });
 });
 

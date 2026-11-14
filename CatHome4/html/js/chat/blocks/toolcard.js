@@ -23,7 +23,11 @@ function buildToolBlock(payload, item, type) {
     // 签名 = persist 族通用形态（payload, item）；item 本件不用（只作签名一致——避免第二参语义重载）
     // type = 行身份（**第三参**，缺省 'toolcard'）——live 面以 'toolrun' 复用本渲染件（两区同源，行身份随来源）
     // 气泡外壳（2026-10-05 气泡化）——persist 面得 .chat-bubble；live 面（toolrun）仍 .chat-plain（面板自身即泡，内部件不再套壳）
-    var t = type || 'toolcard';
+    // 🔴 第三参两义分流（2026-11-14 修）——live.js 传行身份字符串 `toolrun`；
+    //    persist 路 `persistRender` 的第三参是**追加路标志 auto（布尔）**——布尔当 type 会让
+    //    bodyClass(true) 回落到 `chat-plain`：推送追加的工具卡因此无气泡，刷新（full 路 auto=false）又恢复。
+    //    只有非空字符串才算行身份，其余一律回落 `toolcard`。
+    var t = (typeof type === 'string' && type.length > 0) ? type : 'toolcard';
     var row = blockRow(t);
     // 失败态标记——行级 `.err`：气泡描边 + 滚动带刻度同转红（刻度色取气泡描边色，一处标记两处生效）
     if (isErrResult(payload ? payload.result : undefined)) {

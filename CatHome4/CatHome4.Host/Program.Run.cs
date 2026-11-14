@@ -59,11 +59,8 @@ namespace CH4
         {
             // 运行模式标记——工具侧读取（非常驻模式 = 无闸门可等，重启请求直接拒绝；design-ch4-host-restart §五）
             DataBox.Set<string>("global", RunModeKey, "interactive");
-            // P1 托盘——独立 STA UI 线程（常驻：开机自启 / 打开数据目录 / 显示控制台 / 退出）；仅交互模式启用
-            StartTray();
-            // A118 外壳——启动显示一次总控窗（WinExe 形态的启动反馈；关闭即结束窗线程，再点托盘重新拉起）
-            ShowShellWindow();
-            int autoStartPoll = 0;
+            // 外壳就绪——出口自持（桌面：自启对齐 + 托盘线程 + 总控窗；headless：常驻无 UI）；仅交互模式启用
+            HostAccess.Shell.OnHostReady();
             while (true)
             {
                 long loopStartTicks = Stopwatch.GetTimestamp();
@@ -93,17 +90,12 @@ namespace CH4
                 segTicks = Stopwatch.GetTimestamp();
                 PumpMajordomoPush();
                 PumpHostRestart();
-                // [段1a] P1 托盘退出 + 自启轮询——退出走 break（Main finally 优雅收尾）；5s 粒度覆盖前端/config-* 写路径
-                if (_trayExitRequested)
+                // [段1a] 出口退出请求 + 外壳帧泵——退出走 break（Main finally 优雅收尾）；自启配置轮询由出口自持（内建节流）
+                if (HostAccess.Shell.ExitRequested)
                 {
                     break;
                 }
-                autoStartPoll = autoStartPoll + 1;
-                if (autoStartPoll >= AutoStartPollFrames)
-                {
-                    autoStartPoll = 0;
-                    CheckAutoStartPoll();
-                }
+                HostAccess.Shell.PumpFrame();
                 LoopTiming.Accumulate("misc", ElapsedMsSince(segTicks));
                 // [段2] A118 起交互输入面退役——WinExe 无控制台（Console.KeyAvailable 会抛 InvalidOperationException）；
                 // 控制台指令（status / pid / reload / Chat / quit）不再由交互形态承载，仅 --script / --run 等非交互通道保留 ExecuteLine

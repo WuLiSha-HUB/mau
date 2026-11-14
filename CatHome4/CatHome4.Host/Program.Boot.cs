@@ -1,10 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
-using System.Threading;
-using System.Windows.Forms;
 using CatHome4.Contracts;
 using CatHome4.Core;
 using CatHome4.Http;
@@ -13,15 +10,17 @@ using Mau.Runtime;
 namespace CH4
 {
     /// <summary>
-    /// Program 启动韧性分部（A260）——降级登记解析 / 启动报告落盘 / 启动健康快照 / 独立提示窗。
+    /// Program 启动韧性分部（A260）——降级登记解析 / 启动报告落盘 / 启动健康快照 / 主端口回退。
     /// 规格：Project/CH4/design-ch4-host-bootstrap-resilience.md。
-    /// 边界：本分部不承担任何业务逻辑，只把「启动期降级事实」翻译成四种可见面（日志 / 快照 / 报告 / 弹窗）。
+    /// 边界：本分部不承担任何业务逻辑，只把「启动期降级事实」翻译成内核侧可见面（日志 / 快照 / 报告）。
+    /// 🔴 P2 拆分（design-ch4-platform §一）：启动提示窗与「打开目录」属桌面出口 → CatHome4.Desktop.Win；
+    /// 内核经 IHostShell.ShowStartupHealth 让出口决定提示面形态（桌面弹窗 / headless stderr）。
     /// </summary>
     public static partial class Program
     {
         // [段1] 启动报告
         /// <summary>
-        /// 最近一次启动报告的实际路径——空=尚未落盘或全部落点失败（快照 / 弹窗据此显示）。
+        /// 最近一次启动报告的实际路径——空=尚未落盘或全部落点失败（快照 / 提示面据此显示）。
         /// </summary>
         internal static string StartupReportPath { get; private set; } = "";
 
@@ -90,7 +89,7 @@ namespace CH4
 
         // [段3] 启动健康快照
         /// <summary>
-        /// 构建快照 boot 段——启动健康面的统一数据源（HTTP 快照 / 面板页签 / 提示窗 / 报告共用）。
+        /// 构建快照 boot 段——启动健康面的统一数据源（HTTP 快照 / 面板页签 / 提示面 / 报告共用）。
         /// </summary>
         /// <returns>boot 段 JSON 对象文本</returns>
         internal static string BuildBootJson()
@@ -174,117 +173,7 @@ namespace CH4
             }
         }
 
-        // [段5] 启动提示窗
-        /// <summary>
-        /// 启动提示窗——独立非模态窗口（独立 STA 线程 + 自有消息循环，不占用主循环）。
-        /// 仅在存在降级条目时弹出；关窗不改变任何运行态。
-        /// </summary>
-        internal static void ShowStartupDegradeWindow()
-        {
-            if (!StartupDegradation.HasAny)
-            {
-                return;
-            }
-            Thread thread = new Thread(StartupDegradeThreadProc);
-            thread.SetApartmentState(ApartmentState.STA);
-            thread.IsBackground = true;
-            try
-            {
-                thread.Start();
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 3, "启动提示窗线程启动失败：" + ex.Message, "SHELL");
-            }
-        }
-
-        /// <summary>
-        /// 启动提示窗线程体——构建窗体并运行消息循环（线程退出即窗关闭）。
-        /// </summary>
-        private static void StartupDegradeThreadProc()
-        {
-            try
-            {
-                StartupDegradeEntry[] entries = StartupDegradation.Snapshot();
-                Form form = new Form();
-                form.Text = "CatHome4 已启动（" + entries.Length.ToString() + " 项降级）";
-                form.Width = 760;
-                form.Height = 480;
-                form.StartPosition = FormStartPosition.CenterScreen;
-                form.MinimizeBox = false;
-
-                TextBox box = new TextBox();
-                box.Multiline = true;
-                box.ReadOnly = true;
-                box.ScrollBars = ScrollBars.Vertical;
-                box.Dock = DockStyle.Fill;
-                box.Font = new System.Drawing.Font("Microsoft YaHei UI", 9F);
-                StringBuilder sb = new StringBuilder();
-                sb.AppendLine("宿主已启动。下列能力因配置或环境问题处于降级形态，可修复后重启恢复：");
-                sb.AppendLine("");
-                for (int i = 0; i < entries.Length; i = i + 1)
-                {
-                    StartupDegradeEntry entry = entries[i];
-                    sb.AppendLine("【" + entry.Ability + "】" + entry.Code + "（" + entry.State + (entry.Count > 1 ? " ×" + entry.Count.ToString() : "") + "）");
-                    sb.AppendLine("    原因：" + entry.Detail);
-                    sb.AppendLine("    处理：" + entry.Fix);
-                    sb.AppendLine("");
-                }
-                if (StartupReportPath.Length > 0)
-                {
-                    sb.AppendLine("完整报告：" + StartupReportPath);
-                }
-                box.Text = sb.ToString();
-
-                FlowLayoutPanel bar = new FlowLayoutPanel();
-                bar.Dock = DockStyle.Bottom;
-                bar.Height = 56;
-                bar.FlowDirection = FlowDirection.RightToLeft;
-                bar.WrapContents = false;
-                bar.AutoScroll = true;
-
-                // 按钮宽高一律 AutoSize——高 DPI 下固定像素宽会把中文按钮文字裁断（A260 目视验收判例）
-                Button btnOk = new Button();
-                btnOk.Text = "知道了";
-                btnOk.AutoSize = true;
-                btnOk.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-                btnOk.Height = 30;
-                btnOk.Margin = new Padding(6);
-                btnOk.Click += delegate (object sender, EventArgs e) { form.Close(); };
-
-                Button btnReport = new Button();
-                btnReport.Text = "查看启动报告";
-                btnReport.AutoSize = true;
-                btnReport.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-                btnReport.Height = 30;
-                btnReport.Margin = new Padding(6);
-                btnReport.Click += delegate (object sender, EventArgs e) { OpenFolder(StartupReportPath); };
-
-                Button btnConfig = new Button();
-                btnConfig.Text = "打开配置目录";
-                btnConfig.AutoSize = true;
-                btnConfig.AutoSizeMode = AutoSizeMode.GrowAndShrink;
-                btnConfig.Height = 30;
-                btnConfig.Margin = new Padding(6);
-                btnConfig.Click += delegate (object sender, EventArgs e)
-                {
-                    OpenFolder(Path.Combine(ResolveDataRoot(), "Data", "config"));
-                };
-
-                bar.Controls.Add(btnOk);
-                bar.Controls.Add(btnReport);
-                bar.Controls.Add(btnConfig);
-                form.Controls.Add(box);
-                form.Controls.Add(bar);
-                Application.Run(form);
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 3, "启动提示窗显示异常：" + ex.Message, "SHELL");
-            }
-        }
-
-        // [段6] 主端口回退
+        // [段5] 主端口回退
         /// <summary>
         /// 启动主 HTTP 宿主——首选端口被占时按端口段顺序回退；段内全占则降级为「无外观层」（返回 null，宿主继续运行）。
         /// </summary>
@@ -350,34 +239,6 @@ namespace CH4
                 "端口段 " + from.ToString() + ".." + to.ToString() + " 全部不可用：" + lastError,
                 "关闭占用端口的进程后重启", "S6");
             return null;
-        }
-
-        /// <summary>
-        /// 打开目录或定位文件——交资源管理器（失败记 L2，不影响主流程）。
-        /// </summary>
-        /// <param name="path">目录或文件路径</param>
-        private static void OpenFolder(string path)
-        {
-            if (path == null || path.Length == 0)
-            {
-                return;
-            }
-            try
-            {
-                if (Directory.Exists(path))
-                {
-                    Process.Start("explorer.exe", path);
-                    return;
-                }
-                if (File.Exists(path))
-                {
-                    Process.Start("explorer.exe", "/select,\"" + path + "\"");
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "打开路径失败：" + path + " | " + ex.Message, "SHELL");
-            }
         }
     }
 }

@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="CatHome4" />
+    <InternalsVisibleTo Include="CatHome4.Host" />
     <InternalsVisibleTo Include="CatHome4.Core.Tests" />
   </ItemGroup>
 

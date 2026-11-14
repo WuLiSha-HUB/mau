@@ -1,41 +1,24 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>WinExe</OutputType>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <!-- 出口一：headless 常驻（design-ch4-platform §一）——Linux 生产形态 / Windows 服务形态；
+         桌面形态走 CatHome4.Desktop.Win（WinExe）。两条出口共用 CatHome4.Host 内核。 -->
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
-    <UseWindowsForms>true</UseWindowsForms>
-    <AssemblyName>CatHome4</AssemblyName>
-    <!-- 应用图标——多尺寸猫爪印 ICO（16/24/32/48/64/128/256，生成器 CatTemp/icongen 一次性产出）；
-         嵌入后 exe 文件 / 任务栏 / 窗体标题栏 / 托盘四处同源（托盘与窗体经 Environment.ProcessPath 提取） -->
-    <ApplicationIcon>app.ico</ApplicationIcon>
     <RootNamespace>CH4</RootNamespace>
-    <!-- 域子项目目录排除——SDK 默认递归编译会包含子项目源码（CS0579 特性重复），必须显式排除 -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);CatHome4.Contracts\**;CatHome4.Core\**;CatHome4.Http\**;CatHome4.Admin\**;CatHome4.Observe\**;CatHome4.Core.Tests\**</DefaultItemExcludes>
+    <!-- 域子项目与出口目录排除——SDK 默认递归编译会包含子项目源码（CS0579 特性重复），必须显式排除 -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);CatHome4.Contracts\**;CatHome4.Core\**;CatHome4.Http\**;CatHome4.Admin\**;CatHome4.Observe\**;CatHome4.Core.Tests\**;CatHome4.Host\**;CatHome4.Desktop.Win\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Mau\Mau.Runtime\Mau.Runtime.csproj" />
-    <ProjectReference Include="..\Mau\Mau.Providers\Mau.Providers.csproj" />
-    <!-- B3 mau.* 工具实装——组翻译共享服务（MauProjFile/MauGroupBuilder）自 Mau.Development 引用 -->
-    <ProjectReference Include="..\Mau\Mau.Development\Mau.Development.csproj" />
-    <!-- CH4 域程序集——拆分后按域独立（CatHome4.sln 程序入口） -->
-    <ProjectReference Include="CatHome4.Contracts\CatHome4.Contracts.csproj" />
-    <ProjectReference Include="CatHome4.Core\CatHome4.Core.csproj" />
-    <ProjectReference Include="CatHome4.Http\CatHome4.Http.csproj" />
-    <ProjectReference Include="CatHome4.Admin\CatHome4.Admin.csproj" />
-    <ProjectReference Include="CatHome4.Observe\CatHome4.Observe.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <!-- P6 外观层 HTTP——Kestrel + Minimal API（FrameworkReference = 运行时自带，非第三方 NuGet 依赖） -->
-    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <ProjectReference Include="CatHome4.Host\CatHome4.Host.csproj" />
   </ItemGroup>
 
   <ItemGroup>
     <!-- P6 外观层静态页——复制到输出目录（HttpHost.ServeIndex 从 AppContext.BaseDirectory/html/ 读取）
-         排除 tests/node_modules（巨大；测试服务从源码区启动——node_modules 在源码区；E2E 已移除 2026-08-28）
+         排除 tests/node_modules（巨大；测试服务从源码区启动——node_modules 在源码区）
          🔴 publish 面用 Always（G 方案 2026-09-23）：PreserveNewest 的时间戳判据会被「手工写目标」造成的
          mtime 倒挂永久锁死（源比目标旧 → 永不复制 → 产物区冻结 → deploy 静默推旧版）；
          build 面保留 PreserveNewest（日常构建不做全量复制，含 pet 素材 ~8MB） -->

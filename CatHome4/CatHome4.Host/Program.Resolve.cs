@@ -48,7 +48,7 @@ namespace CH4
         /// 返回值为 Data 的父级目录——调用方以 Path.Combine(dataRoot, "Data", ...) 拼实际路径。
         /// </summary>
         /// <returns>数据根目录</returns>
-        private static string ResolveDataRoot()
+        internal static string ResolveDataRoot()
         {
             // [段1] 显式覆盖——CH4_DATA_ROOT 环境变量（行业标准逃逸口）；不可用时降级到下一级锚点
             string envRoot = Environment.GetEnvironmentVariable("CH4_DATA_ROOT");

@@ -608,7 +608,7 @@ namespace CH4
             ChatSession.DisplayNameProvider = CatHostService.ResolveCatDisplayName;
             // timeback 归档现场记录接线——回收时采集本猫 info 快照（归档文件第二行）
             ChatSession.TimebackInfoProvider = BuildEnvInfo;
-            AdminService.NotifyBalloon = Program.NotifyBalloon;
+            AdminService.NotifyBalloon = HostAccess.Shell.NotifyBalloon;
             // S5 Observe 域接线——依赖注入（观测面迁入 CatHome4.Observe）
             ObserveService.Configure(_oa, _chatBridge, _toolFlowHandles, _toolFlowIds, _runner, null);
             // A260 启动健康段提供者——快照 boot 段与日志 / 报告 / 弹窗同源
@@ -702,7 +702,7 @@ namespace CH4
             _chatBridge.DefaultSession.SetPetKind(AdminService.ResolveEffectivePetKind("majordomo"));
             CatHostService.ApplyCatRoots("majordomo");
             _chatBridge.DefaultSession.AttachEnvInfo(() => BuildEnvInfo());
-            _chatBridge.DefaultSession.AttachRoundNotify(Program.NotifyBalloon);
+            _chatBridge.DefaultSession.AttachRoundNotify(HostAccess.Shell.NotifyBalloon);
             _chatBridge.RegisterSession(_chatBridge.DefaultSession);
             // F4 视图——从真实前文重建视图层（恢复/注入后——真实前文绝对可用）
             _chatBridge.DefaultSession.LoadView();
