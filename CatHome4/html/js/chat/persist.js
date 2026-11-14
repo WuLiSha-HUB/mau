@@ -80,7 +80,7 @@ function persistAppend(items, auto) {
         }
         var node = null;
         try {
-            node = persistRender(items[i]);
+            node = persistRender(items[i], auto);
         } catch (e) {
             node = buildRenderErrorBlock(items[i], e);
         }
@@ -114,7 +114,8 @@ function persistAutoSwap(item) {
 }
 
 /// 单条渲染——type 直指渲染函数；未登记 type → 兜底报错气泡（lib/fallback.js，两区共用）
-function persistRender(item) {
+/// auto = 追加路标志（full 重放留空）——块函数据此区分「新块」与「历史重放」（如总结音频自动播）
+function persistRender(item, auto) {
     if (!item) {
         return null;
     }
@@ -123,7 +124,8 @@ function persistRender(item) {
         return buildUnknownBlock(item);
     }
     // 第二参 = 整条条目——块级字段取用口（如 text 块操作条读 msgIndex 定回滚 / 分支切点）
-    return fn(item.payload || {}, item);
+    // 第三参 = 追加路标志——仅追加路为 true
+    return fn(item.payload || {}, item, auto === true);
 }
 
 /// timeback 域区间标记——从 `timeback-start` 行到 `timeback-back` 行之间（**不含两端**）的块加 `.tb-scope`（气泡描边转粉）；

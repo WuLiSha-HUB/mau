@@ -122,9 +122,6 @@ var TOOL_SKELETONS = {
     'timeback-start': 'text',
     'timeback-back': 'text',
     'pack': 'text',
-    // audio——音频（A239 / A246）
-    'audio-play': 'text',
-    'audio-speak': 'text',
     // py——执行器（PyCat）
     'py-run': 'json',
     'py-list': 'listing',

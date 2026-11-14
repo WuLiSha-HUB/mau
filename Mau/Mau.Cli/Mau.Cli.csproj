@@ -14,8 +14,6 @@
     <ProjectReference Include="..\Mau.Translator\Mau.Translator.csproj" />
     <ProjectReference Include="..\Mau.Runtime\Mau.Runtime.csproj" />
     <ProjectReference Include="..\Mau.Development\Mau.Development.csproj" />
-    <!-- 音频播放能力——落 Mau-public 编译引用区（design-mau-audio §六） -->
-    <ProjectReference Include="..\Mau.Audio\Mau.Audio.csproj" />
   </ItemGroup>
 
   <ItemGroup>

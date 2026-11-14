@@ -18,8 +18,6 @@
   <ItemGroup>
     <ProjectReference Include="..\Mau\Mau.Runtime\Mau.Runtime.csproj" />
     <ProjectReference Include="..\Mau\Mau.Providers\Mau.Providers.csproj" />
-    <!-- 音频播放能力——落 public/app 运行解析区（design-mau-audio §六） -->
-    <ProjectReference Include="..\Mau\Mau.Audio\Mau.Audio.csproj" />
     <!-- B3 mau.* 工具实装——组翻译共享服务（MauProjFile/MauGroupBuilder）自 Mau.Development 引用 -->
     <ProjectReference Include="..\Mau\Mau.Development\Mau.Development.csproj" />
     <!-- CH4 域程序集——拆分后按域独立（CatHome4.sln 程序入口） -->

@@ -1,4 +1,8 @@
-﻿using System;
+﻿// NRT 抑制（CSharp exp §1.16）——本服务是 JSON 回包解析面（TryGetProperty 链），
+// 大量「可能为 null」的局部量已在分支内判空，逐处 ? 会把解析面淹掉；语义判空在消费点。
+#nullable disable warnings
+
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
@@ -8,13 +12,14 @@ using System.Threading.Tasks;
 using Mau.Contracts;
 using Mau.Runtime;
 
-namespace Mau.Audio
+namespace Mau.Providers
 {
     /// <summary>
     /// 语音合成服务实现——云端 TTS（OpenAI 风格 JSON 端点，回 WAV 字节）。
     /// 配置面：audio.tts_endpoint（端点）+ audio.tts_api_config_id（LLM 池配置 → key）。
     /// 关键处理：云端 wav 是流式写出的占位头（RIFF / data 长度全 0xFFFFFFFF），
     /// 落盘前必须重写为实际长度，否则任何按时长解析的消费方都会读到天文数字。
+    /// A350：自 Mau.Audio 迁入本工程——本服务无本地音频设备依赖，与 Windows 平台无关。
     /// </summary>
     public class TtsService : ITtsService
     {

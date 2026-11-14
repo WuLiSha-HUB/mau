@@ -175,15 +175,6 @@ function ovReplaceTail(r) {
     return '';
 }
 
-/// 成功回执尾段——`OK|<尾段>` → 尾段；非 OK / 无尾段 → 空串
-function ovOkTail(r) {
-    if (typeof r !== 'string' || r.indexOf('OK') !== 0) {
-        return '';
-    }
-    var i = r.indexOf('|');
-    return (i >= 0) ? r.substring(i + 1) : '';
-}
-
 /// 多行文本字段值——取以 key 开头的行，返回其后值（无匹配返回空串）
 function ovLineField(r, key) {
     if (typeof r !== 'string' || r.length === 0) {

@@ -47,8 +47,6 @@ namespace CH4
         /// <summary>RoundSummary 工单超时帧上限——一次性 LLM 调用（现实耗时约 60 s；2400 帧 = 240 秒上限，100ms/帧）</summary>
         private const long RoundSummaryTimeoutFrames = 2400;
 
-        /// <summary>RoundSummary 播报串行键——播报名与正文、全部猫的总结共用（跨猫全串行，不并发）。</summary>
-        private const string RoundSummaryAudioKey = "roundsummary";
 
         /// <summary>RoundSummary 后段提示词（拼在待总结内容之后——固定分隔符，界定待总结范围；第一人称口径）。</summary>
         private const string RoundSummaryPromptTail = "\n——以上是本轮的全部往来（用户输入与你自己的回复按序合并）。请用第一人称向用户交代这一轮你做了什么、结果如何。";

@@ -69,7 +69,6 @@ namespace CH4
             "image-inject",
             "browser-eval", "browser-tabs",
             "web-fetch", "web-fetch-jobs",
-            "audio-play",
             "db-put", "db-update", "db-delete",
             "dbAdmin-create", "dbAdmin-drop",
             "group-post", "group-delegate", "group-catcfg-set"
@@ -94,7 +93,7 @@ namespace CH4
             "powershell", "powershell7",
             "mau-gen", "mau-proj", "host-reload", "mau-setup",
             "restart-full", "restart-incr", "restart-host", "majordomo-cmd",
-            "py-run", "py-service", "audio-speak",
+            "py-run", "py-service",
             "temp-exec"
         };
 

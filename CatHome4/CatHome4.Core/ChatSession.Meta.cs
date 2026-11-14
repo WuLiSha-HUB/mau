@@ -419,8 +419,9 @@ namespace CH4
             return false;
         }
         /// <summary>
-        /// 总结播报执行体（后台线程）——三段（提示音 / 播报名 / 正文）合成后拼接成单文件再入队（A265）。
-        /// 单文件同时是前端可点播资产：块 payload 的 audio 名与本文件名同源（按轮次时间戳派生，块先落盘不回转写）。
+        /// 总结播报执行体（后台线程）——三段（提示音 / 播报名 / 正文）合成后装配成单文件（A265）。
+        /// 单文件即前端可点播资产：块 payload 的 audio 名与本文件名同源（按轮次时间戳派生，块先落盘不回转写）。
+        /// A350：本机播放入队已退场——本方法只产文件，播放归前端（服务端不触碰音频设备）。
         /// </summary>
         /// <param name="catKey">猫 key（日志定位用）</param>
         /// <param name="displayName">猫显示名（播报名 = displayName + 说）</param>
@@ -433,12 +434,6 @@ namespace CH4
             if (!DataBox.TryResolve<ITtsService>(out tts) || tts == null)
             {
                 LogStore.Add("CatHome4", 2, "轮末总结播报跳过——ITtsService 未注入", "CHAT");
-                return;
-            }
-            IAudioService audio = null;
-            if (!DataBox.TryResolve<IAudioService>(out audio) || audio == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IAudioService 未注入", "CHAT");
                 return;
             }
             // [段0] 提示音——固定资产（钟声）；缺失由 ResolveChimePath 记 WARN 后跳过
@@ -474,34 +469,26 @@ namespace CH4
                 LogStore.Add("CatHome4", 2, "轮末总结播报跳过——无可播段", "CHAT");
                 return;
             }
-            // [段3] 拼接成单文件——块 payload 与前端点播共用此文件（A265）
+            // [段3] 装配成单文件——块 payload 与前端点播共用此文件（A265 / A350）
             string dir = ResolveSummaryAudioDir();
             if (dir.Length == 0)
             {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录不可用（audio.out_dir）", "CHAT");
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录不可用", "CHAT");
                 return;
             }
             string joined = System.IO.Path.Combine(dir, audioName);
-            string joinErr = audio.Join(segments.ToArray(), joined);
-            if (joinErr.Length > 0)
+            string joinError = Mau.Runtime.WavAssembler.Join(segments.ToArray(), joined);
+            if (joinError.Length > 0)
             {
-                // 拼接失败——回落逐段串行播放（可听性优先）；单文件资产此时不存在，前端点播 404 即如实不可用
-                LogStore.Add("CatHome4", 2, "轮末总结拼接失败，回落逐段播放: " + joinErr, "CHAT");
-                for (int i = 0; i < segments.Count; i = i + 1)
-                {
-                    audio.Enqueue(RoundSummaryAudioKey, segments[i], -1f);
-                }
+                // 装配失败——单文件资产不存在，前端点播 404 即如实不可用；中间段保留供人工排查
+                LogStore.Add("CatHome4", 2, "轮末总结装配失败: " + joinError, "CHAT");
                 return;
             }
             for (int i = 0; i < temps.Count; i = i + 1)
             {
                 DeleteQuiet(temps[i]);
             }
-            string enqueue = audio.Enqueue(RoundSummaryAudioKey, joined, -1f);
-            if (enqueue != null && enqueue.Length > 0)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结播放入队失败: " + enqueue, "CHAT");
-            }
+            LogStore.Add("CatHome4", 1, "轮末总结播报产物就绪（前端点播）: " + audioName, "CHAT");
         }
         /// <summary>
         /// 静默删文件——中间段合成产物清理（失败只记日志，不影响已完成的拼接与播放）。

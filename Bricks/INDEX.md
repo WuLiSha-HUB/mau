@@ -7,8 +7,6 @@
 
 | ID | 名字 | 类别 | 工程路径 | 依赖 | 状态 | 来源 |
 |:--|:--|:--|:--|:--|:--|:--|
-| BRIK-AUDIO-001 | audio.play | AUDIO | Audio/BRIK-AUDIO-001_audio.play.cs | 无 | active |  |
-| BRIK-AUDIO-002 | audio.speak | AUDIO | Audio/BRIK-AUDIO-002_audio.speak.cs | 无 | active |  |
 | BRIK-BROWSER-001 | browser.open | BROWSER | BROWSER/BRIK-BROWSER-001_browser.open.cs | 无 | active |  |
 | BRIK-BROWSER-002 | browser.read | BROWSER | BROWSER/BRIK-BROWSER-002_browser.read.cs | 无 | active |  |
 | BRIK-BROWSER-003 | browser.eval | BROWSER | BROWSER/BRIK-BROWSER-003_browser.eval.cs | 无 | active |  |
@@ -97,7 +95,6 @@
 | BRIK-TOOLS-012 | tools.browsercat | TOOLS | TOOLS/BRIK-TOOLS-012_tools.browsercat.cs | 无 | active |  |
 | BRIK-TOOLS-013 | tools.webcat | TOOLS | TOOLS/BRIK-TOOLS-013_tools.webcat.cs | 无 | active |  |
 | BRIK-TOOLS-014 | tools.llmsimplerequest | TOOLS | TOOLS/BRIK-TOOLS-014_tools.llmsimplerequest.cs | 无 | active |  |
-| BRIK-TOOLS-015 | tools.audiocat | TOOLS | TOOLS/BRIK-TOOLS-015_tools.audiocat.cs | 无 | active |  |
 | BRIK-TOOLS-016 | tools.pycat | TOOLS | TOOLS/BRIK-TOOLS-016_tools.pycat.cs | 无 | active |  |
 | BRIK-TOOLS-017 | tools.dbcat | TOOLS | TOOLS/BRIK-TOOLS-017_tools.dbcat.cs | 无 | active |  |
 | BRIK-TOOLS-018 | tools.dbadmin | TOOLS | TOOLS/BRIK-TOOLS-018_tools.dbadmin.cs | 无 | active |  |
