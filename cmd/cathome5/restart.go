@@ -201,7 +201,10 @@ func (g *restartGate) execute(req admin.RestartRequest) error {
 		target = g.resolveMauOut5()
 	}
 	if target == "" {
-		return fmt.Errorf("重启请求缺少目标运行区（target 未提供且受控根 mauout5 未配置）")
+		// 回落：当前运行实例所在目录——面板请求不带 target 时的默认运行区；
+		// 无 mauout5 根的环境（MauOut 直跑形态）同样可用（2026-11-14 修：此前一律报「缺少目标运行区」，
+		// 面板「重启宿主」按钮在未配 mauout5 根的实例上永远失败）。
+		target = filepath.Dir(exe)
 	}
 	if abs, absErr := filepath.Abs(target); absErr == nil {
 		target = abs
