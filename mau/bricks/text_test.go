@@ -3,6 +3,7 @@ package bricks
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -159,4 +160,83 @@ func TestTextErrors(t *testing.T) {
 	if out, ok := TextReadLines(svc, `{"path":"w:a.txt","start":"abc"}`); ok || !strings.Contains(out, "参数 start 非整数") {
 		t.Fatalf("start 非整数 = %q", out)
 	}
+}
+
+// TestSingleLineJSONLimit 单行 JSON 限幅——只治单行 JSON，多行 / 非 JSON 不动。
+func TestSingleLineJSONLimit(t *testing.T) {
+	svc, root := newSvc(t)
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(root, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// ① 单行 JSON 超上限——text-read_lines 截断 + 提示
+	write("big.json", `{"rows":["`+strings.Repeat("x", 21000)+`"]}`)
+	out, ok := TextReadLines(svc, `{"path":"w:big.json","start":1,"end":1}`)
+	if !ok {
+		t.Fatalf("单行 JSON 读行失败: %s", out)
+	}
+	if !strings.Contains(out, "…[截断: 单行 JSON 共 ") {
+		t.Fatalf("单行 JSON 应截断，实际尾段: %q", tail(out, 80))
+	}
+	if n := len([]rune(out)); n > 20600 {
+		t.Fatalf("截断后仍超长: %d 字符", n)
+	}
+
+	// ② 单行 JSON 超上限——text-read_between 同样截断
+	out, ok = TextReadBetween(svc, `{"path":"w:big.json"}`)
+	if !ok {
+		t.Fatalf("单行 JSON 区间读失败: %s", out)
+	}
+	if !strings.Contains(out, "…[截断: 单行 JSON 共 ") {
+		t.Fatalf("区间读也应截断，实际尾段: %q", tail(out, 80))
+	}
+
+	// ③ 多行 JSON 超上限——不截断（多行可按行区间分段读）
+	var b strings.Builder
+	b.WriteString("[\n")
+	for i := 0; i < 400; i++ {
+		b.WriteString(`  {"id":`)
+		b.WriteString(strconv.Itoa(i))
+		b.WriteString(`,"note":"`)
+		b.WriteString(strings.Repeat("y", 60))
+		b.WriteString("\"},\n")
+	}
+	b.WriteString("]")
+	write("multi.json", b.String())
+	out, ok = TextReadLines(svc, `{"path":"w:multi.json"}`)
+	if !ok {
+		t.Fatalf("多行 JSON 读失败: %s", out)
+	}
+	if strings.Contains(out, "…[截断: 单行 JSON 共 ") {
+		t.Fatal("多行 JSON 不应套单行限幅")
+	}
+
+	// ④ 单行非 JSON 超上限——不截断（只治单行 JSON）
+	write("plain.txt", strings.Repeat("a", 30000))
+	out, ok = TextReadLines(svc, `{"path":"w:plain.txt","start":1,"end":1}`)
+	if !ok {
+		t.Fatalf("单行纯文本读失败: %s", out)
+	}
+	if strings.Contains(out, "…[截断: 单行 JSON 共 ") {
+		t.Fatal("单行纯文本不应套 JSON 限幅")
+	}
+
+	// ⑤ 单行 JSON 未超上限——不截断
+	write("small.json", `{"a":1}`)
+	out, ok = TextReadLines(svc, `{"path":"w:small.json","start":1,"end":1}`)
+	if !ok || !strings.HasSuffix(out, `1: {"a":1}`) {
+		t.Fatalf("小 JSON 不应截断: %q", out)
+	}
+}
+
+// tail 取字符串尾段（测试诊断用，按字符截）。
+func tail(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return "…" + string(r[len(r)-n:])
 }

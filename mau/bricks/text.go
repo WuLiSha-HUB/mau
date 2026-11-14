@@ -109,6 +109,7 @@ func TextReadLines(svc *fs.Service, argsJSON string) (string, bool) {
 		return fs.ErrText(err), false
 	}
 	lines := countLines(body)
+	body = limitSingleLineJSON(body, maxSingleLineJSONChars)
 	return MetaHead("text-read_lines", true, path, lines) + "\n" + path + " | " + strconv.Itoa(lines) + " 行" + "\n" + body, true
 }
 
@@ -162,6 +163,7 @@ func TextReadBetween(svc *fs.Service, argsJSON string) (string, bool) {
 	}
 	body := string([]rune(unified)[start:end])
 	lines := countLines(body)
+	body = limitSingleLineJSON(body, maxSingleLineJSONChars)
 	return MetaHead("text-read_between", true, path, lines) + "\n" + path + " | " + strconv.Itoa(lines) + " 行" + "\n" + body, true
 }
 
@@ -177,6 +179,36 @@ func trimResult(text string, max int) string {
 		return text
 	}
 	return string(r[:max]) + "\n…[截断: 共 " + strconv.Itoa(len(r)) + " 字符，仅保留前 " + strconv.Itoa(max) + "]"
+}
+
+// maxSingleLineJSONChars 单行 JSON 限幅上限——与 trimResult 的 text-read 口径一致（20000 字符）。
+const maxSingleLineJSONChars = 20000
+
+// limitSingleLineJSON 单行 JSON 限幅——正文只有一行且该行是 JSON 对象/数组时，截断到 max 并加提示。
+//
+// 只治「单行」：多行内容（含多行 JSON）原样返回——多行能按行区间 / 锚点区间分段读，
+// 单行没有分段手段：一份 5 MB 的单行 JSON，读「第 1 行」就是整份进前文。
+// 形态判定取「无换行 + 首字符是 { 或 [」，不做 JSON 解析——大文件不做二次解析，片段也照样限。
+// 出口：提示里给可执行路径（脚本抽字段 / 先转多行副本），不留下「只能干瞪眼」的死角。
+func limitSingleLineJSON(body string, max int) string {
+	line := body
+	// text-read_lines 的正文带「N: 」行号前缀——剥掉再判形态（单行文件恒为 "1: "）
+	if idx := strings.Index(body, ": "); idx > 0 && idx <= 4 {
+		if _, err := strconv.Atoi(body[:idx]); err == nil {
+			line = body[idx+2:]
+		}
+	}
+	if line == "" || (line[0] != '{' && line[0] != '[') {
+		return body
+	}
+	if strings.ContainsAny(line, "\r\n") {
+		return body
+	}
+	r := []rune(body)
+	if len(r) <= max {
+		return body
+	}
+	return string(r[:max]) + "\n…[截断: 单行 JSON 共 " + strconv.Itoa(len(r)) + " 字符，仅保留前 " + strconv.Itoa(max) + "——单行无法分段读；要看全请用脚本抽字段，或先转成多行副本再按行区间读]"
 }
 
 // findOccurrences 非重叠精确子串匹配——返回 rune 起始索引。
