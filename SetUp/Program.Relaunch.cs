@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using CatHome4.Platform;
@@ -61,6 +62,13 @@ namespace SetUp
             Console.WriteLine("  模式: " + mode + "（full=全链 / incr=纯搬运 / host=原地重启）");
             Console.WriteLine("  等待宿主退出: pid " + waitPid.ToString());
             Console.WriteLine("  运行区: " + targetFull);
+            // [段0-M] 托管环境（systemd）语义改写——A370：full 拒绝 / incr 覆盖后退出 / host 原地退出。
+            //          不在此处拉起新宿主：接力者仍在服务 cgroup 内，服务管理器判定主进程退出即回收整个 cgroup，
+            //          拉起动作会被连带杀掉（判例 2026-11-15）。自启统一交给 Restart=always。
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                return RelaunchManaged(repoRoot, mode, waitPid, targetFull, pushIn, ExtractOption(args, "--report"));
+            }
 
             // [段0] incr 前置段——哨兵与拒绝面 → 准备段 → 探活 → 落 ready 哨兵（全程在旧宿主存活期完成）
             //       失败即落 ok=false 哨兵：宿主不自杀、撤销重启态；接力者等 pid 超时中止，不触碰运行区
@@ -206,6 +214,134 @@ namespace SetUp
             }
             return Fail("新版本与回退版本均未能启动——需人工介入。");
         }
+        /// <summary>
+        /// 托管环境（Linux / systemd）三档重启——按环境改写语义：
+        /// full 直接拒绝（接收端零编译）· incr 覆盖运行区后退出 · host 原地退出。
+        /// <para>
+        /// 不在此处拉起新宿主：接力者仍在服务的 cgroup 内，服务管理器判定主进程退出即回收整个 cgroup，
+        /// 拉起动作会被连带杀掉（判例 2026-11-15）。自启统一交给 Restart=always。
+        /// </para>
+        /// </summary>
+        /// <param name="repoRoot">仓库根</param>
+        /// <param name="mode">重启模式（full / incr / host）</param>
+        /// <param name="waitPid">旧宿主进程号</param>
+        /// <param name="targetFull">运行区绝对路径</param>
+        /// <param name="pushIn">调用方附加说明</param>
+        /// <param name="reportPath">报告路径（可为空）</param>
+        /// <returns>退出码（0=已完成、等管理器拉起；1=拒绝或失败）</returns>
+        private static int RelaunchManaged(string repoRoot, string mode, int waitPid, string targetFull, string pushIn, string reportPath)
+        {
+            long relaunchStartMs = Environment.TickCount64;
+            // [段1] full 拒绝——远端零编译：全链 prepare 会在此机 build/test/组翻译（2 核 8 分钟），版本自增点只在开发机
+            if (mode == "full")
+            {
+                string reason = "托管环境不支持 full——接收端零编译（版本自增与全链 prepare 在开发机完成），请用 incr 或 host";
+                Console.WriteLine("[SetUp] 拒绝：" + reason);
+                WriteRelay(repoRoot, false, reason, "preflight");
+                return 1;
+            }
+            // [段2] incr 前置段——哨兵/拒绝面/准备段/探活（旧宿主存活期完成，失败即落 ok=false 哨兵）
+            if (mode == "incr")
+            {
+                bool preflightOk = RunIncrPreflight(repoRoot, targetFull, Path.Combine(repoRoot, "public", "app"));
+                if (!preflightOk)
+                {
+                    return Fail("incr 前置段未通过——宿主将撤销重启态（运行区未触碰）。");
+                }
+            }
+            // [段3] 等旧宿主退出——宿主程序集 dll 被 ALC 持锁，运行中不可覆盖
+            long waitMs = Environment.TickCount64;
+            bool exited = WaitProcessExit(waitPid, RelaunchWaitPidMs);
+            _steps.Add(new StepReport() { Step = 11, Name = "等待旧宿主退出 (pid " + waitPid.ToString() + ")", Ok = exited, Ms = Environment.TickCount64 - waitMs });
+            if (!exited)
+            {
+                return Fail("旧宿主未在 " + RelaunchWaitPidMs.ToString() + " ms 内退出——中止，不触碰运行区。");
+            }
+            // [段4] 覆盖——incr 原子切换（准备段已备好 _new）；host 跳过
+            long depMs = Environment.TickCount64;
+            bool replaced = false;
+            if (mode == "incr")
+            {
+                string switchErr = SwitchDirectory(targetFull, targetFull + "_new", targetFull + "_old");
+                replaced = switchErr.Length == 0;
+                _steps.Add(new StepReport() { Step = 13, Name = "incr 原子切换运行区", Ok = replaced, Ms = Environment.TickCount64 - depMs, Detail = switchErr });
+                if (!replaced)
+                {
+                    Console.WriteLine("[SetUp] 警告：原子切换失败——" + switchErr);
+                }
+            }
+            else
+            {
+                _steps.Add(new StepReport() { Step = 13, Name = "替换跳过（mode=host——原地重启）", Ok = true, Ms = Environment.TickCount64 - depMs });
+            }
+            // [段5] 回执落盘——新宿主由服务管理器无参启动，没有 --majordomopush 通道，改走数据根待注入文件（宿主启动读后即删）
+            string version = ReadVersion(repoRoot);
+            string push = BuildPushText(mode, true, replaced, version, targetFull, pushIn, reportPath, Environment.TickCount64 - relaunchStartMs);
+            push = push + Environment.NewLine + "说明: 托管环境——自启由服务管理器承担（重启链不亲自拉起宿主）";
+            bool pushOk = WriteRestartPush(push);
+            _steps.Add(new StepReport() { Step = 14, Name = "回执落盘（数据根 Data/restart_push.txt）", Ok = pushOk, Detail = pushOk ? "" : "回执未落盘——新宿主不会带回重启结论" });
+            // [段6] 结论哨兵——切换与回执的最终结果回写
+            CollectTargetArtifacts(targetFull);
+            bool finalOk = pushOk && (replaced || mode == "host");
+            string finalReason = "";
+            if (!finalOk)
+            {
+                finalReason = pushOk ? "运行区未替换：mode=incr 原子切换失败" : "回执落盘失败";
+            }
+            WriteRelay(repoRoot, finalOk, finalReason, "done");
+            if (finalOk)
+            {
+                Console.WriteLine("[SetUp] relaunch 完成（mode=" + mode + "）——退出，等待服务管理器拉起新宿主。");
+                return 0;
+            }
+            return Fail("托管环境 relaunch 未达成（mode=" + mode + "）：" + finalReason);
+        }
+        /// <summary>
+        /// 回执待注入文件路径——托管环境重启的结论传递通道（数据根 Data/restart_push.txt）。
+        /// </summary>
+        /// <returns>绝对路径</returns>
+        private static string RestartPushPath()
+        {
+            return Path.Combine(ResolveSetUpDataRoot(), "Data", "restart_push.txt");
+        }
+        /// <summary>
+        /// 解析数据根——与宿主 ResolveDataRoot 同源：CH4_DATA_ROOT 优先，否则平台默认根。
+        /// </summary>
+        /// <returns>数据根（Data 的上级目录）</returns>
+        private static string ResolveSetUpDataRoot()
+        {
+            string envRoot = Environment.GetEnvironmentVariable("CH4_DATA_ROOT");
+            if (envRoot != null && envRoot.Trim().Length > 0)
+            {
+                return envRoot;
+            }
+            return PlatformServices.Paths.DefaultDataRoot;
+        }
+        /// <summary>
+        /// 回执落盘——写失败必须出声（新宿主无处取回执，等于重启结论丢失）。
+        /// </summary>
+        /// <param name="pushText">回执注入串</param>
+        /// <returns>true = 已落盘</returns>
+        private static bool WriteRestartPush(string pushText)
+        {
+            try
+            {
+                string path = RestartPushPath();
+                string dir = Path.GetDirectoryName(path);
+                if (dir != null && dir.Length > 0)
+                {
+                    Directory.CreateDirectory(dir);
+                }
+                File.WriteAllText(path, pushText, new UTF8Encoding(false));
+                Console.WriteLine("[SetUp] 回执已落盘：" + path);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("[SetUp] 错误：回执落盘失败——" + ex.Message);
+                return false;
+            }
+        }
 
         /// <summary>
         /// relaunch 参数校验——声明面口径零容忍：未知参数 / 缺值 / 非法值一律报错（不静默忽略、不回落默认）。
@@ -336,7 +472,7 @@ namespace SetUp
             sb.Append(Environment.NewLine);
             sb.Append("重启用时: " + (elapsedMs / 1000.0).ToString("0.0") + " s（接力起算）");
             sb.Append(Environment.NewLine);
-            sb.Append("产物: CatHome4.exe " + exeTs);
+            sb.Append("产物: " + PlatformServices.Paths.HostExeName + " " + exeTs);
             sb.Append(Environment.NewLine);
             if (reportPath.Length > 0)
             {

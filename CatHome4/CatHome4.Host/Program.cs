@@ -149,6 +149,12 @@ namespace CH4
                     EnableCmdCapture();
                 }
                 _majordomoPush = ExtractArgValue(args, "--majordomopush");
+                // [段1a-补] 托管环境（systemd）重启回执——服务管理器无参拉起时没有 --majordomopush，
+                //            结论由接力者落数据根待注入文件（读后即删；缺失即空串，正常启动语义不变）
+                if (_majordomoPush.Length == 0)
+                {
+                    _majordomoPush = ConsumeRestartPushFile();
+                }
                 // [段1b] 探针通道——LLM 返回体结构诊断（方案 B：宿主能力；不启动宿主/不占端口/不载语料，先于 Bootstrap 返回）
                 if (HasProbeLlmArg(args))
                 {

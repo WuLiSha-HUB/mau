@@ -75,6 +75,33 @@ namespace CH4
             return PlatformServices.Paths.DefaultDataRoot;
         }
         /// <summary>
+        /// 消费托管环境重启回执——数据根 Data/restart_push.txt（由 SetUp relaunch 落盘），读后即删（一次性）。
+        /// <para>
+        /// 托管环境（systemd）由服务管理器无参拉起，没有 --majordomopush 通道；回执因此改走落盘文件。
+        /// 读失败必须出声（重启结论丢失属可见失败）。
+        /// </para>
+        /// </summary>
+        /// <returns>回执文本（无文件 / 读失败返回空串）</returns>
+        internal static string ConsumeRestartPushFile()
+        {
+            string path = Path.Combine(ResolveDataRoot(), "Data", "restart_push.txt");
+            if (!File.Exists(path))
+            {
+                return "";
+            }
+            try
+            {
+                string text = File.ReadAllText(path);
+                File.Delete(path);
+                return text;
+            }
+            catch (Exception ex)
+            {
+                LogStore.Add("CatHome4", 2, "重启回执读取失败: " + ex.Message, "RESTART");
+                return "";
+            }
+        }
+        /// <summary>
         /// 数据根可用性探测——建 Data 子目录判定可写（成功即视为可用；失败不抛）。
         /// </summary>
         /// <param name="root">候选数据根（Data 的上级目录）</param>
