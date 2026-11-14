@@ -56,10 +56,12 @@ namespace Mau.Runtime.Tests
         [Fact]
         public void InvokeLateReplyIsNotTakenAsNextReply()
         {
-            StdioServiceHost host = NewHost(400);
+            // 超时预算按「2 核负载下 node 冷启动」放宽——原先 400 ms 同时兼任 ready 握手超时，
+            // 并行跑测时 node 启动超过它即误判 START_FAILED（Windows 单机少见，Linux 2 核实测必现偶发）
+            StdioServiceHost host = NewHost(2000);
             try
             {
-                string first = host.Invoke("{\"id\":\"1\",\"op\":\"slow\",\"delayMs\":500}");
+                string first = host.Invoke("{\"id\":\"1\",\"op\":\"slow\",\"delayMs\":3000}");
                 Assert.Contains("TIMEOUT", first);
                 string second = host.Invoke("{\"id\":\"2\",\"op\":\"echo\"}");
                 Assert.Contains("\"id\":\"2\"", second);
