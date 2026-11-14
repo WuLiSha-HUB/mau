@@ -34,9 +34,9 @@ if [ ! -d "$NEW/Flows" ] && [ -d "$CUR/Flows" ]; then
     echo "      沿用现有 Flows：$(ls "$NEW/Flows" | wc -l) 个文件"
 fi
 
-echo "[4/7] 权限归一（运行用户 cathome）"
-chown -R cathome:cathome "$NEW"
-chmod -R g+rX "$NEW"
+echo "[4/7] 权限归一（root 运行——CatHome4 自身行为按最高权限）"
+chown -R root:root "$NEW"
+chmod -R u+rwX,go+rX "$NEW"
 # Windows 侧 tar 不保留 Unix 权限位——apphost 执行位在此显式补回
 if [ -f "$NEW/CatHome4" ]; then
     chmod 0755 "$NEW/CatHome4"

@@ -662,6 +662,12 @@ namespace CH4
                 // node_modules 缺失 → 自动部署（npm install + playwright chromium + 启动 server.js——后台链；纯净仓库跟随 Mau 自动部署）
                 if (!System.IO.Directory.Exists(System.IO.Path.Combine(testDir, "node_modules")))
                 {
+                    // 非 Windows 侧不自动装依赖（npm install playwright 体积大且属开发辅助功能）——跳过且不登记降级
+                    if (!OperatingSystem.IsWindows())
+                    {
+                        LogStore.Add("CatHome4", 1, "前端测试服务在非 Windows 侧跳过依赖部署（开发辅助功能）：" + testDir, "CONFIG");
+                        return;
+                    }
                     // 部署中保护——.fe-deploying 标记存在 = 上次自动部署进行中（跳过，避免重复部署冲突）
                     string deployMark = System.IO.Path.Combine(testDir, ".fe-deploying");
                     if (System.IO.File.Exists(deployMark))
@@ -671,8 +677,9 @@ namespace CH4
                     System.IO.File.WriteAllText(deployMark, "auto-deploy");
                     System.Diagnostics.ProcessStartInfo deployPsi = new System.Diagnostics.ProcessStartInfo
                     {
-                        FileName = "cmd.exe",
-                        Arguments = "/c npm install && node server.js",
+                        // Linux 无 cmd.exe——用 sh 起同一串；npm 缺失时 shell 自行退出，不阻断宿主（不登记降级）
+                        FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/sh",
+                        Arguments = OperatingSystem.IsWindows() ? "/c npm install && node server.js" : "-c \"npm install && node server.js\"",
                         WorkingDirectory = testDir,
                         CreateNoWindow = true,
                         UseShellExecute = false
