@@ -14,7 +14,7 @@ namespace CatHome4.Http
     /// </summary>
     public sealed class ConsoleAuth
     {
-        /// <summary>配置键——口令哈希落盘位置（schema 声明 sensitive，读面掩码）</summary>
+        /// <summary>配置键——口令哈希落盘位置（按键名判定敏感，读面掩码）</summary>
         public const string ConfigKey = "auth.console_hash";
 
         /// <summary>PBKDF2 迭代次数（OWASP 合规档，HMAC-SHA256）</summary>
@@ -64,11 +64,9 @@ namespace CatHome4.Http
                 error = "配置存储未绑定";
                 return false;
             }
-            ConfigSchema schema = null!;
-            bool schemaBound = DataBox.TryResolve<ConfigSchema>(out schema);
             string encoded = Encode(plain);
             string checkError;
-            if (!cfg.SetChecked(ConfigKey, encoded, schemaBound ? schema : null, out checkError))
+            if (!cfg.SetChecked(ConfigKey, encoded, out checkError))
             {
                 error = checkError;
                 return false;

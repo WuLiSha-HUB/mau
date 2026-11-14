@@ -18,18 +18,16 @@ namespace CatHome4.Http
     /// </summary>
     public sealed partial class HttpHost
     {
-        /// <summary>配置读取——GET /api/v1/config（配置区 v3）。
-        /// 返回合并后的有效配置项：file（落盘显式值）优先 → env（MAU_LLM_* 兜底）→ schema default（声明补全）；
-        /// schema 声明项在落盘与 env 皆无值者一并输出（source=default，值为声明的默认值）——裸部署下配置面完整可见可改。
+        /// <summary>配置读取——GET /api/v1/config（A364 纯 KV）。
+        /// 返回 Data/config 下全部已落盘键值（key/value 两字段，无声明面 / 无默认值 / 无来源标注）；
+        /// 未落盘的键不出现在本面——默认值由消费侧硬编码，前端表单自行写死注释与默认说明。
         /// 敏感键（api_key/secret/token）掩码展示——snapshot 边界铁律同源。</summary>
-        /// <returns>配置 JSON——版本 + items[key/value/source/default/writable/desc]</returns>
+        /// <returns>配置 JSON——版本 + items[key/value]</returns>
         private IResult HandleConfigGet()
         {
             // [段1] 解析配置存储——未绑定返回空列表（壳形态可渲染）
             ConfigStore cfg = null!;
             bool bound = DataBox.TryResolve<ConfigStore>(out cfg);
-            ConfigSchema schema = null!;
-            bool schemaBound = DataBox.TryResolve<ConfigSchema>(out schema);
             List<object> items = new List<object>();
             if (!bound || cfg == null)
             {
@@ -41,33 +39,20 @@ namespace CatHome4.Http
                 return Results.Json(emptyResp);
             }
 
-            // [段2] 读面单一出口——ConfigEffective：schema 声明全项（三层兜底 file→env→default）+ 未声明落盘键（declared=false）
-            ConfigSchema readSchema = null!;
-            if (schemaBound)
+            // [段2] 纯 KV 读面——全部已落盘键值原样输出；敏感键掩码
+            KeyValuePair<string, string>[] all = cfg.All();
+            for (int i = 0; i < all.Length; i = i + 1)
             {
-                readSchema = schema;
-            }
-            ConfigEffective.Entry[] entries = ConfigEffective.BuildAll(cfg, readSchema);
-            for (int i = 0; i < entries.Length; i = i + 1)
-            {
-                ConfigEffective.Entry entry = entries[i];
-                string value = entry.Value;
-                if (entry.Sensitive)
+                string value = all[i].Value;
+                if (IsSecretKey(all[i].Key))
                 {
                     value = MaskSecret(value);
                 }
 
                 items.Add(new
                 {
-                    key = entry.Key,
-                    value = value,
-                    source = entry.Source,
-                    declared = entry.Declared,
-                    file = entry.File,
-                    @default = entry.Default,
-                    writable = entry.Writable,
-                    desc = entry.Desc,
-                    emptyDesc = entry.EmptyDesc
+                    key = all[i].Key,
+                    value = value
                 });
             }
 
@@ -117,30 +102,39 @@ namespace CatHome4.Http
                 key = "";
                 value = "";
             }
-            // [段2] 校验——key/value 非空 + 掩码回写拒绝
+            // [段2] 校验——key 非空 + 空值走清除通道 + 掩码回写拒绝
             if (key.Length == 0)
             {
                 return Results.Json(new { ok = false, error = "key 为空" });
             }
             if (value.Length == 0)
             {
-                return Results.Json(new { ok = false, error = "value 为空" });
+                // 空值 = 清除该项落盘值（回到默认；A364 纯 KV 语义——空串不是合法取值）
+                ConfigStore clearCfg = null!;
+                if (!DataBox.TryResolve<ConfigStore>(out clearCfg) || clearCfg == null)
+                {
+                    return Results.Json(new { ok = false, error = "配置存储未绑定" });
+                }
+                string clearError;
+                if (!clearCfg.ResetToDefault(key, out clearError))
+                {
+                    return Results.Json(new { ok = false, error = clearError });
+                }
+                return Results.Json(new { ok = true, key = key, value = "", cleared = true, frame = FlowRunner.GlobalFrame });
             }
             if (value.IndexOf("****", StringComparison.Ordinal) >= 0)
             {
                 return Results.Json(new { ok = false, error = "value 含掩码标记——请输入真实值" });
             }
-            // [段3] 写入落盘——P8.5d 统一受控写（ConfigStore.SetChecked：schema 白名单 + 值域校验 + 掩码拒绝 + 原子写回滚）
+            // [段3] 写入落盘——纯 KV（A364）：写死防御（键名 / 长度 / 掩码）+ 内存 + 原子写回滚
             ConfigStore cfg = null!;
             bool bound = DataBox.TryResolve<ConfigStore>(out cfg);
             if (!bound || cfg == null)
             {
                 return Results.Json(new { ok = false, error = "配置存储未绑定" });
             }
-            ConfigSchema schema = null!;
-            bool schemaBound = DataBox.TryResolve<ConfigSchema>(out schema);
             string checkError;
-            if (!cfg.SetChecked(key, value, schemaBound ? schema : null, out checkError))
+            if (!cfg.SetChecked(key, value, out checkError))
             {
                 return Results.Json(new { ok = false, error = checkError });
             }

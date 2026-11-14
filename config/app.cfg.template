@@ -1,7 +1,0 @@
-# 宿主行为配置模板——复制为 Data/config/app.cfg 按需填写
-# P1 自启配置群：app.autostart 开机自启（注册 HKCU Run——配置为真相，注册表为物化）
-# 键格式 key=value；# 开头为注释；空行跳过；键归属 schema.json（app.* 段）——值域见 schema 声明
-app.autostart=false
-app.round_notify=true
-# http.port——显式覆盖端口段主端口（缺省：开发区 8079 / 部署区 8080；非法/越界回退区段主端口；启动时读取，改后重启生效）
-# http.port=8079

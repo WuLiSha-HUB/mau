@@ -103,6 +103,28 @@ if (Test-Path $htmlSource)
     }
 }
 
+# [段3b] 版本落盘——version.txt（与 SetUp deploy 同规：读 Directory.Build.props 单点，无换行）
+# 缺口补正（2026-11-15）：publish 产物不含 version.txt，包内缺此项时远端切换后升级比对面即消失
+$propsPath = Join-Path $repoRoot "Directory.Build.props"
+$versionText = ""
+if (Test-Path $propsPath)
+{
+    $versionMatch = Select-String -Path $propsPath -Pattern "<Version>([^<]+)</Version>"
+    if ($versionMatch)
+    {
+        $versionText = $versionMatch.Matches[0].Groups[1].Value
+    }
+}
+if ($versionText.Length -gt 0)
+{
+    Set-Content -Path (Join-Path $appDir "version.txt") -Value $versionText -NoNewline -Encoding ascii
+    Write-Host ("[push-app] version.txt：" + $versionText)
+}
+else
+{
+    Write-Host "[push-app] 警告：未能从 Directory.Build.props 读到 Version——version.txt 未落盘"
+}
+
 # [段4] 打包——tar 单文件传输（Windows tar 不保留 Unix 权限位，远端落位后显式 chmod）
 if (Test-Path $tarPath)
 {

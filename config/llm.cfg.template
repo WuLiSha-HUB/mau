@@ -1,5 +1,0 @@
-# Mau LLM 全局参数模板——复制为 Data/config/llm.cfg
-# M1c 后：API 连接（endpoint/model/key）由 LLM API 配置池接管（Data/config/llm-api.json + Data/secrets/llm-api.cfg）
-# 本文件仅承载全局思考参数；敏感信息不进 git
-llm.thinking=enabled
-llm.reasoning_effort=high

@@ -4,7 +4,7 @@ using System.IO;
 namespace Mau.Runtime
 {
     /// <summary>
-    /// 配置文件守卫——损坏档的统一备份通道（workspace / schema / 各配置池共用，避免多处各写一份复制逻辑）。
+    /// 配置文件守卫——损坏档的统一备份通道（workspace / 各配置池共用，避免多处各写一份复制逻辑）。
     /// 失败返回空串，不抛：调用点本身处于降级路径，备份失败不得再引发中断。
     /// </summary>
     public static class ConfigFileGuard

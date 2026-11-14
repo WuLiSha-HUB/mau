@@ -226,8 +226,20 @@ namespace Mau.Runtime
         {
             lock (_gate)
             {
-                // [段1] 按键前缀段分组——_fileByPrefix 命中 → 对应文件；否则主文件 _path
+                // [段1] 每个注册文件各建一个缓冲（主文件 + 各前缀段文件；同路径去重）
                 Dictionary<string, System.Text.StringBuilder> builders = new Dictionary<string, System.Text.StringBuilder>(StringComparer.Ordinal);
+                if (_path.Length > 0)
+                {
+                    builders[_path] = new System.Text.StringBuilder();
+                }
+                foreach (KeyValuePair<string, string> pair in _fileByPrefix)
+                {
+                    if (!builders.ContainsKey(pair.Value))
+                    {
+                        builders[pair.Value] = new System.Text.StringBuilder();
+                    }
+                }
+                // [段2] 逐键归位——前缀段命中 → 该文件；否则主文件
                 KeyValuePair<string, string>[] pairs = All();
                 for (int i = 0; i < pairs.Length; i = i + 1)
                 {
@@ -243,25 +255,24 @@ namespace Mau.Runtime
                     {
                         target = _path;
                     }
-                    if (target.Length == 0)
+                    if (target.Length == 0 || !builders.ContainsKey(target))
                     {
                         continue;
                     }
-                    System.Text.StringBuilder? sb;
-                    if (!builders.TryGetValue(target, out sb))
-                    {
-                        sb = new System.Text.StringBuilder();
-                        builders[target] = sb;
-                    }
+                    System.Text.StringBuilder sb = builders[target];
                     sb.Append(key);
                     sb.Append('=');
                     sb.Append(pairs[i].Value);
                     sb.AppendLine();
                 }
-                // [段2] 逐文件原子写（临时文件 + 改名）
-                foreach (KeyValuePair<string, System.Text.StringBuilder> pair in builders)
+                // [段3] 逐文件原子写（空内容 = 清空该文件——移除键后不留残留）
+                foreach (KeyValuePair<string, System.Text.StringBuilder> pair2 in builders)
                 {
-                    AtomicWrite(pair.Key, pair.Value.ToString());
+                    if (pair2.Value.Length == 0 && !File.Exists(pair2.Key))
+                    {
+                        continue;
+                    }
+                    AtomicWrite(pair2.Key, pair2.Value.ToString());
                 }
             }
         }
@@ -356,19 +367,31 @@ namespace Mau.Runtime
         }
         /// <summary>
         /// 受控配置写入——P8.5d 自改通道唯一实现（serve POST / config 积木 / 宿主直执共用）。
-        /// 校验链：schema 声明 → writable 白名单 → 值域校验 → 掩码回写拒绝 → 旧值快照 → 写入落盘 → 失败回滚。
+        /// 校验链：写死防御（键名 / 长度 / 掩码）→ 旧值快照 → 写入落盘 → 失败回滚（A364 起无声明面 / 白名单 / 值域校验）。
         /// </summary>
         /// <param name="key">配置键（带文件前缀：ui.chat_font_size）</param>
         /// <param name="value">新值</param>
-        /// <param name="schema">配置 schema（可 null——null 时仅基本校验）</param>
         /// <param name="error">失败原因（成功为空串）</param>
         /// <returns>是否成功</returns>
-        public bool SetChecked(string key, string value, ConfigSchema? schema, out string error)
+        public bool SetChecked(string key, string value, out string error)
         {
             error = "";
+            // [段1] 写死防御——键名 / 长度 / 掩码（纯 KV，无声明面，一次性校验）
             if (key == null || key.Length == 0)
             {
                 error = "key 为空";
+                return false;
+            }
+
+            if (key.Length > 128)
+            {
+                error = "key 过长（>128）: " + key;
+                return false;
+            }
+
+            if (!IsSimpleKey(key))
+            {
+                error = "key 只允许字母 / 数字 / 下划线 / 点: " + key;
                 return false;
             }
 
@@ -378,35 +401,19 @@ namespace Mau.Runtime
                 return false;
             }
 
-            if (schema != null)
+            if (value.Length > 1024)
             {
-                ConfigSchema.Item? item = schema.Find(key);
-                if (item == null)
-                {
-                    error = "配置键未在 schema 声明: " + key;
-                    return false;
-                }
-
-                if (!item.Writable)
-                {
-                    error = "只读配置项: " + key;
-                    return false;
-                }
-
-                if (!schema.Validate(key, value, out error))
-                {
-                    return false;
-                }
+                error = "配置值过长（>1024）";
+                return false;
             }
 
-            // [段2] 掩码回写拒绝——防掩码值覆盖真实值
             if (value.IndexOf("****", StringComparison.Ordinal) >= 0)
             {
                 error = "value 含掩码标记——请输入真实值";
                 return false;
             }
 
-            // [段3] 旧值快照 + 写入 + 失败回滚（写入异常时内存与磁盘一致恢复）
+            // [段2] 旧值快照 + 写入 + 失败回滚（写入异常时内存与磁盘一致恢复）
             bool hadOld;
             string? oldValue = "";
             lock (_gate)
@@ -449,65 +456,65 @@ namespace Mau.Runtime
             }
         }
         /// <summary>
-        /// 配置还原默认——P8.5d：key 空 = 全群（仅 writable 项）；key 非空 = 单项。
-        /// 语义：将值写为 schema default（落盘）；未声明/只读项拒绝。
+        /// 配置还原默认——纯 KV 语义：key 空 = 清空全部落盘值（全部回到未设置，消费侧硬编码默认生效）；
+        /// key 非空 = 清除该键落盘值。无 schema 默认值来源，不写值，只做「删」。
         /// </summary>
         /// <param name="key">配置键（空 = 全群）</param>
-        /// <param name="schema">配置 schema</param>
         /// <param name="error">失败原因（成功为空串）</param>
         /// <returns>是否成功</returns>
-        public bool ResetToDefault(string key, ConfigSchema? schema, out string error)
+        public bool ResetToDefault(string key, out string error)
         {
             error = "";
-            if (schema == null)
+            // [段1] 目标集合——空 key = 全部落盘键；非空 = 单键（必须已落盘）
+            List<string> targets = new List<string>();
+            lock (_gate)
             {
-                error = "schema 未绑定";
-                return false;
-            }
-            // [段1] 目标集合——单项或全群 writable
-            List<ConfigSchema.Item> targets = new List<ConfigSchema.Item>();
-            if (key == null || key.Length == 0)
-            {
-                ConfigSchema.Item[] all = schema.All();
-                for (int i = 0; i < all.Length; i = i + 1)
+                if (key == null || key.Length == 0)
                 {
-                    if (all[i].Writable)
+                    foreach (KeyValuePair<string, string> pair in _values)
                     {
-                        targets.Add(all[i]);
+                        targets.Add(pair.Key);
                     }
                 }
-            }
-            else
-            {
-                ConfigSchema.Item? item = schema.Find(key);
-                if (item == null)
+                else
                 {
-                    error = "配置键未在 schema 声明: " + key;
-                    return false;
-                }
-                if (!item.Writable)
-                {
-                    error = "只读配置项: " + key;
-                    return false;
-                }
-                targets.Add(item);
-            }
-            // [段2] 快照 + 逐项设默认 + 落盘（失败回滚）
-            bool[] hadOld = new bool[targets.Count];
-            string?[] oldValues = new string?[targets.Count];
-            for (int i = 0; i < targets.Count; i = i + 1)
-            {
-                lock (_gate)
-                {
-                    hadOld[i] = _values.TryGetValue(targets[i].Key, out oldValues[i]);
+                    // 无落盘值 = 目标状态（未设置）已达成——幂等成功（前端「空值保存」不报错）
+                    if (!_values.ContainsKey(key))
+                    {
+                        return true;
+                    }
+                    targets.Add(key);
                 }
             }
-            try
+
+            // [段2] 快照 + 移除 + 落盘（失败回滚）
+            string[] oldValues = new string[targets.Count];
+            lock (_gate)
             {
                 for (int i = 0; i < targets.Count; i = i + 1)
                 {
-                    Set(targets[i].Key, targets[i].Default);
+                    string? found;
+                    if (_values.TryGetValue(targets[i], out found) && found != null)
+                    {
+                        oldValues[i] = found;
+                    }
+                    else
+                    {
+                        oldValues[i] = "";
+                    }
                 }
+            }
+
+            try
+            {
+                lock (_gate)
+                {
+                    for (int i = 0; i < targets.Count; i = i + 1)
+                    {
+                        _values.Remove(targets[i]);
+                    }
+                }
+
                 Save();
                 return true;
             }
@@ -515,21 +522,14 @@ namespace Mau.Runtime
             {
                 try
                 {
-                    for (int i = 0; i < targets.Count; i = i + 1)
+                    lock (_gate)
                     {
-                        lock (_gate)
+                        for (int i = 0; i < targets.Count; i = i + 1)
                         {
-                            string? oldVal = hadOld[i] ? oldValues[i] : null;
-                            if (oldVal != null)
-                            {
-                                _values[targets[i].Key] = oldVal;
-                            }
-                            else
-                            {
-                                _values.Remove(targets[i].Key);
-                            }
+                            _values[targets[i]] = oldValues[i];
                         }
                     }
+
                     Save();
                 }
                 catch (Exception rollbackEx)
@@ -537,9 +537,58 @@ namespace Mau.Runtime
                     // 回滚再失败——内存保持一致，磁盘差异交由审计提示
                     LogStore.Add("ConfigStore", 2, "回滚再失败（内存一致/磁盘差异）: " + rollbackEx.Message, "SYS");
                 }
+
                 error = "还原失败: " + ex.Message;
                 return false;
             }
+        }
+        /// <summary>
+        /// 从目录加载配置——扫描目录下全部 *.cfg（文件名去后缀 = 键前缀段）装入同一张表。
+        /// 无前缀键落主文件 llm.cfg；目录缺失返回空配置。
+        /// </summary>
+        /// <param name="configDir">配置目录（Data/config 绝对路径）</param>
+        /// <returns>配置存储（已关联主文件 llm.cfg）</returns>
+        public static ConfigStore LoadDir(string configDir)
+        {
+            ConfigStore store = new ConfigStore();
+            if (configDir == null || configDir.Length == 0)
+            {
+                return store;
+            }
+            store._path = Path.Combine(configDir, "llm.cfg");
+            if (!Directory.Exists(configDir))
+            {
+                return store;
+            }
+            string[] files = Directory.GetFiles(configDir, "*.cfg");
+            for (int i = 0; i < files.Length; i = i + 1)
+            {
+                string segment = Path.GetFileNameWithoutExtension(files[i]);
+                store.AddFile(segment, files[i]);
+            }
+            return store;
+        }
+        /// <summary>
+        /// 键名合法性——只允许字母 / 数字 / 下划线 / 点，且不以点开头（写入前一次性校验，无 schema）
+        /// </summary>
+        /// <param name="key">配置键</param>
+        /// <returns>是否合法</returns>
+        private static bool IsSimpleKey(string key)
+        {
+            if (key.Length == 0 || key[0] == '.')
+            {
+                return false;
+            }
+            for (int i = 0; i < key.Length; i = i + 1)
+            {
+                char c = key[i];
+                bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '.';
+                if (!ok)
+                {
+                    return false;
+                }
+            }
+            return true;
         }
     }
 }

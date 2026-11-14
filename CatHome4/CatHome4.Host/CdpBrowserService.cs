@@ -22,7 +22,7 @@ namespace CH4
     /// </summary>
     public sealed class CdpBrowserService : IBrowserService, IBrowserLifecycle
     {
-        /// <summary>浏览器内核路径配置键——配置面声明项（schema：browser.kernel_path · 文件 browser.cfg）</summary>
+        /// <summary>浏览器内核路径配置键（文件 browser.cfg）</summary>
         private const string KernelPathKey = "browser.kernel_path";
 
         /// <summary>启动超时——等 DevToolsActivePort 出现</summary>

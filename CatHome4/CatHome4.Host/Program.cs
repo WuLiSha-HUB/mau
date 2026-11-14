@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Threading;
 using CatHome4.Admin;
@@ -66,7 +67,7 @@ namespace CH4
         /// <summary>会话协调桥——S1 程序集拆分：会话注册表/默认猫配置/轮转泵/会话指令（Core 实例类）</summary>
         private static ChatBridge _chatBridge;
 
-        /// <summary>自启配置键——schema 声明（app.json 群）；外壳读配置、内核不物化</summary>
+        /// <summary>自启配置键（app.cfg）；外壳读配置、内核不物化</summary>
         internal const string AutoStartConfigKey = "app.autostart";
 
         /// <summary>管理面板端口——外壳读面（主 HTTP 宿主未监听为 0）</summary>
@@ -261,7 +262,7 @@ namespace CH4
             ctx.Headless = headless;
             RunStep(ctx, "S0", "机制服务（OA / CommandBus / FlowRunner）", BootDegradePolicy.Internal, StageS0);
             RunStep(ctx, "S2", "文件工具（受控根）", BootDegradePolicy.EmptySet, StageS2);
-            RunStep(ctx, "S1", "配置面（schema / 配置池 / 服务绑定）", BootDegradePolicy.EmptySet, StageS1);
+            RunStep(ctx, "S1", "配置面（配置群 / 配置池 / 服务绑定）", BootDegradePolicy.EmptySet, StageS1);
             RunStep(ctx, "S3", "观测日志", BootDegradePolicy.Continue, StageS3);
             RunStep(ctx, "S4", "工具面（全部 Flow）", BootDegradePolicy.EmptySet, StageS4);
             RunStep(ctx, "S5", "会话面（默认猫）", BootDegradePolicy.EmptySet, StageS5);
@@ -318,6 +319,15 @@ namespace CH4
             Dictionary<string, object> timeBlock = new Dictionary<string, object>();
             timeBlock["now"] = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             info["time"] = timeBlock;
+            // [段2b] os——运行操作系统与版本参数（跨平台部署自证：Linux / Windows 一眼可辨，不靠猜）
+            Dictionary<string, object> osBlock = new Dictionary<string, object>();
+            osBlock["description"] = RuntimeInformation.OSDescription;
+            osBlock["arch"] = RuntimeInformation.OSArchitecture.ToString();
+            osBlock["platform"] = Environment.OSVersion.Platform.ToString();
+            osBlock["osVersion"] = Environment.OSVersion.Version.ToString();
+            osBlock["dotnet"] = Environment.Version.ToString();
+            osBlock["framework"] = RuntimeInformation.FrameworkDescription;
+            info["os"] = osBlock;
             // [段3] llm——本猫实际生效端点（A50 端点解析同源化；零值/缺失 = 跟随全局默认）
             Dictionary<string, object> llmBlock = new Dictionary<string, object>();
             llmBlock["protocol"] = "未配置";

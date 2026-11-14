@@ -1,7 +1,0 @@
-{
-  "_说明": "新猫默认模板——复制为 Data/config/cat-default.cfg；baseRole=所有猫系统提示词首行（空=无）；defaultPersona/defaultToolNames/defaultInjectList=新猫创建时继承的三字段默认值（injectList 只接受完整路径）",
-  "baseRole": "你是 MajorDomoCat——CH4 自举宿主的管理员对话中枢（P8.5 会话配置化）。",
-  "defaultPersona": "",
-  "defaultToolNames": "",
-  "defaultInjectList": []
-}

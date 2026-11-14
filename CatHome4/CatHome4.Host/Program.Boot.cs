@@ -43,7 +43,7 @@ namespace CH4
         }
 
         /// <summary>
-        /// 解析并登记一条库侧降级事实——格式 `code|state|detail`（WorkspaceConfig.LoadDegrades / ConfigSchema.LoadDegrade 同构）。
+        /// 解析并登记一条库侧降级事实——格式 `code|state|detail`（WorkspaceConfig.LoadDegrades 同构）。
         /// </summary>
         /// <param name="line">库侧事实串</param>
         /// <param name="ability">受影响能力</param>

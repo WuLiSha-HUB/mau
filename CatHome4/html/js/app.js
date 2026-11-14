@@ -595,9 +595,47 @@ document.getElementById('cmdInput').addEventListener('keydown', function (e) {
     if (e.key === 'Enter') { sendCmd(); }
 });
 
-// [段12] 配置区——GET/POST /api/v1/config（v3 配置区；敏感键服务端掩码，POST 拒绝掩码回写）
+// [段12] 配置区——纯 KV（A364）：后端只存已落盘 key=value；键清单 / 说明 / 默认值文案全登记在本段
+// schema 模板已退役——新增配置项 = 本表加一行（说明写这里，默认值写在消费侧代码里）
 var configTableBody = document.querySelector('#configTable tbody');
 var configMsg = document.getElementById('configMsg');
+// 配置项登记表——k=键 d=说明 e=空值语义（作 placeholder）c=控件（text 缺省 / sel）o=下拉项 ro=只读
+var CONFIG_ITEMS = [
+    { k: 'llm.thinking', d: '思考模式（默认开启、运行时常开不可关闭；只读项）', ro: true },
+    { k: 'llm.reasoning_effort', d: '思考强度（low / high / max；运行时实时读取——写盘即生效）', e: '空=回落 high', c: 'sel', o: [{ v: 'low', t: 'low' }, { v: 'high', t: 'high' }, { v: 'max', t: 'max' }] },
+    { k: 'llm.max_tokens', d: '单次输出上限（1..131072；不传时上游按自家默认截断，回复与工具参数会被切断）', e: '空=回落 131072' },
+    { k: 'http.port', d: 'HTTP 端口——显式覆盖端口段主端口（启动时读取，改后重启生效）', e: '空=按端口段取值（开发区 8079 / 部署区 8080）', ro: true },
+    { k: 'llm.cache_isolation', d: 'LLM 缓存隔离粒度（cat=按猫 key / off=不隔离）', e: '空=运行时回落 cat', c: 'sel', o: [{ v: 'cat', t: 'cat' }, { v: 'off', t: 'off' }] },
+    { k: 'ui.font_scale', d: '界面字号缩放（百分比）——本地适配不同桌面缩放倍率；100=基准', e: '空=100' },
+    { k: 'ui.user_name', d: '使用者显示名——群聊页人消息的署名（改后刷新页面即生效）', e: '空=回落「默认用户」' },
+    { k: 'app.autostart', d: '开机自启（注册 HKCU Run）', e: '空=false', c: 'sel', o: [{ v: 'true', t: 'true' }, { v: 'false', t: 'false' }] },
+    { k: 'app.round_notify', d: '本轮结束系统通知（托盘 BalloonTip）', e: '空=true', c: 'sel', o: [{ v: 'true', t: 'true' }, { v: 'false', t: 'false' }] },
+    { k: 'search.api_config_id', d: '搜索 API 池配置 ID', e: '空=未配置 → 搜索工具明示不可用' },
+    { k: 'search.endpoint', d: '搜索端点——含 /anthropic/ 走 Anthropic 消息协议，否则走 OpenAI Responses', e: '空=取 LLM 池配置端点原值' },
+    { k: 'search.model', d: '搜索模型', e: '空=池配置默认模型' },
+    { k: 'search.timeout_ms', d: '搜索超时毫秒（1000..120000）', e: '空=120000' },
+    { k: 'vision.api_config_id', d: '视觉 API 池配置 ID', e: '空=未配置 → 识图工具明示不可用' },
+    { k: 'vision.endpoint', d: '视觉端点', e: '空=按池配置推导 /chat/completions' },
+    { k: 'vision.model', d: '视觉模型', e: '空=池配置默认模型' },
+    { k: 'vision.detail', d: '图片细节（low/high/original/auto）', e: '空=auto', c: 'sel', o: [{ v: 'low', t: 'low' }, { v: 'high', t: 'high' }, { v: 'original', t: 'original' }, { v: 'auto', t: 'auto' }] },
+    { k: 'vision.timeout_ms', d: '视觉超时毫秒（1000..120000）', e: '空=120000' },
+    { k: 'ps.pwsh_path', d: 'PowerShell 7 可执行路径（pwsh.exe 全路径）', e: '空=未配置 → powershell7 工具明示不可用' },
+    { k: 'sh.shell_path', d: 'bash 可执行路径（Linux sh-exec 使用；Windows 侧不读）', e: '空=缺省 /bin/bash' },
+    { k: 'browser.kernel_path', d: '浏览器内核可执行路径（Chromium 系全路径）', e: '空=未配置 → browser-* 工具明示不可用' },
+    { k: 'audio.voice', d: '播报默认音色（stella 海星·女声 / tide 暗潮·男声；云端 TTS 仅此二音色）', e: '（空 = 服务默认音色）', c: 'sel', o: [{ v: 'stella', t: 'stella · 海星·女声' }, { v: 'tide', t: 'tide · 暗潮·男声' }] },
+    { k: 'audio.tts_endpoint', d: 'TTS 端点（云端语音合成完整 URL）', e: '空=未配置 → 播报明示不可用' },
+    { k: 'audio.tts_api_config_id', d: 'TTS 所用 API 池配置 ID（Key 从 Data/secrets 同源取）', e: '空=未配置 → 播报明示不可用' },
+    { k: 'py.python_path', d: 'Python 解释器路径（python.exe 全路径；获取方式 py -0p）', e: '空=未配置 → py 工具明示不可用' },
+    { k: 'node.node_path', d: 'Node.js 解释器路径（node.exe 全路径；获取方式 where node）', e: '空=未配置 → node 服务明示不可用' },
+    { k: 'node.service.ts.node', d: 'ts 服务解释器覆盖', e: '空=取 node.node_path' },
+    { k: 'node.service.ts.script', d: 'ts 服务入口脚本（受控根寻址 mau:tools/ts/stdio_server.js，或全路径）', e: '空=服务未配置 → ts 服务不可用' },
+    { k: 'node.service.ts.home', d: 'ts 服务环境目录（起服务时以 --home 传入）', e: '空=不传 --home' },
+    { k: 'node.service.ts.args', d: 'ts 服务启动参数（命令行附加串）', e: '空=无附加启动参数' },
+    { k: 'node.service.ts.out_dir', d: 'ts 服务产物目录（业务侧消费）', e: '空=业务侧自行兜底' },
+    { k: 'node.service.ts.timeout_ms', d: 'ts 服务单次调用超时毫秒（1000..120000，含冷启动）', e: '空=120000' },
+    { k: 'node.service.ts.follow', d: 'ts 服务随宿主启动拉起', e: '空=false（首次调用时按需拉起）', c: 'sel', o: [{ v: 'true', t: 'true' }, { v: 'false', t: 'false' }] },
+    { k: 'auth.console_hash', d: 'Console 口令哈希（PBKDF2-SHA256 编码串——仅由登录层写入；手工改坏会登录失败）', e: '空=未设置 → console 免认证' }
+];
 function loadConfig() {
     fetch('/api/v1/config')
         .then(function (r) { return r.json(); })
@@ -610,74 +648,92 @@ function loadConfig() {
 }
 function renderConfig(items) {
     configTableBody.textContent = '';
-    for (var i = 0; i < items.length; i++) {
-        var it = items[i];
-        var tr = document.createElement('tr');
-        var td1 = document.createElement('td');
-        td1.className = 'box-key';
-        td1.textContent = it.key;
-        // 项注释——schema desc 单源（后端下发；未声明项无 desc，来源列已标「·未声明」）
-        var noteText = it.desc || '';
-        if (noteText.length > 0) {
-            var noteEl = document.createElement('div');
-            noteEl.className = 'cfg-note';
-            noteEl.textContent = noteText;
-            td1.appendChild(noteEl);
-        }
-        var td2 = document.createElement('td');
-        var inp;
-        if (it.key === 'audio.voice') {
-            // 音色专用——schema 值域两项渲染下拉（注释来自 ui-common.TTS_VOICES；空=服务默认）
-            inp = document.createElement('select');
-            inp.className = 'input-mini';
-            inp.style.width = '100%';
-            var emptyOpt = document.createElement('option');
-            emptyOpt.value = '';
-            emptyOpt.textContent = '（空 = 服务默认音色）';
-            inp.appendChild(emptyOpt);
-            for (var vi = 0; vi < TTS_VOICES.length; vi++) {
-                var voiceOpt = document.createElement('option');
-                voiceOpt.value = TTS_VOICES[vi].id;
-                voiceOpt.textContent = ttsVoiceLabel(TTS_VOICES[vi].id);
-                inp.appendChild(voiceOpt);
-            }
-            inp.value = String(it.value || '');
-            inp.title = (it.desc || '') + (it.emptyDesc ? '｜' + it.emptyDesc : '');
-        } else {
-            inp = document.createElement('input');
-            inp.value = it.value;
-            inp.className = 'input-mini text';
-            inp.style.width = '100%';
-            // §4.3 描述 + 空值语义进 title（反直觉默认可观测）
-            inp.title = (it.desc || '') + (it.emptyDesc ? '｜' + it.emptyDesc : '');
-            if (it['default'] !== undefined && it['default'] !== '' && (it.value === undefined || it.value === '')) {
-                inp.placeholder = '默认值 ' + it['default'] + '（落盘后生效）';
-            }
-        }
-        td2.appendChild(inp);
-        var td3 = document.createElement('td');
-        td3.className = 'box-tag';
-        // §4.5 未声明键显式标注——落盘存在但 schema 未声明（只读；声明后可见可改）
-        td3.textContent = (it.source || '') + (it.declared === false ? '·未声明' : '');
-        var td4 = document.createElement('td');
-        var btn = document.createElement('button');
-        btn.textContent = '保存';
-        btn.className = 'btn-mini tight';
-        // §4.5 只读项（schema writable=false）——输入框同禁 + 可见标注（避免「可改却点不动」的错觉）
-        if (it.writable === false) {
-            inp.readOnly = true;
-            inp.className = inp.className + ' ro';
-            inp.title = '只读项——不可修改（schema writable=false）｜' + (it.desc || '');
-            btn.disabled = true;
-            btn.title = '只读项（schema writable=false）';
-        }
-        btn.addEventListener('click', (function (k, input) {
-            return function () { saveConfig(k, input.value); };
-        })(it.key, inp));
-        td4.appendChild(btn);
-        tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
-        configTableBody.appendChild(tr);
+    var map = {};
+    var i;
+    for (i = 0; i < items.length; i = i + 1) { map[items[i].key] = items[i].value; }
+    var known = {};
+    for (i = 0; i < CONFIG_ITEMS.length; i = i + 1) {
+        known[CONFIG_ITEMS[i].k] = true;
+        configTableBody.appendChild(buildConfigRow(CONFIG_ITEMS[i], map[CONFIG_ITEMS[i].k]));
     }
+    // 已落盘但本表未登记——照旧列出（说明标未登记），提示补登记
+    var extra = [];
+    for (i = 0; i < items.length; i = i + 1) {
+        if (!known[items[i].key]) { extra.push(items[i].key); }
+    }
+    for (i = 0; i < extra.length; i = i + 1) {
+        configTableBody.appendChild(buildConfigRow({ k: extra[i], d: '未在本页登记（后端已有落盘值）' }, map[extra[i]]));
+    }
+}
+/**
+ * 单行渲染——按登记表构造控件（sel 下拉 / 缺省文本框），值来自后端落盘 map
+ * @param {Object} item 登记项
+ * @param {*} value 落盘值（undefined = 未落盘）
+ * @returns {HTMLElement} 表格行
+ */
+function buildConfigRow(item, value) {
+    var v = (value === undefined || value === null) ? '' : String(value);
+    var tr = document.createElement('tr');
+    var td1 = document.createElement('td');
+    td1.className = 'box-key';
+    td1.textContent = item.k;
+    var noteEl = document.createElement('div');
+    noteEl.className = 'cfg-note';
+    noteEl.textContent = item.d || '';
+    td1.appendChild(noteEl);
+    var td2 = document.createElement('td');
+    var inp;
+    if (item.c === 'sel') {
+        inp = document.createElement('select');
+        inp.className = 'input-mini';
+        inp.style.width = '100%';
+        var emptyOpt = document.createElement('option');
+        emptyOpt.value = '';
+        emptyOpt.textContent = item.e ? item.e : '（未设置）';
+        inp.appendChild(emptyOpt);
+        var opts = item.o || [];
+        for (var oi = 0; oi < opts.length; oi = oi + 1) {
+            var opt = document.createElement('option');
+            opt.value = opts[oi].v;
+            opt.textContent = opts[oi].t;
+            inp.appendChild(opt);
+        }
+        inp.value = v;
+        inp.title = item.d || '';
+    } else {
+        inp = document.createElement('input');
+        inp.value = v;
+        inp.className = 'input-mini text';
+        inp.style.width = '100%';
+        inp.title = item.e ? ((item.d || '') + '｜' + item.e) : (item.d || '');
+        if (item.e) { inp.placeholder = item.e; }
+    }
+    td2.appendChild(inp);
+    var td3 = document.createElement('td');
+    td3.className = 'box-tag';
+    td3.textContent = v.length > 0 ? '已设置' : '未设置';
+    var td4 = document.createElement('td');
+    var btn = document.createElement('button');
+    btn.textContent = '保存';
+    btn.className = 'btn-mini tight';
+    if (item.ro) {
+        // 只读项（显式登记 ro）——控件禁用 + 可见标注（避免「可改却点不动」的错觉）
+        inp.disabled = true;
+        inp.classList.add('ro');
+        inp.title = (item.d || '') + '（只读项）';
+        btn.disabled = true;
+        btn.title = '只读项';
+        td3.textContent = td3.textContent + '·只读';
+    }
+    btn.addEventListener('click', (function (k, input) {
+        return function () { saveConfig(k, input.value); };
+    })(item.k, inp));
+    if (!item.ro) {
+        btn.title = '保存；清空输入框后保存 = 清除该项落盘值（回到默认）';
+    }
+    td4.appendChild(btn);
+    tr.appendChild(td1); tr.appendChild(td2); tr.appendChild(td3); tr.appendChild(td4);
+    return tr;
 }
 function saveConfig(key, value) {
     fetch('/api/v1/config', {
@@ -688,7 +744,11 @@ function saveConfig(key, value) {
         .then(function (r) { return r.json(); })
         .then(function (d) {
             if (d.ok) {
-                configMsg.textContent = '已保存 ' + key + ' @F' + d.frame + '（即时生效：llm.* 实时读取 / ui.* 前端刷新可见）';
+                if (d.cleared) {
+                    configMsg.textContent = '已清除 ' + key + ' 的落盘值（回到默认）@F' + d.frame;
+                } else {
+                    configMsg.textContent = '已保存 ' + key + ' @F' + d.frame + '（即时生效：llm.* 实时读取 / ui.* 前端刷新可见）';
+                }
                 loadConfig();
             } else {
                 configMsg.textContent = '失败: ' + (d.error || '未知错误');

@@ -6,19 +6,19 @@
 toolDecl('config-reset', {
     inputLines: function (a) {
         if (a.key) {
-            return ['还原配置 ' + a.key + ' 为默认'];
+            return ['清除配置 ' + a.key + ' 的落盘值（回到未设置）'];
         }
-        return ['还原全部可写配置为默认'];
+        return ['清除全部落盘配置值（回到未设置）'];
     },
     headline: function (a, r) {
         var h = ovHead(r);
         if (!h) {
-            return '还原配置' + ovStat(r);
+            return '清除配置' + ovStat(r);
         }
         var m = h.meta;
         if (ovMetaStr(m, 'scope') === 'all') {
-            return '还原全部可写配置 · ' + ovMetaNum(m, 'items', 0) + ' 项';
+            return '清除全部落盘配置 · ' + ovMetaNum(m, 'items', 0) + ' 项';
         }
-        return '还原配置 ' + ovMetaStr(m, 'target') + ' · 默认值';
+        return '清除配置 ' + ovMetaStr(m, 'target') + ' 的落盘值';
     }
 });

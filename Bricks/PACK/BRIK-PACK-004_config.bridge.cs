@@ -5,10 +5,10 @@
 // 作用: 配置工具桥接口积木——配置自改能力声明（PACK 类，config.* 积木统一经本桥访问）
 // 依赖: 无
 // 包: 无
-// 引用: Mau.Runtime（ConfigStore/ConfigSchema/DataBox）
-// 原理: DataBox.TryResolve<ConfigStore>（全局 store——与配置面 HTTP 同源，§4.4）+ DataBox.TryResolve<ConfigSchema> → method 分派
-//       读面走 ConfigEffective 单一出口（source/空值语义/未声明标注——§4.3/§4.5）
-//       写入唯一实现 = ConfigStore.SetChecked/ResetToDefault（schema 白名单 + 值域校验 + 原子写回滚）
+// 引用: Mau.Runtime（ConfigStore/DataBox）
+// 原理: DataBox.TryResolve<ConfigStore>（全局 store——与配置面 HTTP 同源，§4.4）→ method 分派
+//       纯 KV（A364 起）：读面输出已落盘键值，写面 SetChecked 写死防御 + 原子写回滚——无声明面 / 无默认值来源
+//       reset 语义 = 删除落盘值（回到未设置，消费侧硬编码默认生效）
 // 方法: list → （无参）
 //        get → key
 //        set → key,value
@@ -24,7 +24,7 @@ using Mau.Runtime;
 namespace Mau.Bricks
 {
     /// <summary>
-    /// PACK 接口积木——config.bridge（调度 ConfigStore/ConfigSchema）
+    /// PACK 接口积木——config.bridge（调度 ConfigStore）
     /// </summary>
     public static class ConfigBridgeBrick
     {
@@ -53,7 +53,7 @@ namespace Mau.Bricks
             }
             else if (method == "set")
             {
-                allowedKeys = "key value declare desc";
+                allowedKeys = "key value";
                 requiredKeys = "key value";
             }
             else if (method == "reset")
@@ -80,30 +80,26 @@ namespace Mau.Bricks
                 result = "ERR|CONFIG_NO_STORE|宿主未注入 ConfigStore";
                 return false;
             }
-            ConfigSchema? schema;
-            bool schemaBound = DataBox.TryResolve<ConfigSchema>(out schema);
             try
             {
                 if (method == "list")
                 {
-                    result = ListAll(cfg, schema, schemaBound);
+                    result = ListAll(cfg);
                     return true;
                 }
                 if (method == "get")
                 {
-                    result = GetOne(cfg, schema, schemaBound, JsonArgs.Get(argsJson, "key"));
+                    result = GetOne(cfg, JsonArgs.Get(argsJson, "key"));
                     return true;
                 }
                 if (method == "set")
                 {
-                    string declareArg = JsonArgs.Get(argsJson, "declare");
-                    bool declare = string.Equals(declareArg, "true", StringComparison.OrdinalIgnoreCase);
-                    result = SetOne(cfg, schema, schemaBound, JsonArgs.Get(argsJson, "key"), JsonArgs.Get(argsJson, "value"), declare, JsonArgs.Get(argsJson, "desc"));
+                    result = SetOne(cfg, JsonArgs.Get(argsJson, "key"), JsonArgs.Get(argsJson, "value"));
                     return true;
                 }
                 if (method == "reset")
                 {
-                    result = ResetOne(cfg, schema, schemaBound, JsonArgs.Get(argsJson, "key"));
+                    result = ResetOne(cfg, JsonArgs.Get(argsJson, "key"));
                     return true;
                 }
                 result = "ERR|UNKNOWN_METHOD|config." + method;
@@ -117,255 +113,156 @@ namespace Mau.Bricks
         }
 
         /// <summary>
-        /// list——配置全览（读面单一出口 ConfigEffective：schema 声明全项 + 未声明落盘键；敏感键掩码）
-        /// 输出：key=值 | 来源=file·env·default | 默认=… | 可写·只读 | 空值语义 | 类型=[min,max] | 描述
+        /// list——配置全览（纯 KV）：全部已落盘键值 + 敏感键掩码 + 段清单
         /// </summary>
         /// <param name="cfg">配置存储</param>
-        /// <param name="schema">配置 schema</param>
-        /// <param name="schemaBound">schema 是否绑定</param>
         /// <returns>清单文本</returns>
-        private static string ListAll(ConfigStore cfg, ConfigSchema schema, bool schemaBound)
+        private static string ListAll(ConfigStore cfg)
         {
-            ConfigSchema? readSchema = null;
-            if (schemaBound)
-            {
-                readSchema = schema;
-            }
-            ConfigEffective.Entry[] items = ConfigEffective.BuildAll(cfg, readSchema);
+            System.Collections.Generic.KeyValuePair<string, string>[] items = cfg.All();
             StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < items.Length; i = i + 1)
-            {
-                ConfigEffective.Entry entry = items[i];
-                string value = entry.Value;
-                if (entry.Sensitive && value.Length > 0)
-                {
-                    value = "****";
-                }
-                sb.Append(entry.Key);
-                sb.Append('=');
-                sb.Append(value);
-                sb.Append(" | 来源=");
-                sb.Append(entry.Source);
-                if (entry.Declared)
-                {
-                    sb.Append(" | 默认=");
-                    sb.Append(entry.Default);
-                    sb.Append(" | ");
-                    if (entry.Writable)
-                    {
-                        sb.Append("可写");
-                    }
-                    else
-                    {
-                        sb.Append("只读");
-                    }
-                    if (entry.EmptyDesc.Length > 0)
-                    {
-                        sb.Append(" | ");
-                        sb.Append(entry.EmptyDesc);
-                    }
-                    if (entry.Type.Length > 0)
-                    {
-                        sb.Append(" | 类型=");
-                        sb.Append(entry.Type);
-                        if (entry.Min.Length > 0)
-                        {
-                            sb.Append("[" + entry.Min + "," + entry.Max + "]");
-                        }
-                    }
-                }
-                sb.Append(" | ");
-                sb.AppendLine(entry.Desc);
-            }
-            int writable = 0;
             int sensitive = 0;
             for (int i = 0; i < items.Length; i = i + 1)
             {
-                if (items[i].Declared && items[i].Writable)
-                {
-                    writable = writable + 1;
-                }
-                if (items[i].Sensitive)
+                string key = items[i].Key;
+                string value = items[i].Value;
+                bool secret = IsSecretKey(key);
+                if (secret)
                 {
                     sensitive = sensitive + 1;
+                    if (value.Length > 0)
+                    {
+                        value = "****";
+                    }
                 }
+                sb.Append(key);
+                sb.Append('=');
+                sb.Append(value);
+                sb.AppendLine();
             }
-            // 结构化返回体（design-ch4-tools 附录 · A214）——首行 JSON 头（target/items）+ 正文摘要行
             System.Collections.Generic.Dictionary<string, object> fields = new System.Collections.Generic.Dictionary<string, object>();
-            fields["writable"] = writable;
             fields["sensitive"] = sensitive;
-            // A152——段清单（schema 声明前缀 ∪ 落盘键前缀：派生段亦可发现）
-            fields["sections"] = string.Join(" / ", ListSegments(cfg, readSchema).ToArray());
-            return MetaHead("config-list", true, "", items.Length, fields) + "\n" + items.Length.ToString() + " 项 · 可写 " + writable.ToString() + " · 敏感 " + sensitive.ToString() + "\n" + TrimResult(sb.ToString(), 20000);
+            fields["sections"] = string.Join(" / ", ListSegments(cfg).ToArray());
+            return MetaHead("config-list", true, "", items.Length, fields) + "\n" + items.Length.ToString() + " 项 · 敏感 " + sensitive.ToString() + "\n" + TrimResult(sb.ToString(), 20000);
         }
 
         /// <summary>
-        /// get——单项查询（读面单一出口 ConfigEffective——含 source 与未声明标注）
-        /// 未声明且未落盘 → ERR|NOT_FOUND；未声明但落盘 → 输出 + 「未在 schema 声明（只读…）」
+        /// 敏感键判定——api_key/secret/token 系内容掩码（无声明面，按键名兜底）
+        /// </summary>
+        /// <param name="key">配置键</param>
+        /// <returns>是否敏感</returns>
+        private static bool IsSecretKey(string key)
+        {
+            return key.IndexOf("api_key", StringComparison.OrdinalIgnoreCase) >= 0
+                || key.IndexOf("secret", StringComparison.OrdinalIgnoreCase) >= 0
+                || key.IndexOf("token", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        /// <summary>
+        /// get——单项查询（纯 KV）：只输出已落盘值；无落盘 → ERR|NOT_FOUND（附段清单 / 段内键清单）
         /// </summary>
         /// <param name="cfg">配置存储</param>
-        /// <param name="schema">配置 schema</param>
-        /// <param name="schemaBound">schema 是否绑定</param>
         /// <param name="key">配置键</param>
         /// <returns>单项文本</returns>
-        private static string GetOne(ConfigStore cfg, ConfigSchema schema, bool schemaBound, string key)
+        private static string GetOne(ConfigStore cfg, string key)
         {
             if (key == null || key.Length == 0)
             {
                 return "ERR|BAD_ARGS|缺少参数 key";
             }
-            ConfigSchema? readSchema = null;
-            if (schemaBound)
+            string value = "";
+            if (!cfg.TryGet(key, out value))
             {
-                readSchema = schema;
+                return "ERR|NOT_FOUND|" + DescribeMissing(cfg, key);
             }
-            ConfigEffective.Entry entry = ConfigEffective.Resolve(cfg, readSchema, key);
-            if (!entry.Declared && entry.Source.Length == 0)
-            {
-                // A152——缺键说明区分「段不存在」/「键不存在」，并给出段清单 / 段内键清单（段面发现入口）
-                return "ERR|NOT_FOUND|" + DescribeMissing(cfg, readSchema, key);
-            }
-            string value = entry.Value;
-            if (entry.Sensitive && value.Length > 0)
+            bool secret = IsSecretKey(key);
+            if (secret && value.Length > 0)
             {
                 value = "****";
             }
-            StringBuilder sb = new StringBuilder();
-            sb.Append(key);
-            sb.Append('=');
-            sb.Append(value);
-            sb.Append(" | 来源=");
-            sb.Append(entry.Source);
-            if (entry.Declared)
-            {
-                sb.Append(" | 默认=");
-                sb.Append(entry.Default);
-                sb.Append(" | ");
-                if (entry.Writable)
-                {
-                    sb.Append("可写");
-                }
-                else
-                {
-                    sb.Append("只读");
-                }
-                if (entry.EmptyDesc.Length > 0)
-                {
-                    sb.Append(" | ");
-                    sb.Append(entry.EmptyDesc);
-                }
-            }
-            sb.Append(" | ");
-            sb.Append(entry.Desc);
-            // 结构化返回体（design-ch4-tools 附录 · A214）——首行 JSON 头（target/items）+ 正文摘要行
             System.Collections.Generic.Dictionary<string, object> fields = new System.Collections.Generic.Dictionary<string, object>();
-            fields["source"] = entry.Source;
-            fields["declared"] = entry.Declared;
-            fields["writable"] = entry.Writable;
-            fields["sensitive"] = entry.Sensitive;
-            return MetaHead("config-get", true, key, -1, fields) + "\n" + key + " | 来源 " + entry.Source + "\n" + sb.ToString();
+            fields["sensitive"] = secret;
+            return MetaHead("config-get", true, key, -1, fields) + "\n" + key + " | 已落盘" + "\n" + key + "=" + value;
         }
 
         /// <summary>
-        /// set——白名单写（唯一实现 ConfigStore.SetChecked）
+        /// set——写入（纯 KV）：SetChecked 写死防御（键名 / 长度 / 掩码）+ 内存写入 + 原子写回滚；value 空 = 清除该项落盘值（回到默认）
         /// </summary>
         /// <param name="cfg">配置存储</param>
-        /// <param name="schema">配置 schema</param>
-        /// <param name="schemaBound">schema 是否绑定</param>
         /// <param name="key">配置键</param>
         /// <param name="value">新值</param>
-        /// <param name="declare">是否声明新键（true 且键未声明时先入 schema 再写入）</param>
-        /// <param name="desc">声明描述（declare=true 时生效，可空）</param>
         /// <returns>确认文本</returns>
-        private static string SetOne(ConfigStore cfg, ConfigSchema schema, bool schemaBound, string key, string value, bool declare, string desc)
+        private static string SetOne(ConfigStore cfg, string key, string value)
         {
             if (key == null || key.Length == 0)
             {
                 return "ERR|BAD_ARGS|缺少参数 key";
             }
-            bool declared = schemaBound && schema != null && schema.Find(key) != null;
-            string declareNote = "";
-            if (!declared)
+            // 空值 = 清除该项落盘值（回到默认；与 HTTP 写面同语义）
+            if (value == null || value.Length == 0)
             {
-                if (!declare)
+                string clearError;
+                if (!cfg.ResetToDefault(key, out clearError))
                 {
-                    return "ERR|CONFIG_REJECT|配置键未在 schema 声明: " + key + "——新建请加 declare=true（可配 desc=说明）";
+                    return "ERR|CONFIG_REJECT|" + clearError;
                 }
-                if (schema == null)
-                {
-                    return "ERR|CONFIG_DECLARE|schema 未绑定";
-                }
-                string fileName;
-                bool newSegment;
-                string declareError;
-                if (!schema.Declare(key, desc, out fileName, out newSegment, out declareError))
-                {
-                    return "ERR|CONFIG_DECLARE|" + declareError;
-                }
-                declareNote = " · 已声明（段文件 " + fileName + "）";
-                if (newSegment)
-                {
-                    int dot = key.IndexOf('.');
-                    string segment = key.Substring(0, dot);
-                    string dir = Path.GetDirectoryName(schema.SourcePath);
-                    if (dir != null && dir.Length > 0)
-                    {
-                        cfg.AddFile(segment, Path.Combine(dir, fileName));
-                        declareNote = declareNote + " · 新段已即时注册";
-                    }
-                    else
-                    {
-                        declareNote = declareNote + " · 新段目录未知——重启后自动注册";
-                    }
-                }
-            }
-            else if (declare)
-            {
-                declareNote = " · 键已声明，declare 忽略";
+                System.Collections.Generic.Dictionary<string, object> clearFields = new System.Collections.Generic.Dictionary<string, object>();
+                clearFields["sensitive"] = IsSecretKey(key);
+                clearFields["cleared"] = true;
+                return MetaHead("config-set", true, key, -1, clearFields) + "\n" + key + " | 已清除落盘值（回到默认）";
             }
             string error;
-            if (!cfg.SetChecked(key, value, schemaBound ? schema : null, out error))
+            if (!cfg.SetChecked(key, value, out error))
             {
                 return "ERR|CONFIG_REJECT|" + error;
             }
-            bool sensitive = schemaBound && schema != null && schema.IsSensitive(key);
+            bool sensitive = IsSecretKey(key);
             // 结构化返回体（design-ch4-tools 附录 · A214）——首行 JSON 头（target/items）+ 正文摘要行
             System.Collections.Generic.Dictionary<string, object> fields = new System.Collections.Generic.Dictionary<string, object>();
             fields["sensitive"] = sensitive;
-            fields["declaredNow"] = !declared;
-            return MetaHead("config-set", true, key, -1, fields) + "\n" + key + " | 已更新 = " + (sensitive ? "****" : value) + declareNote;
+            return MetaHead("config-set", true, key, -1, fields) + "\n" + key + " | 已更新 = " + (sensitive ? "****" : value);
         }
 
         /// <summary>
-        /// reset——还原默认（key 空=全群 writable；写 schema default 落盘）
+        /// reset——清掉落盘值（纯 KV）：key 空 = 全部落盘项；key 非空 = 单项（回到未设置）
         /// </summary>
         /// <param name="cfg">配置存储</param>
-        /// <param name="schema">配置 schema</param>
-        /// <param name="schemaBound">schema 是否绑定</param>
         /// <param name="key">配置键（空=全群）</param>
         /// <returns>确认文本</returns>
-        private static string ResetOne(ConfigStore cfg, ConfigSchema schema, bool schemaBound, string key)
+        private static string ResetOne(ConfigStore cfg, string key)
         {
+            int resetCount = 0;
+            if (key == null || key.Length == 0)
+            {
+                resetCount = cfg.All().Length;
+            }
+            else
+            {
+                resetCount = 1;
+            }
+            string clearKey = "";
+            if (key != null)
+            {
+                clearKey = key;
+            }
             string error;
-            if (!cfg.ResetToDefault(key, schemaBound ? schema : null, out error))
+            if (!cfg.ResetToDefault(clearKey, out error))
             {
                 return "ERR|CONFIG_REJECT|" + error;
             }
-            // 结构化返回体（design-ch4-tools 附录）——首行 JSON 元数据头 + 正文定界
             string keyText = "";
             if (key != null)
             {
                 keyText = key;
             }
             bool all = (keyText.Length == 0);
-            int resetCount = all ? CountWritable(schema, schemaBound) : 1;
             System.Collections.Generic.Dictionary<string, object> fields = new System.Collections.Generic.Dictionary<string, object>();
             fields["scope"] = all ? "all" : "single";
             if (all)
             {
-                return MetaHead("config-reset", true, "", resetCount, fields) + "\n" + "全部可写配置项 | 已还原 " + resetCount.ToString() + " 项";
+                return MetaHead("config-reset", true, "", resetCount, fields) + "\n" + "全部落盘配置项 | 已清除 " + resetCount.ToString() + " 项（回到未设置）";
             }
-            return MetaHead("config-reset", true, keyText, resetCount, fields) + "\n" + keyText + " | 已还原";
+            return MetaHead("config-reset", true, keyText, resetCount, fields) + "\n" + keyText + " | 已清除（回到未设置）";
         }
 
         /// <summary>
@@ -393,22 +290,13 @@ namespace Mau.Bricks
         }
 
         /// <summary>
-        /// 段清单（A152）——schema 声明键前缀 ∪ 落盘键前缀（去重保序；派生段 / 未声明段一并可见）
+        /// 段清单——落盘键前缀（去重保序）
         /// </summary>
         /// <param name="cfg">配置存储</param>
-        /// <param name="schema">配置 schema（可 null）</param>
         /// <returns>段名列表</returns>
-        private static System.Collections.Generic.List<string> ListSegments(ConfigStore cfg, ConfigSchema? schema)
+        private static System.Collections.Generic.List<string> ListSegments(ConfigStore cfg)
         {
             System.Collections.Generic.List<string> segments = new System.Collections.Generic.List<string>();
-            if (schema != null)
-            {
-                ConfigSchema.Item[] items = schema.All();
-                for (int i = 0; i < items.Length; i = i + 1)
-                {
-                    AddSegment(segments, SegmentOf(items[i].Key));
-                }
-            }
             if (cfg != null)
             {
                 System.Collections.Generic.KeyValuePair<string, string>[] all = cfg.All();
@@ -442,15 +330,14 @@ namespace Mau.Bricks
         }
 
         /// <summary>
-        /// 缺键说明（A152）——分「段不存在」/「键不存在」：段不存在时列可用段；段存在时列段内键（上限 8 条）
+        /// 缺键说明——分「段不存在」/「键不存在」：段不存在时列可用段；段存在时列段内键（上限 8 条）
         /// </summary>
         /// <param name="cfg">配置存储</param>
-        /// <param name="schema">配置 schema（可 null）</param>
         /// <param name="key">未命中的配置键</param>
-        /// <returns>说明文本（替代原「配置键不存在」一句话）</returns>
-        private static string DescribeMissing(ConfigStore cfg, ConfigSchema? schema, string key)
+        /// <returns>说明文本</returns>
+        private static string DescribeMissing(ConfigStore cfg, string key)
         {
-            System.Collections.Generic.List<string> segments = ListSegments(cfg, schema);
+            System.Collections.Generic.List<string> segments = ListSegments(cfg);
             string segment = SegmentOf(key);
             if (segment.Length == 0)
             {
@@ -470,17 +357,6 @@ namespace Mau.Bricks
                 return "段不存在: " + segment + "——可用段: " + string.Join(" / ", segments.ToArray());
             }
             System.Collections.Generic.List<string> keys = new System.Collections.Generic.List<string>();
-            if (schema != null)
-            {
-                ConfigSchema.Item[] items = schema.All();
-                for (int i = 0; i < items.Length; i = i + 1)
-                {
-                    if (string.Equals(SegmentOf(items[i].Key), segment, StringComparison.OrdinalIgnoreCase))
-                    {
-                        keys.Add(items[i].Key);
-                    }
-                }
-            }
             if (cfg != null)
             {
                 System.Collections.Generic.KeyValuePair<string, string>[] all = cfg.All();
@@ -490,19 +366,7 @@ namespace Mau.Bricks
                     {
                         continue;
                     }
-                    bool dup = false;
-                    for (int k = 0; k < keys.Count; k = k + 1)
-                    {
-                        if (string.Equals(keys[k], all[i].Key, StringComparison.Ordinal))
-                        {
-                            dup = true;
-                            break;
-                        }
-                    }
-                    if (!dup)
-                    {
-                        keys.Add(all[i].Key);
-                    }
+                    keys.Add(all[i].Key);
                 }
             }
             System.Text.StringBuilder sb = new System.Text.StringBuilder();
@@ -568,30 +432,6 @@ namespace Mau.Bricks
         }
 
         /// <summary>
-        /// 可写项计数——全群还原的规模量（schema 未绑定时 0）
-        /// </summary>
-        /// <param name="schema">配置 schema</param>
-        /// <param name="schemaBound">schema 是否绑定</param>
-        /// <returns>writable 项数</returns>
-        private static int CountWritable(ConfigSchema schema, bool schemaBound)
-        {
-            if (!schemaBound || schema == null)
-            {
-                return 0;
-            }
-            int n = 0;
-            ConfigSchema.Item[] all = schema.All();
-            for (int i = 0; i < all.Length; i = i + 1)
-            {
-                if (all[i].Writable)
-                {
-                    n = n + 1;
-                }
-            }
-            return n;
-        }
-
-        /// <summary>
         /// 结果截断——超长文本保留头部 + 截断提示（上下文防爆）
         /// </summary>
         /// <param name="text">原文</param>
@@ -607,4 +447,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:C66E2ACD684806BCB189D4B130D15A91CAFBECFFE4378CE0D0C3F9DF7BFD3BCF
+// #MAU_CHECKSUM:SHA256:0BDAEE7F86FE31CFF8D482C0AD47D183521A04FCA3E3B7E423011A7A4B82CF52

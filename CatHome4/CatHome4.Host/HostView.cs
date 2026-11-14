@@ -97,7 +97,7 @@ namespace CH4
         }
 
         /// <summary>
-        /// 写自启开关——schema 白名单校验后落配置（物化由外壳在同一次动作后同步）。
+        /// 写自启开关——写死防御校验后落配置（物化由外壳在同一次动作后同步）。
         /// </summary>
         /// <param name="on">目标状态</param>
         /// <returns>空串 = 成功；否则为失败原因</returns>
@@ -109,11 +109,9 @@ namespace CH4
                 newValue = "true";
             }
             ConfigStore cfg = null;
-            ConfigSchema schema = null;
             DataBox.TryResolve<ConfigStore>(out cfg);
-            DataBox.TryResolve<ConfigSchema>(out schema);
             string error = "";
-            if (cfg == null || !cfg.SetChecked(Program.AutoStartConfigKey, newValue, schema, out error))
+            if (cfg == null || !cfg.SetChecked(Program.AutoStartConfigKey, newValue, out error))
             {
                 return error;
             }

@@ -39,17 +39,8 @@ namespace CH4
         /// <summary>受控根对账结论文本（S2 产物）</summary>
         internal string RootsNote = "";
 
-        /// <summary>schema 模板路径（S1 产物）</summary>
-        internal string SchemaTemplatePath = "";
-
-        /// <summary>schema 同步结论（S1 产物）</summary>
-        internal string SchemaSyncNote = "";
-
         /// <summary>配置段注册结论（S1 产物）</summary>
         internal string SegmentNote = "";
-
-        /// <summary>配置面元声明（S1 产物）</summary>
-        internal ConfigSchema Schema = null;
 
         /// <summary>全局配置存储（S1 产物）</summary>
         internal ConfigStore LlmConfig = null;
@@ -275,7 +266,7 @@ namespace CH4
         }
 
         /// <summary>
-        /// S1 配置面——schema 同步与加载 + 全局配置 + 三配置池 + 各服务绑定（LLM / Roslyn / 视觉 / Ps / py / 浏览器 / 下载 / 宿主指令 / 音频）。
+        /// S1 配置面——配置群全目录装载（`*.cfg` → 段）+ 全局配置 + 三配置池 + 各服务绑定（LLM / Roslyn / 视觉 / Ps / py / 浏览器 / 下载 / 宿主指令 / 音频）。
         /// </summary>
         /// <param name="ctx">启动段上下文</param>
         internal static void StageS1(BootContext ctx)
@@ -288,23 +279,10 @@ namespace CH4
             string dataRoot = ctx.DataRoot;
             WorkspaceConfig workspace = ctx.Workspace;
             string configDir = ctx.ConfigDir;
-            // P8.5 配置群 schema——schema.json 元声明（默认值/敏感/可写/空值语义——/api/v1/config 输出面）
-            // §4.1 schema 同步（模板为准：不一致 → .bak 备份 + 整体覆盖）→ §4.2 schema 驱动段注册（宿主零硬编码段清单）
-            // 两条结论在 LogStore 就绪后补记审计（启动期只有 Console——落盘补记见段3b）
-            string schemaTemplatePath;
-            string schemaSyncNote = EnsureSchemaSync(configDir, out schemaTemplatePath);
-            ConfigSchema schema = ConfigSchema.Load(Path.Combine(configDir, "schema.json"));
-            // A260 schema 降级登记——损坏已回退为空 schema（配置面只读可见），事实进启动健康面
-            if (schema.LoadDegrade.Length > 0)
-            {
-                ReportLoadDegrade(schema.LoadDegrade, "配置面（schema）",
-                    "打开配置目录替换 schema.json（坏档已备份 .bad-<ts>）", "S1");
-            }
-            // A152 派生段声明通道——模板路径注入（声明时模板与运行副本同步写，避免启动期模板同步覆盖）
-            schema.TemplatePath = schemaTemplatePath;
-            DataBox.Bind<ConfigSchema>(schema);
-            ConfigStore llmConfig = ConfigStore.Load(Path.Combine(configDir, "llm.cfg"));
-            string segmentNote = RegisterSchemaSegments(llmConfig, schema, configDir);
+            // A364 schema 播种退役——纯 KV：目录下全部 *.cfg 直接装入内存（文件名去后缀 = 键前缀段）
+            // 无声明面 / 无模板 / 无白名单：未落盘的键由消费侧硬编码默认值兜底
+            ConfigStore llmConfig = ConfigStore.LoadDir(configDir);
+            string segmentNote = "config.seg | 目录扫描 " + configDir;
             DataBox.Bind<ConfigStore>(llmConfig);
             // M1a LLM API 配置池——llm-api.json 明文（零 key）+ Data/secrets 独立秘密文件（CH3 同构迁移；环境变量首次导入兜底）
             CH_LlmApiConfigStore apiConfigStore = new CH_LlmApiConfigStore(
@@ -361,9 +339,6 @@ namespace CH4
             AuditStore.Default = audit;
             _runner.Audit = audit;
             // 段产物交回上下文
-            ctx.Schema = schema;
-            ctx.SchemaTemplatePath = schemaTemplatePath;
-            ctx.SchemaSyncNote = schemaSyncNote;
             ctx.LlmConfig = llmConfig;
             ctx.SegmentNote = segmentNote;
             ctx.ApiConfigStore = apiConfigStore;
@@ -448,8 +423,8 @@ namespace CH4
             {
                 LogStore.Add("CatHome4", 1, bootLines[i], "BOOT");
             }
-            // [段3b] 配置面启动审计补记——schema 同步与段注册结论 + 受控根对账（启动期仅 Console 输出，此处落盘可回溯）
-            LogStore.Add("CatHome4", 1, "config.boot | " + ctx.SchemaSyncNote + " | " + ctx.SegmentNote, "CONFIG");
+            // [段3b] 配置面启动审计补记——段注册结论 + 受控根对账（启动期仅 Console 输出，此处落盘可回溯）
+            LogStore.Add("CatHome4", 1, "config.boot | " + ctx.SegmentNote, "CONFIG");
             // A153 受控根对账落盘——同 path 多根走 L2（WARN）出声
             if (ctx.RootsConflict)
             {

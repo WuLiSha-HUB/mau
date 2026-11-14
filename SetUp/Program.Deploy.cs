@@ -114,12 +114,6 @@ namespace SetUp
                 return "目录复制失败——新目录可能被占用或不可写。";
             }
 
-            // [段3b] 配置模板复制——仓库 config/ 模板 → 新目录 config/（规范 §二：配置模板进部署包；Data 自举在首次运行完成）
-            string configTpl = Path.Combine(repoRoot, "config");
-            if (Directory.Exists(configTpl))
-            {
-                CopyDirectory(configTpl, Path.Combine(targetNew, "config"));
-            }
             // [段3c] 音频资产复制——仓库 assets/ → 新目录 assets/（轮末总结提示音等随包分发）
             // 可见性（A264）：成功也落步明细；源缺失记 Detail 出声（旧形态静默跳过 → 提示音在运行区消失而无痕迹）
             long assetsMs = Environment.TickCount64;

@@ -554,7 +554,7 @@ namespace CH4
             return outPath;
         }
         /// <summary>
-        /// 全局默认音色——audio.voice 落盘值优先，未落盘回落 schema 默认；空=服务默认音色。
+        /// 全局默认音色——audio.voice 落盘值优先，未落盘回落内置默认 stella；空=服务默认音色。
         /// </summary>
         /// <returns>音色名</returns>
         private static string ResolveGlobalVoice()
@@ -564,21 +564,12 @@ namespace CH4
             {
                 return "";
             }
-            string voice = cfg.Get("audio.voice", "");
-            if (voice != null && voice.Length > 0)
+            string voice = cfg.Get("audio.voice", "stella");
+            if (voice == null)
             {
-                return voice;
+                return "";
             }
-            ConfigSchema schema = null;
-            if (DataBox.TryResolve<ConfigSchema>(out schema) && schema != null)
-            {
-                ConfigSchema.Item item = schema.Find("audio.voice");
-                if (item != null)
-                {
-                    return item.Default;
-                }
-            }
-            return "";
+            return voice;
         }
         /// <summary>
         /// 播报名解析——固定 key 走中文转义（majordomo 的 displayName 不可改，espeak 读英文不自然）；

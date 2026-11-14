@@ -22,14 +22,14 @@ namespace Mau.Bricks
         public static string GetToolsJson()
         {
             return "{\"group\":\"ConfigCat\",\"privileged\":true,\"tools\":[" +
-                "{\"name\":\"config-list\",\"description\":\"配置全览——schema 全部条目（键/当前值/来源/schema 默认/敏感/可写/值域/描述）；敏感键掩码\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}," +
-                "{\"name\":\"config-get\",\"description\":\"配置单项查询——按 schema 键返回（含默认/敏感/可写/值域/描述）；敏感键掩码\",\"parameters\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"配置键（如 ui.chat_font_size）\"}},\"required\":[\"key\"]}}," +
-                "{\"name\":\"config-set\",\"description\":\"配置写入——schema 声明且 writable=true 的项（白名单+值域校验+原子写+失败回滚）；declare=true 时未声明键先声明入 schema（模板与运行副本同步写，段文件即时注册）再写入；llm.* 私密环境变量只读\",\"parameters\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"配置键（未声明键须带段前缀，如 x.enabled）\"},\"value\":{\"type\":\"string\",\"description\":\"新值（掩码值拒绝）\"},\"declare\":{\"type\":\"string\",\"description\":\"是否声明新键——\\\"true\\\" 时未声明键先入 schema 再写入（默认不声明，未声明键一律拒绝）\"},\"desc\":{\"type\":\"string\",\"description\":\"声明时的描述（declare=true 时生效）\"}},\"required\":[\"key\",\"value\"]}}," +
-                "{\"name\":\"config-reset\",\"description\":\"配置还原默认——key 空=全群 writable 项还原 schema default；key 非空=单项\",\"parameters\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"配置键（空=全群）\"}},\"required\":[]}}," +
+                "{\"name\":\"config-list\",\"description\":\"配置全览——全部已落盘配置项（键/值/段清单）；敏感键掩码；未落盘的键不列出（默认值见工具说明）\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}," +
+                "{\"name\":\"config-get\",\"description\":\"配置单项查询——按键返回已落盘值；键未落盘报 NOT_FOUND 并给段清单；敏感键掩码\",\"parameters\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"配置键（如 ui.font_scale）\"}},\"required\":[\"key\"]}}," +
+                "{\"name\":\"config-set\",\"description\":\"配置写入——任意键直接写（纯 KV：内存 + 原子落盘，失败回滚）；键名只允许字母/数字/下划线/点；掩码值拒绝；**value 传空串 = 清除该项落盘值（回到默认）**；llm.* 私密环境变量只读\",\"parameters\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"配置键（带段前缀，如 x.enabled）\"},\"value\":{\"type\":\"string\",\"description\":\"新值（掩码值拒绝；空串 = 清除该项，回到默认）\"}},\"required\":[\"key\",\"value\"]}}," +
+                "{\"name\":\"config-reset\",\"description\":\"配置还原默认——删除落盘值（回到未设置，消费侧内置默认生效）；key 空=全部落盘项，key 非空=单项\",\"parameters\":{\"type\":\"object\",\"properties\":{\"key\":{\"type\":\"string\",\"description\":\"配置键（空=全群）\"}},\"required\":[]}}," +
                 "{\"name\":\"config-cat-get\",\"description\":\"每猫配置读取——返回指定猫 cat.cfg 全部字段；特权面——仅主干会话可调\",\"parameters\":{\"type\":\"object\",\"properties\":{\"cat\":{\"type\":\"string\",\"description\":\"目标猫寻址键（majordomo=主干会话；多猫=会话 id / 显示名 / id 前缀唯一）\"}},\"required\":[\"cat\"]}}," +
                 "{\"name\":\"config-cat-set\",\"description\":\"每猫配置写入——字段级合并写（读现值→改单字段→全量写回，未提交字段逐字保留）；apiConfigId 立即生效，persona/toolNames/injectList/packs/enabledRoots 新会话生效；返回落盘实况；toolNames 中 group-catcfg-set / group-newsession 属硬编码受限名单——填入会被剔除并在回执出声（只拦新增，现值已持有的保留）\",\"parameters\":{\"type\":\"object\",\"properties\":{\"cat\":{\"type\":\"string\",\"description\":\"目标猫寻址键\"},\"field\":{\"type\":\"string\",\"description\":\"字段名（displayName/type/apiConfigId/persona/toolNames/injectList/packs/enabledRoots/dbLibs/userInjectIdleOnly/appearanceId/reasoningEffort/themeColor）\"},\"value\":{\"type\":\"string\",\"description\":\"新值；数组类字段用逗号分隔（如 enabledRoots=\\\"CCBP,Git,mau\\\"）\"}},\"required\":[\"cat\",\"field\",\"value\"]}}" +
                 "]}";
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:A5BB75C37E793E0A746311B91ADEC36536FF3B270006EDCA27429D5A79121763
+// #MAU_CHECKSUM:SHA256:B519B53145899870184FB5A3460E71B384AFB218DA8291F7EC703A61076B3324

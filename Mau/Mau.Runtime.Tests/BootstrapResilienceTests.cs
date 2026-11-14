@@ -7,7 +7,7 @@ using Xunit;
 namespace Mau.Runtime.Tests
 {
     /// <summary>
-    /// 启动韧性——配置加载降级测试（A260）：workspace.json / schema.json 损坏与根不可达一律不抛，事实落 LoadDegrades / LoadDegrade。
+    /// 启动韧性——配置加载降级测试（A260）：workspace.json 损坏与根不可达一律不抛，事实落 LoadDegrades。
     /// 隔离：临时目录 Guid 唯一命名 + finally 清理。
     /// </summary>
     public sealed class BootstrapResilienceTests
@@ -147,31 +147,7 @@ namespace Mau.Runtime.Tests
         }
 
         /// <summary>
-        /// schema.json 损坏——不抛，返回空 schema，事实记 LoadDegrade（含备份标记）。
-        /// </summary>
-        [Fact]
-        public void SchemaLoad_CorruptJson_ReturnsEmptySchemaWithDegrade()
-        {
-            string dir = NewTempDir("ch4schema");
-            try
-            {
-                string path = Path.Combine(dir, "schema.json");
-                File.WriteAllText(path, "[[[", new UTF8Encoding(false));
-                ConfigSchema schema = ConfigSchema.Load(path);
-                Assert.NotNull(schema);
-                Assert.Empty(schema.All());
-                Assert.Contains("CFG_CORRUPT", schema.LoadDegrade);
-                string[] backups = Directory.GetFiles(dir, "schema.json.bad-*");
-                Assert.True(backups.Length > 0);
-            }
-            finally
-            {
-                CleanDir(dir);
-            }
-        }
-
-        /// <summary>
-        /// 配置文件缺失——既有语义不变（空 schema / 默认单根），且不产生降级事实。
+        /// 配置文件缺失——既有语义不变（默认单根），且不产生降级事实。
         /// </summary>
         [Fact]
         public void Load_MissingFiles_NoDegrade()
@@ -182,8 +158,6 @@ namespace Mau.Runtime.Tests
                 WorkspaceConfig cfg = WorkspaceConfig.Load(Path.Combine(dir, "none.json"), dir);
                 Assert.Single(cfg.Roots);
                 Assert.Empty(cfg.LoadDegrades);
-                ConfigSchema schema = ConfigSchema.Load(Path.Combine(dir, "none-schema.json"));
-                Assert.Equal("", schema.LoadDegrade);
             }
             finally
             {

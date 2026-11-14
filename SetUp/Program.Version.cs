@@ -110,7 +110,7 @@ namespace SetUp
             string[] parts = from.Split('.');
             if (parts.Length != 3)
             {
-                Console.WriteLine("[SetUp] 版本自增失败：版本号非 1.yy.xxx 三段式——" + from);
+                Console.WriteLine("[SetUp] 版本自增失败：版本号非 x.y.z 三段式——" + from);
                 return false;
             }
             if (parts[0].Length == 0 || parts[1].Length == 0)
