@@ -464,10 +464,10 @@ namespace CatHome4.Observe
             }
             ProbeJob setUpJob = new ProbeJob();
             setUpJob.Level = LevelDev;
-            setUpJob.Name = "SetUp.exe";
+            setUpJob.Name = PlatformServices.Paths.SetUpExeName;
             setUpJob.Kind = "filever";
             setUpJob.TtlMs = TtlStaticMs;
-            setUpJob.Paths.Add(Path.Combine(repoRoot, "SetUp.exe"));
+            setUpJob.Paths.Add(Path.Combine(repoRoot, PlatformServices.Paths.SetUpExeName));
             jobs.Add(setUpJob);
             ProbeJob cliJob = new ProbeJob();
             cliJob.Level = LevelDev;

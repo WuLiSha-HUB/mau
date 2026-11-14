@@ -73,7 +73,7 @@ namespace Mau.Runtime
                 psi.WorkingDirectory = workDir;
             }
 
-            // [段2] 启动 + 异步读流（同步 ReadToEnd 在大输出时死锁）
+            // [段2] 启动 + stdio 采集——单点实现（A365）：逐行泵送（流关闭才结束，不依赖事件回调）+ 超时杀树 + 排空收尾
             Stopwatch watch = Stopwatch.StartNew();
             Process proc;
             try
@@ -86,48 +86,16 @@ namespace Mau.Runtime
             {
                 return "ERR|PY_LAUNCH|" + ex.GetType().Name + "|" + ex.Message;
             }
-
-            StringBuilder stdout = new StringBuilder();
-            StringBuilder stderr = new StringBuilder();
-            proc.OutputDataReceived += delegate (object sender, DataReceivedEventArgs e)
-            {
-                if (e.Data != null)
-                {
-                    AppendCapped(stdout, e.Data, MaxOutputChars);
-                }
-            };
-            proc.ErrorDataReceived += delegate (object sender, DataReceivedEventArgs e)
-            {
-                if (e.Data != null)
-                {
-                    AppendCapped(stderr, e.Data, MaxOutputChars);
-                }
-            };
-            proc.BeginOutputReadLine();
-            proc.BeginErrorReadLine();
-
-            // [段3] 超时等待——超时杀进程树（短命进程无「不杀」语义——留着就是僵尸）
-            bool timeout = false;
-            try
-            {
-                if (!proc.WaitForExit(timeoutMs))
-                {
-                    timeout = true;
-                    KillTree(proc);
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("PyService", 2, "等待脚本进程异常，按已退出处理: " + ex.Message, "SYS");
-            }
+            StdioCaptureResult capture = StdioCapture.Drain(proc, timeoutMs, MaxOutputChars, MaxOutputChars, delegate (Process target) { KillTree(target); }, "PyService");
             watch.Stop();
 
-            string outText = stdout.ToString();
-            string errText = stderr.ToString();
-            int exitCode = timeout ? -1 : SafeExitCode(proc);
+            // [段3] 回执装配——stdout / stderr 全文 + 行数 + 耗时（与历史字段面一致）
+            string outText = capture.Stdout;
+            string errText = capture.Stderr;
+            int exitCode = capture.ExitCode;
             Dictionary<string, object> fields = new Dictionary<string, object>();
             fields["exit"] = exitCode;
-            fields["timeout"] = timeout;
+            fields["timeout"] = capture.Timeout;
             fields["stdout"] = outText;
             fields["stderr"] = errText;
             fields["stdoutLines"] = CountLines(outText);

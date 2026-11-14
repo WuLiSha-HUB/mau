@@ -6,6 +6,9 @@
     <Nullable>disable</Nullable>
     <ImplicitUsings>disable</ImplicitUsings>
     <AssemblyName>SetUp</AssemblyName>
+    <!-- A366：Linux 侧产物名与 Windows 区分——仓库根同时存在 SetUp/ 源码目录，同名文件与目录在 NTFS / ext4 均不可共存
+         （实测：无后缀 SetUp 无法落盘；且 publish -o 仓库根会把源码目录排除出编译项 → CS5001）。故 Linux 产物名 SetUp-linux。 -->
+    <AssemblyName Condition="'$(RuntimeIdentifier)' == 'linux-x64'">SetUp-linux</AssemblyName>
     <RootNamespace>SetUp</RootNamespace>
     <Version>0.6.0</Version>
     <!-- 单文件发布——框架依赖（需 .NET 10 runtime；runtime 缺失时 apphost 自带友好提示

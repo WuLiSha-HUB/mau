@@ -1,0 +1,11 @@
+# git 属性——跨平台搬运的关键约定（A366）
+#
+# 一键部署链可执行体：Win 侧 PE（SetUp.exe）与 Linux 侧 ELF（SetUp-linux）由本地交叉发布产出，
+# 均为二进制。标 binary = 不做文本 diff、不做行尾归一（行尾归一一旦生效，每次 pull 都会
+# 判定「文件已改」，且可能破坏可执行体字节）。
+#
+# 执行位：Linux 侧下拉后必须可执行 → 已用 git update-index --chmod=+x 在索引层记录 100755
+# （Windows 无 Unix 权限位，普通 add 只会记 100644；不这么做远端 pull 后执行即 Permission denied）。
+
+SetUp-linux binary
+SetUp.exe   binary

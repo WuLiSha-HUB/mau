@@ -598,23 +598,6 @@ namespace Mau.Runtime
             StdioServiceHost.KillTree(proc, "PyService");
         }
 
-
-        /// <summary>
-        /// 追加并截断——防止超大输出拖垮内存。
-        /// </summary>
-        /// <param name="buffer">目标缓冲</param>
-        /// <param name="line">待追加行</param>
-        /// <param name="cap">上限字符数</param>
-        private static void AppendCapped(StringBuilder buffer, string line, int cap)
-        {
-            if (buffer.Length >= cap)
-            {
-                return;
-            }
-            buffer.Append(line);
-            buffer.Append('\n');
-        }
-
         /// <summary>
         /// 行数统计——空串 0；否则 \n 计数 + 1（与前端 split 同口径）。
         /// </summary>

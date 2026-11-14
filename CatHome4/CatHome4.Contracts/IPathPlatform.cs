@@ -32,6 +32,19 @@ namespace CatHome4.Contracts
         string MauExeName { get; }
 
         /// <summary>
+        /// 一键部署链可执行文件名（仓库根下）——Windows = <c>SetUp.exe</c>；Linux = <c>SetUp-linux</c>。
+        /// <para>
+        /// 仓库根的判据面按本名派生（A366）——Linux 上仓库根只有 PE 形态的 <c>SetUp.exe</c> 时不可执行，
+        /// 故存在性判定与启动一律走本名，缺失即明示「本平台 SetUp 未入库」，不回落跨平台 PE。
+        /// </para>
+        /// <para>
+        /// Linux 不叫 <c>SetUp</c>：仓库根同时存在 <c>SetUp/</c> 源码目录，同名文件与目录在 NTFS / ext4 均不可共存
+        /// （Windows 侧 clone 会直接 checkout 失败）。
+        /// </para>
+        /// </summary>
+        string SetUpExeName { get; }
+
+        /// <summary>
         /// 源码区 html 根——仓库根下的前端源码目录（存在性由调用方判定）。
         /// </summary>
         /// <param name="repoRoot">仓库根（空串 = 未命中，调用方走回退）</param>

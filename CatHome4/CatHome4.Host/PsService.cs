@@ -95,7 +95,7 @@ namespace CH4
                     LogStore.Add("CatHome4", 2, "PS 工作目录无效，回退默认: " + ex.Message, "SYS");
                 }
             }
-            // [段4] 启动 + 异步读流（异步读防管道缓冲区死锁——同步 ReadToEnd 大输出会卡）
+            // [段4] 启动 + stdio 采集——单点实现（A365）：逐行泵送（流关闭才结束，不依赖事件回调）+ 超时杀进程树 + 排空收尾
             Process proc;
             try
             {
@@ -107,53 +107,22 @@ namespace CH4
             {
                 return "ERR|PS_LAUNCH|" + ex.GetType().Name + "|" + ex.Message;
             }
-            StringBuilder stdout = new StringBuilder();
-            StringBuilder stderr = new StringBuilder();
-            proc.OutputDataReceived += delegate (object sender, DataReceivedEventArgs e)
-            {
-                if (e.Data != null)
-                {
-                    AppendCapped(stdout, e.Data, MaxStdoutChars);
-                }
-            };
-            proc.ErrorDataReceived += delegate (object sender, DataReceivedEventArgs e)
-            {
-                if (e.Data != null)
-                {
-                    AppendCapped(stderr, e.Data, MaxStderrChars);
-                }
-            };
-            proc.BeginOutputReadLine();
-            proc.BeginErrorReadLine();
-            // [段5] 超时等待——超时杀进程树（taskkill /T /F——不留僵尸）
-            bool timeout = false;
-            try
-            {
-                if (!proc.WaitForExit((int)timeoutMs))
-                {
-                    timeout = true;
-                    PlatformServices.ProcessService.KillTree(proc, "SYS");
-                }
-            }
-            catch (Exception ex)
-            {
-                // 等待异常（进程已退出等）——按已退出处理
-                LogStore.Add("CatHome4", 2, "PS 等待进程异常，按已退出处理: " + ex.Message, "SYS");
-            }
-            string outText = stdout.ToString();
-            string errText = CleanErrorText(stderr.ToString());
-            bool outTrunc = outText.Length >= MaxStdoutChars;
-            bool errTrunc = errText.Length >= MaxStderrChars;
+            StdioCaptureResult capture = StdioCapture.Drain(proc, (int)timeoutMs, MaxStdoutChars, MaxStderrChars, delegate (Process target) { PlatformServices.ProcessService.KillTree(target, "SYS"); }, "CatHome4");
+            // [段5] 结果装配——截断判据与原口径一致（清理后的长度达上限 / 采集侧标记）
+            string outText = capture.Stdout;
+            string errText = CleanErrorText(capture.Stderr);
+            bool outTrunc = capture.OutTruncated || outText.Length >= MaxStdoutChars;
+            bool errTrunc = capture.ErrTruncated || errText.Length >= MaxStderrChars;
             // [段6] 结构化回执（design-ch4-tools 附录）——首行 JSON 元数据头 + 正文定界
             //   正文 = stdout（+ 换行 + stderr）；行数在头里给出，前端按行数切分（不依赖内容分隔符——零撞车）
             int stdoutLines = CountLinesOf(outText);
             int stderrLines = CountLinesOf(errText);
             string shellName = string.Equals(shell, "powershell7", StringComparison.Ordinal) ? "powershell7" : "powershell";
             Dictionary<string, object> fields = new Dictionary<string, object>();
-            int exitCode = timeout ? -1 : proc.ExitCode;
+            int exitCode = capture.ExitCode;
             fields["exit"] = exitCode;
             fields["truncated"] = outTrunc || errTrunc;
-            fields["timeout"] = timeout;
+            fields["timeout"] = capture.Timeout;
             fields["stdoutLines"] = stdoutLines;
             fields["stderrLines"] = stderrLines;
             string bodyText = errText.Length > 0 ? (outText + "\n" + errText) : outText;
@@ -424,37 +393,6 @@ namespace CH4
                 i = i + 1;
             }
             return sb.ToString();
-        }
-
-        /// <summary>
-        /// 追加文本到 StringBuilder——上限截断（超限后丢弃后续——截断标记由调用方比对长度）
-        /// </summary>
-        /// <param name="sb">目标缓冲区</param>
-        /// <param name="line">追加行</param>
-        /// <param name="max">上限字符数</param>
-        private static void AppendCapped(StringBuilder sb, string line, int max)
-        {
-            if (sb.Length >= max)
-            {
-                return;
-            }
-            if (sb.Length > 0)
-            {
-                sb.Append('\n');
-            }
-            int remain = max - sb.Length;
-            if (remain <= 0)
-            {
-                return;
-            }
-            if (line.Length <= remain)
-            {
-                sb.Append(line);
-            }
-            else
-            {
-                sb.Append(line, 0, remain);
-            }
         }
 
         /// <summary>

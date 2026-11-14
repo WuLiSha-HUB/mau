@@ -57,6 +57,17 @@ namespace CatHome4.Platform.Windows
         }
 
         /// <summary>
+        /// 一键部署链可执行文件名（仓库根下）。
+        /// </summary>
+        public string SetUpExeName
+        {
+            get
+            {
+                return "SetUp.exe";
+            }
+        }
+
+        /// <summary>
         /// 源码区 html 根——仓库根下的前端源码目录（唯一事实源，改即生效）。
         /// </summary>
         /// <param name="repoRoot">仓库根（空串 = 未命中）</param>

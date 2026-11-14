@@ -390,6 +390,17 @@ namespace CatHome4.Platform.Linux
         }
 
         /// <summary>
+        /// 一键部署链可执行文件名（仓库根下，无后缀）。
+        /// </summary>
+        public string SetUpExeName
+        {
+            get
+            {
+                return "SetUp-linux";
+            }
+        }
+
+        /// <summary>
         /// 源码区 html 根——仓库根下的前端源码目录。
         /// </summary>
         /// <param name="repoRoot">仓库根（空串 = 未命中）</param>
@@ -654,55 +665,15 @@ namespace CatHome4.Platform.Linux
             {
                 return "ERR|SH_LAUNCH|" + ex.GetType().Name + "|" + ex.Message;
             }
-            StringBuilder stdout = new StringBuilder();
-            StringBuilder stderr = new StringBuilder();
-            proc.OutputDataReceived += delegate (object sender, DataReceivedEventArgs e)
-            {
-                if (e.Data != null)
-                {
-                    AppendCapped(stdout, e.Data, MaxStdoutChars);
-                }
-            };
-            proc.ErrorDataReceived += delegate (object sender, DataReceivedEventArgs e)
-            {
-                if (e.Data != null)
-                {
-                    AppendCapped(stderr, e.Data, MaxStderrChars);
-                }
-            };
-            proc.BeginOutputReadLine();
-            proc.BeginErrorReadLine();
-            // [段1] 超时等待——超时终止进程树（不留僵尸）
-            bool isTimeout = false;
-            try
-            {
-                if (proc.WaitForExit(timeout) == false)
-                {
-                    isTimeout = true;
-                    PlatformServices.ProcessService.KillTree(proc, LogTag);
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add(LogTag, 2, "SH 等待进程异常，按已退出处理: " + ex.Message, "SYS");
-            }
-            // [段2] 结果收集——退出码 + 截断标记 + 行数（与 ps 面同口径）
-            string outText = stdout.ToString();
-            string errText = stderr.ToString();
-            bool outTrunc = outText.Length >= MaxStdoutChars;
-            bool errTrunc = errText.Length >= MaxStderrChars;
-            int exitCode = -1;
-            if (isTimeout == false)
-            {
-                try
-                {
-                    exitCode = proc.ExitCode;
-                }
-                catch (Exception ex)
-                {
-                    LogStore.Add(LogTag, 2, "SH 退出码读取失败: " + ex.Message, "SYS");
-                }
-            }
+            // [段1] stdio 采集——单点实现（A365）：逐行泵送（流关闭才结束，不依赖事件回调）+ 超时子树终止 + 排空收尾
+            StdioCaptureResult capture = StdioCapture.Drain(proc, timeout, MaxStdoutChars, MaxStderrChars, delegate (Process target) { PlatformServices.ProcessService.KillTree(target, LogTag); }, LogTag);
+            string outText = capture.Stdout;
+            string errText = capture.Stderr;
+            bool outTrunc = capture.OutTruncated;
+            bool errTrunc = capture.ErrTruncated;
+            bool isTimeout = capture.Timeout;
+            int exitCode = capture.ExitCode;
+            // [段2] 行数统计——与 ps 面同口径
             int stdoutLines = CountLinesOf(outText);
             int stderrLines = CountLinesOf(errText);
             // [段3] 结构化回执——首行 JSON 元数据头 + 正文（stdout + 换行 + stderr）
@@ -726,25 +697,6 @@ namespace CatHome4.Platform.Linux
                 return head;
             }
             return head + "\n" + bodyText;
-        }
-
-        /// <summary>
-        /// 追加并限制总量——超限后不再增长（截断由调用方按长度判定）。
-        /// </summary>
-        /// <param name="buffer">目标缓冲</param>
-        /// <param name="line">新增行</param>
-        /// <param name="cap">字符上限</param>
-        private static void AppendCapped(StringBuilder buffer, string line, int cap)
-        {
-            if (buffer.Length >= cap)
-            {
-                return;
-            }
-            if (buffer.Length > 0)
-            {
-                buffer.Append('\n');
-            }
-            buffer.Append(line);
         }
 
         /// <summary>
