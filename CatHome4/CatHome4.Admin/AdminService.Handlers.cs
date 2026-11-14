@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using CatHome4.Contracts;
+using CatHome4.Platform;
 using Mau.Runtime;
 using Mau.Providers;
 using CH4;
@@ -89,7 +90,7 @@ namespace CatHome4.Admin
             }
             try
             {
-                System.Diagnostics.Process.Start("explorer.exe", dataDir);
+                PlatformServices.ShellLauncher.OpenFolder(dataDir);
                 LogStore.Add("CatHome4", 1, "打开数据目录: " + dataDir, "CONFIG");
                 return Results.Json(new { ok = true, path = dataDir });
             }

@@ -94,9 +94,9 @@ namespace Mau.Runtime
         private Process? _process;
 
         /// <summary>
-        /// Job 对象句柄——强杀兜底（外层注入；0 = 不加入 Job）
+        /// 进程组句柄——强杀兜底（外层注入；null = 不加入组）
         /// </summary>
-        public IntPtr JobHandle = IntPtr.Zero;
+        public object? JobHandle;
 
         /// <summary>
         /// 连续拉起失败计数
@@ -424,7 +424,7 @@ namespace Mau.Runtime
             logReader.Start();
 
             _process = proc;
-            if (JobHandle != IntPtr.Zero && !ServiceJob.Assign(JobHandle, proc.Handle))
+            if (JobHandle != null && !ProcessGroups.Current.Attach(JobHandle, proc))
             {
                 LogStore.Add(_logTag, 2, "进程加入 Job 失败（" + _name + "）——该进程无强杀兜底", "SYS");
             }
@@ -522,146 +522,6 @@ namespace Mau.Runtime
             {
                 LogStore.Add(logTag, 2, "进程树终止失败: " + ex.Message, "SYS");
             }
-        }
-    }
-
-    /// <summary>
-    /// Job 对象——宿主进程终止即连带终止其内全部服务进程（KILL_ON_JOB_CLOSE）。
-    /// <para>
-    /// 每个服务执行器（py / node）各持一个 Job，互不覆盖；非 Windows 或创建失败返回 0，
-    /// 此时强杀兜底关闭（启动前自愈仍生效，其余功能不受影响）。
-    /// </para>
-    /// </summary>
-    internal static class ServiceJob
-    {
-        /// <summary>Job 扩展限制信息类——JOBOBJECTINFOCLASS.JobObjectExtendedLimitInformation</summary>
-        private const int JobObjectExtendedLimitInformation = 9;
-
-        /// <summary>KILL_ON_JOB_CLOSE 标志——Job 最后一个句柄关闭时终止其内全部进程</summary>
-        private const uint JobObjectLimitKillOnJobClose = 0x2000;
-
-        /// <summary>创建 Job 对象（Win32 kernel32.CreateJobObject）</summary>
-        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-        private static extern IntPtr CreateJobObject(IntPtr lpJobAttributes, string? lpName);
-
-        /// <summary>设置 Job 限制信息（Win32 kernel32.SetInformationJobObject）</summary>
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, IntPtr info, uint infoLength);
-
-        /// <summary>把进程加入 Job（Win32 kernel32.AssignProcessToJobObject）</summary>
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
-
-        /// <summary>Job 基本限制信息（Win32 JOBOBJECT_BASIC_LIMIT_INFORMATION）</summary>
-        [StructLayout(LayoutKind.Sequential)]
-        private struct JobBasicLimitInformation
-        {
-            /// <summary>单进程用户态时间上限</summary>
-            public long PerProcessUserTimeLimit;
-            /// <summary>单 Job 用户态时间上限</summary>
-            public long PerJobUserTimeLimit;
-            /// <summary>限制标志（承载 KILL_ON_JOB_CLOSE）</summary>
-            public uint LimitFlags;
-            /// <summary>最小工作集</summary>
-            public UIntPtr MinimumWorkingSetSize;
-            /// <summary>最大工作集</summary>
-            public UIntPtr MaximumWorkingSetSize;
-            /// <summary>活动进程数上限</summary>
-            public uint ActiveProcessLimit;
-            /// <summary>CPU 亲和性掩码</summary>
-            public UIntPtr Affinity;
-            /// <summary>优先级类</summary>
-            public uint PriorityClass;
-            /// <summary>调度类</summary>
-            public uint SchedulingClass;
-        }
-
-        /// <summary>Job IO 计数器（Win32 IO_COUNTERS）</summary>
-        [StructLayout(LayoutKind.Sequential)]
-        private struct JobIoCounters
-        {
-            /// <summary>读操作次数</summary>
-            public ulong ReadOperationCount;
-            /// <summary>写操作次数</summary>
-            public ulong WriteOperationCount;
-            /// <summary>其它操作次数</summary>
-            public ulong OtherOperationCount;
-            /// <summary>读取字节数</summary>
-            public ulong ReadTransferCount;
-            /// <summary>写入字节数</summary>
-            public ulong WriteTransferCount;
-            /// <summary>其它传输字节数</summary>
-            public ulong OtherTransferCount;
-        }
-
-        /// <summary>Job 扩展限制信息（Win32 JOBOBJECT_EXTENDED_LIMIT_INFORMATION）</summary>
-        [StructLayout(LayoutKind.Sequential)]
-        private struct JobExtendedLimitInformation
-        {
-            /// <summary>基本限制信息</summary>
-            public JobBasicLimitInformation BasicLimitInformation;
-            /// <summary>IO 计数器</summary>
-            public JobIoCounters IoInfo;
-            /// <summary>单进程内存上限</summary>
-            public UIntPtr ProcessMemoryLimit;
-            /// <summary>Job 内存上限</summary>
-            public UIntPtr JobMemoryLimit;
-            /// <summary>进程峰值内存</summary>
-            public UIntPtr PeakProcessMemoryUsed;
-            /// <summary>Job 峰值内存</summary>
-            public UIntPtr PeakJobMemoryUsed;
-        }
-
-        /// <summary>
-        /// 建立 Job 对象——惰性创建（KILL_ON_JOB_CLOSE）。
-        /// 非 Windows / 创建失败返回 <see cref="IntPtr.Zero"/>（强杀兜底关闭，启动前自愈仍生效，其余功能不受影响）。
-        /// </summary>
-        /// <param name="logTag">日志标签</param>
-        /// <returns>Job 句柄；不可用 0</returns>
-        public static IntPtr Ensure(string logTag)
-        {
-            if (OperatingSystem.IsWindows() == false)
-            {
-                return IntPtr.Zero;
-            }
-            IntPtr job = CreateJobObject(IntPtr.Zero, null);
-            if (job == IntPtr.Zero)
-            {
-                LogStore.Add(logTag, 2, "Job 对象创建失败——强杀兜底关闭（启动前自愈仍生效）", "SYS");
-                return IntPtr.Zero;
-            }
-            JobBasicLimitInformation basic = new JobBasicLimitInformation();
-            basic.LimitFlags = JobObjectLimitKillOnJobClose;
-            JobExtendedLimitInformation extended = new JobExtendedLimitInformation();
-            extended.BasicLimitInformation = basic;
-            int size = Marshal.SizeOf(extended);
-            IntPtr buffer = Marshal.AllocHGlobal(size);
-            try
-            {
-                Marshal.StructureToPtr(extended, buffer, false);
-                bool applied = SetInformationJobObject(job, JobObjectExtendedLimitInformation, buffer, (uint)size);
-                if (!applied)
-                {
-                    LogStore.Add(logTag, 2, "Job 限制设置失败——强杀兜底关闭（启动前自愈仍生效）", "SYS");
-                    return IntPtr.Zero;
-                }
-            }
-            finally
-            {
-                Marshal.FreeHGlobal(buffer);
-            }
-            return job;
-        }
-
-        /// <summary>
-        /// 把进程加入 Job（Win32 kernel32.AssignProcessToJobObject）。
-        /// </summary>
-        /// <param name="jobHandle">Job 句柄</param>
-        /// <param name="processHandle">进程句柄</param>
-        /// <returns>true = 加入成功</returns>
-        public static bool Assign(IntPtr jobHandle, IntPtr processHandle)
-        {
-            return AssignProcessToJobObject(jobHandle, processHandle);
         }
     }
 

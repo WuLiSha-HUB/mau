@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Threading;
+using CatHome4.Platform;
 
 namespace SetUp
 {
@@ -311,7 +312,7 @@ namespace SetUp
         private static string BuildPushText(string mode, bool prepOk, bool replaced, string version, string targetFull, string pushIn, string reportPath, long elapsedMs)
         {
             string exeTs = "";
-            string exePath = Path.Combine(targetFull, "CatHome4.exe");
+            string exePath = Path.Combine(targetFull, PlatformServices.Paths.HostExeName);
             if (File.Exists(exePath))
             {
                 exeTs = File.GetLastWriteTime(exePath).ToString("yyyy-MM-dd HH:mm:ss");
@@ -357,7 +358,7 @@ namespace SetUp
         /// <returns>true=启动成功（进程在探活窗口后仍存活）</returns>
         private static bool StartHost(string targetDir, string pushText)
         {
-            string exe = Path.Combine(targetDir, "CatHome4.exe");
+            string exe = Path.Combine(targetDir, PlatformServices.Paths.HostExeName);
             if (!File.Exists(exe))
             {
                 Console.WriteLine("[SetUp] 错误：宿主不存在——" + exe);
@@ -403,7 +404,7 @@ namespace SetUp
         /// <param name="targetFull">运行区绝对路径</param>
         private static void CollectTargetArtifacts(string targetFull)
         {
-            AddArtifact(_extraArtifacts, Path.Combine(targetFull, "CatHome4.exe"));
+            AddArtifact(_extraArtifacts, Path.Combine(targetFull, PlatformServices.Paths.HostExeName));
             AddArtifact(_extraArtifacts, Path.Combine(targetFull, "version.txt"));
             string flowsDir = Path.Combine(targetFull, "Flows");
             if (Directory.Exists(flowsDir))
@@ -550,7 +551,7 @@ namespace SetUp
         private static bool CheckIncrSentinels(string repoRoot, string sourceDir, out string reason)
         {
             reason = "";
-            string exe = Path.Combine(sourceDir, "CatHome4.exe");
+            string exe = Path.Combine(sourceDir, PlatformServices.Paths.HostExeName);
             if (!File.Exists(exe))
             {
                 reason = "产物区未就绪（" + exe + " 不存在）——请先跑一键部署（prepare）再走 incr。";
@@ -614,7 +615,7 @@ namespace SetUp
         /// <returns>true=探活通过</returns>
         private static bool ProbeTarget(string targetDir)
         {
-            string exe = Path.Combine(targetDir, "CatHome4.exe");
+            string exe = Path.Combine(targetDir, PlatformServices.Paths.HostExeName);
             if (!File.Exists(exe))
             {
                 Console.WriteLine("[SetUp] 错误：候选运行区缺少宿主——" + exe);
@@ -711,7 +712,7 @@ namespace SetUp
             // [段18] 产物区自检——与 prepare 步6 同源（同一 exe / 同一工作目录 = 同一数据根）
             // 判据不同构的坑：候选区副本在运行区目录下 → 解析成部署区数据根，产物区的数据根坏掉时副本照样能起，单跑副本会把红掩盖成绿
             long srcChkMs = Environment.TickCount64;
-            string sourceExe = Path.Combine(sourceDir, "CatHome4.exe");
+            string sourceExe = Path.Combine(sourceDir, PlatformServices.Paths.HostExeName);
             bool sourceOk = File.Exists(sourceExe) && RunProcess(sourceExe, "--run \"session count\"", repoRoot, ProbeTargetTimeoutMs);
             _steps.Add(new StepReport() { Step = 18, Name = "incr 产物区自检（同 prepare 步6）", Ok = sourceOk, Ms = Environment.TickCount64 - srcChkMs });
             if (!sourceOk)

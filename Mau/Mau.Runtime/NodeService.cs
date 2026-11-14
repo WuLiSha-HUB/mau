@@ -55,7 +55,7 @@ namespace Mau.Runtime
         /// <summary>
         /// Job 对象句柄——强杀兜底（构造时建立；不可用 0）
         /// </summary>
-        private IntPtr _jobHandle;
+        private object? _jobHandle;
 
         /// <summary>
         /// 释放标志
@@ -104,7 +104,7 @@ namespace Mau.Runtime
             _roots = writable.ToArray();
             _entries = writableEntries.ToArray();
             AppDomain.CurrentDomain.ProcessExit += OnProcessExit;
-            _jobHandle = ServiceJob.Ensure("NodeService");
+            _jobHandle = ProcessGroups.Current.CreateGroup("NodeService");
         }
 
         // [段5] 服务自启（宿主启动链调用）
@@ -352,7 +352,7 @@ namespace Mau.Runtime
                     if (alive && server != null)
                     {
                         pid = server.ProcessId();
-                        ws = ServiceStat.ReadProcessTreeWorkingSet(pid);
+                        ws = ProcessStats.Current.ReadProcessTreeWorkingSet(pid);
                     }
 
                     Dictionary<string, object> item = new Dictionary<string, object>();

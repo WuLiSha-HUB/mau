@@ -34,8 +34,8 @@ const POOL = [
     'config-list', 'config-get', 'config-set', 'config-reset', 'config-cat-get', 'config-cat-set',
     // BrowserCat 6
     'browser-open', 'browser-read', 'browser-eval', 'browser-shot', 'browser-tabs', 'browser-headful',
-    // PsCat 2 · TempToolCat 2
-    'powershell', 'powershell7', 'temp-info', 'temp-exec',
+    // PsCat 2 · ShCat 1（A359——Linux 专用，Windows 侧按平台过滤不入池）· TempToolCat 2
+    'powershell', 'powershell7', 'sh-exec', 'temp-info', 'temp-exec',
     // Majordomo 5
     'restart-full', 'restart-incr', 'restart-host', 'majordomo-cmd', 'majordomo-catinfo',
     // WebCat 4 · VisionCat 2
@@ -75,9 +75,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 96 件', () => {
+    it('落位表 = 工具池 97 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(96);
+        expect(POOL.length).toBe(97);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {

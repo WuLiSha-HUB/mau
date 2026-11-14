@@ -90,7 +90,7 @@ namespace CH4
         /// <summary>构建 / 执行 / 部署档清单（3）——外部通道执行、宿主动作</summary>
         private static readonly string[] BuildNames =
         {
-            "powershell", "powershell7",
+            "powershell", "powershell7", "sh-exec",
             "mau-gen", "mau-proj", "host-reload", "mau-setup",
             "restart-full", "restart-incr", "restart-host", "majordomo-cmd",
             "py-run", "py-service",

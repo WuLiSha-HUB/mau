@@ -6,6 +6,7 @@ using System.Threading;
 using Mau.Runtime;
 using Mau.Providers;
 using CatHome4.Contracts;
+using CatHome4.Platform;
 using CatHome4.Core;
 
 namespace CH4
@@ -71,7 +72,7 @@ namespace CH4
                 return root;
             }
             // [段3] 机器级默认——部署实例持久数据
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CatHome4");
+            return PlatformServices.Paths.DefaultDataRoot;
         }
         /// <summary>
         /// 数据根可用性探测——建 Data 子目录判定可写（成功即视为可用；失败不抛）。
@@ -192,13 +193,13 @@ namespace CH4
             string root = FindRepoRoot(AppContext.BaseDirectory);
             if (root.Length > 0)
             {
-                string src = System.IO.Path.Combine(root, "CatHome4", "html");
-                if (System.IO.Directory.Exists(src))
+                string src = PlatformServices.Paths.SourceHtmlRoot(root);
+                if (src.Length > 0 && System.IO.Directory.Exists(src))
                 {
                     return src;
                 }
             }
-            return System.IO.Path.Combine(AppContext.BaseDirectory, "html");
+            return PlatformServices.Paths.DeployHtmlRoot(AppContext.BaseDirectory);
         }
 
         /// <summary>

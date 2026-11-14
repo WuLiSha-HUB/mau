@@ -129,11 +129,19 @@ namespace CH4
                         target.ProducedGroups.Add(groupName);
                     }
                     int accepted = 0;
+                    int platformSkipped = 0;
                     for (int i = 0; i < tools.GetArrayLength(); i = i + 1)
                     {
                         JsonElement item = tools[i];
                         if (item.ValueKind != JsonValueKind.Object)
                         {
+                            continue;
+                        }
+                        // A359 平台过滤——工具声明 platforms 字段（缺省 = 全平台）；不匹配则不入池（design-ch4-platform §五 暴露面单点）
+                        if (IsPlatformAllowed(item) == false)
+                        {
+                            LogStore.Add("ToolPool", 1, "工具按平台过滤（不入池）：" + group + " | " + CurrentPlatformName(), "SYS");
+                            platformSkipped = platformSkipped + 1;
                             continue;
                         }
                         ToolDef def = new ToolDef();
@@ -161,8 +169,8 @@ namespace CH4
                         AddTo(target, def);
                         accepted = accepted + 1;
                     }
-                    // 有声明却零入池——与合法空组区分（空数组走上面的已产出登记，不在此列）
-                    if (tools.GetArrayLength() > 0 && accepted == 0)
+                    // 有声明却零入池——与合法空组区分（空数组走上面的已产出登记，不在此列；平台过滤跳过的不算缺陷）
+                    if (tools.GetArrayLength() > 0 && accepted == 0 && platformSkipped == 0)
                     {
                         target.Defects.Add(BuildDefect(groupName, "shape", "工具条目全部无效——" + tools.GetArrayLength().ToString() + " 条均缺 name 或非对象"));
                     }
@@ -472,6 +480,75 @@ namespace CH4
             }
             // [段3] 原子换引用——读者要么全旧要么全新；被删工具随旧快照淘汰
             _state = next;
+        }
+        /// <summary>
+        /// 平台归属判定——工具定义项的 <c>platforms</c> 字段（字符串或数组）是否覆盖当前平台。
+        /// <para>
+        /// 缺省（无字段 / 非法形态）= 全平台放行；<c>any</c> = 全平台；其余按 <c>windows</c> / <c>linux</c> 精确匹配。
+        /// 判据只此一处（design-ch4-platform §五「暴露面单点」）——不靠「少拷一个组 dll」压暴露面。
+        /// </para>
+        /// </summary>
+        /// <param name="item">工具定义项</param>
+        /// <returns>true=本平台可用</returns>
+        private static bool IsPlatformAllowed(JsonElement item)
+        {
+            JsonElement platEl;
+            if (item.TryGetProperty("platforms", out platEl) == false)
+            {
+                return true;
+            }
+            string current = CurrentPlatformName();
+            if (platEl.ValueKind == JsonValueKind.String)
+            {
+                return MatchesPlatform(platEl.GetString(), current);
+            }
+            if (platEl.ValueKind != JsonValueKind.Array)
+            {
+                return true;
+            }
+            for (int i = 0; i < platEl.GetArrayLength(); i = i + 1)
+            {
+                JsonElement entry = platEl[i];
+                if (entry.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+                if (MatchesPlatform(entry.GetString(), current))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        /// <summary>
+        /// 单条平台声明匹配——空串与 <c>any</c> 视为全平台；其余与当前平台名精确比较（忽略大小写）。
+        /// </summary>
+        /// <param name="declared">声明值</param>
+        /// <param name="current">当前平台名</param>
+        /// <returns>true=匹配</returns>
+        private static bool MatchesPlatform(string declared, string current)
+        {
+            if (declared == null || declared.Length == 0)
+            {
+                return true;
+            }
+            if (string.Equals(declared, "any", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+            return string.Equals(declared, current, StringComparison.OrdinalIgnoreCase);
+        }
+        /// <summary>
+        /// 当前平台名——<c>windows</c> / <c>linux</c>（与工具定义 <c>platforms</c> 取值同域）。
+        /// </summary>
+        /// <returns>平台名</returns>
+        private static string CurrentPlatformName()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return "windows";
+            }
+            return "linux";
         }
     }
 }

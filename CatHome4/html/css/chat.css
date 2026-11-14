@@ -71,6 +71,9 @@
     --ch-tool-ps5-bg: color-mix(in srgb, var(--ch-info) 14%, transparent);
     --ch-tool-ps7-fg: var(--ch-identity);
     --ch-tool-ps7-bg: color-mix(in srgb, var(--ch-identity) 14%, transparent);
+    /* ShCat 单线标识（A359）——bash / sh-exec（Linux 侧；与 PS 双线同构的色 + 文字双通道） */
+    --ch-tool-sh-fg: var(--ch-ok-weak);
+    --ch-tool-sh-bg: color-mix(in srgb, var(--ch-ok-weak) 14%, transparent);
     /* 系统气泡与浮层 */
     --ch-chat-sys-fg: #7a7a7a;
     --ch-chat-sys-ok: var(--ch-ok-weak);
@@ -320,6 +323,7 @@ body { font-family: var(--ch-font-ui); background: var(--ch-bg-page); color: var
 .chat-tool .ps-tag { display: inline-block; margin-right: 2px; padding: 0 4px; border-radius: 3px; font-size: var(--ch-fs-tag); }
 .chat-tool .ps-tag.ps5 { color: var(--ch-tool-ps5-fg); background: var(--ch-tool-ps5-bg); }
 .chat-tool .ps-tag.ps7 { color: var(--ch-tool-ps7-fg); background: var(--ch-tool-ps7-bg); }
+.chat-tool .ps-tag.sh { color: var(--ch-tool-sh-fg); background: var(--ch-tool-sh-bg); }
 /* 执行序徽标（宿主 order 表裁决——折叠行：-1 只读 / 0 默认 / 1 写入 / 2 独占 / 3 构建 / -100·100 timeback 两态钉死） */
 .chat-tool .chat-order { display: inline-block; margin-right: 2px; padding: 0 4px; border-radius: 3px; font-size: var(--ch-fs-tag); color: var(--ch-fg-weak); background: var(--ch-bg-hover); }
 /* 原始工具名（折叠行——紧跟执行序徽标；等宽内容字体下弱色标识，一眼可辨工具身份） */

@@ -9,6 +9,9 @@
     <ImplicitUsings>disable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\Mau.Contracts\Mau.Contracts.csproj" />
+  </ItemGroup>
+  <ItemGroup>
     <InternalsVisibleTo Include="Mau.Runtime.Tests" />
   </ItemGroup>
 

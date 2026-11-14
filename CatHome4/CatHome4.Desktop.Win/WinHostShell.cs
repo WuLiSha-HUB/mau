@@ -8,6 +8,7 @@ using System.Threading;
 using System.Windows.Forms;
 using CatHome4.Admin;
 using CatHome4.Contracts;
+using CatHome4.Platform;
 using Mau.Runtime;
 
 namespace CH4
@@ -19,12 +20,6 @@ namespace CH4
     /// </summary>
     public sealed class WinHostShell : IHostShell
     {
-        // [段1] 常量与状态
-        /// <summary>注册表 Run 键路径——HKCU（无管理员权限，信任面增量）</summary>
-        private const string AutoStartRunPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
-
-        /// <summary>注册表值名——按 exe 名（部署实例自引用自适应）</summary>
-        private const string AutoStartRunName = "CatHome4";
 
         /// <summary>应用用户模型 ID——通知与任务栏归组标识（换键 = 换通知图标缓存）</summary>
         private const string AppHostAumid = "CatHome4.Host";
@@ -186,26 +181,7 @@ namespace CH4
         /// <param name="path">目录或文件路径</param>
         public void OpenFolder(string path)
         {
-            if (path == null || path.Length == 0)
-            {
-                return;
-            }
-            try
-            {
-                if (Directory.Exists(path))
-                {
-                    Process.Start("explorer.exe", path);
-                    return;
-                }
-                if (File.Exists(path))
-                {
-                    Process.Start("explorer.exe", "/select,\"" + path + "\"");
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "打开路径失败：" + path + " | " + ex.Message, "SHELL");
-            }
+            PlatformServices.ShellLauncher.OpenFolder(path);
         }
 
         /// <summary>
@@ -214,20 +190,7 @@ namespace CH4
         /// <param name="url">目标地址（空串直接忽略）</param>
         internal void OpenExternalUrl(string url)
         {
-            if (url == null || url.Length == 0)
-            {
-                return;
-            }
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo(url);
-                psi.UseShellExecute = true;
-                Process.Start(psi);
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "打开链接失败：" + url + "——" + ex.Message, "SHELL");
-            }
+            PlatformServices.ShellLauncher.OpenUrl(url);
         }
 
         /// <summary>
@@ -284,43 +247,11 @@ namespace CH4
             SyncAutoStart();
         }
 
-        /// <summary>
-        /// 注册表同步——读配置 app.autostart → 写/删 HKCU Run 值（带引号 exe 路径——路径含空格惯例）。
-        /// 幂等：值一致时重复调用无副作用；失败仅 LogStore 警告不崩溃（注册表非关键路径）。
-        /// </summary>
+        /// <summary>自启物化同步——读配置 app.autostart → 交平台自启服务物化（Windows 写/删 HKCU Run 值，实现在 CatHome4.Platform）。幂等：值一致时重复调用无副作用；失败只记 L2 不崩溃（非关键路径）。</summary>
         private void SyncAutoStart()
         {
             bool on = IsAutoStartOn();
-            try
-            {
-                using (Microsoft.Win32.RegistryKey runKey = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(AutoStartRunPath, true))
-                {
-                    if (runKey == null)
-                    {
-                        LogStore.Add("CatHome4", 2, "自启同步失败: Run 键不存在", "AUTOSTART");
-                        return;
-                    }
-                    if (on)
-                    {
-                        string exePath = Environment.ProcessPath;
-                        if (string.IsNullOrEmpty(exePath))
-                        {
-                            LogStore.Add("CatHome4", 2, "自启同步失败: 无法解析当前进程路径", "AUTOSTART");
-                            return;
-                        }
-                        runKey.SetValue(AutoStartRunName, "\"" + exePath + "\"");
-                    }
-                    else
-                    {
-                        runKey.DeleteValue(AutoStartRunName, false);
-                    }
-                }
-                LogStore.Add("CatHome4", 1, "自启同步: " + (on ? "true" : "false"), "AUTOSTART");
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "自启同步失败: " + ex.Message, "AUTOSTART");
-            }
+            PlatformServices.AutoStart.Sync(on);
         }
 
         // [段4] 应用图标与 AUMID

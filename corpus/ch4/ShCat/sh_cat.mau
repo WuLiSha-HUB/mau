@@ -1,0 +1,33 @@
+﻿// sh_cat.mau —— ShCat 语料（CH4 Linux 命令行工具组——BRIK-SH-001 sh.exec 积木执行面）
+// 角色：工具组 Flow——认领 TOOL 域 sh-exec 1 工具（bash 单行指令；design-ch4-platform §五）
+// 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 单线认领执行 → complete_str 回执
+// 载荷协议：officeName = 工具名（sh-exec）；载荷 key "args" = 整包工具参数 JSON（command/timeout_ms）
+// 数据面：@shOffice/@shArgs/@shRes 私有盒（FlowId 隔离）；args/result 经 OA 载荷传输（get_str/complete_str）
+// 线程模型：收单/读参/回执主线程同步；执行步 [t=1200, par] 后台线程执行（主线程零阻塞）
+// 暴露面：工具定义积木 tools.shcat 声明 platforms=["linux"]——Windows 侧不入工具池（宿主 ToolPool 单点过滤）
+// 平台回落：Windows 侧若被强行认领，sh.exec 积木回 ERR|SH_NOT_AVAILABLE（不静默回落 ps 面）
+// 拦截语义：设计 D5——拦截词表待真实命令面跑通后按实际风险成表（本轮只保留「单行指令」描述面纪律）
+
+// ── 状态机（单线——sh-exec）──
+§ 'S_Sh' = { 'Init', 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+
+// T_Init：启动初始化自述——Init → Idle 首帧写"空闲待命"（R0.2 外观层：启动即有自述横幅）
+§ 'T_Init' : 'S_Sh' = 'Init' → 'self.desc'["Shell 空闲待命", "", ""] | 'S_Sh' = 'Idle' | 'S_Sh' = 'Idle'
+
+// ── 主动传感器壳——单线探测（纯只读判断积木 → bool 落盒）──
+§ 'P_ShOpen' ↻ [1]: 'oa.is_open'["TOOL", "sh-exec"] > @shOpen
+
+// T_ShClaim：探测真 + Idle → 原子接单（竞态失败回 Idle 重试）
+§ 'T_ShClaim' : @shOpen & 'S_Sh' = 'Idle' → 'oa.claim_next_simple'["TOOL", "sh-exec"] > @shOffice | 'S_Sh' = 'Claimed' | 'S_Sh' = 'Idle'
+
+// T_ShArgs：读载荷 args（整包工具参数 JSON——command/timeout_ms）+ 执行中自述（par 导线单动作约束——desc 前移）
+§ 'T_ShArgs' : 'S_Sh' = 'Claimed' → 'oa.get_str'[@shOffice, "args"] > @shArgs | 'self.desc'["Shell 执行中", "", ""] | 'S_Sh' = 'Ready' | 'S_Sh' = 'Failed'
+
+// T_ShExec：执行积木（argsJson 整包——积木内部解析；失败侧 ERR 文本也在 @shRes）——后台执行
+§ 'T_ShExec' [t=1200, par] : 'S_Sh' = 'Ready' → 'sh.exec'[@shArgs] > @shRes | 'S_Sh' = 'Done' | 'S_Sh' = 'Failed'
+
+// T_ShReply：成功回执（result=结果 JSON）
+§ 'T_ShReply' : 'S_Sh' = 'Done' → 'oa.complete_str'[@shOffice, @shRes] | 'self.desc'["Shell 空闲待命", "", ""] | 'S_Sh' = 'Idle' | 'S_Sh' = 'Idle'
+
+// T_ShAbort：失败回执（@shRes 含 ERR| 文本——失败侧也回执，Dog 可见失败原因）
+§ 'T_ShAbort' : 'S_Sh' = 'Failed' → 'oa.complete_str'[@shOffice, @shRes] | 'S_Sh' = 'Idle' | 'S_Sh' = 'Idle'

@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Security.Cryptography;
 using System.Text;
+using CatHome4.Platform;
 
 namespace SetUp
 {
@@ -107,7 +108,7 @@ namespace SetUp
                 {
                     string module = procs[i].MainModule.FileName;
                     string dir = Path.GetDirectoryName(module);
-                    if (dir != null && dir.Length > 0 && File.Exists(Path.Combine(dir, "CatHome4.exe")))
+                    if (dir != null && dir.Length > 0 && File.Exists(Path.Combine(dir, PlatformServices.Paths.HostExeName)))
                     {
                         how = "运行中实例反推（pid " + procs[i].Id.ToString() + "）";
                         return dir;

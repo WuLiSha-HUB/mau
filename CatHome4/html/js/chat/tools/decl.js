@@ -50,6 +50,7 @@ var TOOL_SKELETONS = {
     // exec——进程 / 命令执行
     'powershell': 'exec',
     'powershell7': 'exec',
+    'sh-exec': 'exec',
     'mau-setup': 'exec',
     'host-reload': 'exec',
     'restart-full': 'exec',

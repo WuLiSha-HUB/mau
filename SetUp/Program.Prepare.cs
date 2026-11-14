@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using CatHome4.Platform;
 
 namespace SetUp
 {
@@ -79,7 +80,7 @@ namespace SetUp
 
                 // [段3] 步3：dotnet publish Mau\Mau.Cli -c Debug -o Mau-public（基座部署区——FL 组引用源，缺失则步4报 M3245）
                 stepMs = Environment.TickCount64;
-                stepOk = RunProcess("dotnet", "publish Mau\\Mau.Cli\\Mau.Cli.csproj -c Debug -o Mau-public", repoRoot);
+                stepOk = RunProcess("dotnet", "publish " + Path.Combine("Mau", "Mau.Cli", "Mau.Cli.csproj") + " -c Debug -o Mau-public", repoRoot);
                 _steps.Add(new StepReport() { Step = 3, Name = "publish Mau.Cli -> Mau-public", Ok = stepOk, Ms = Environment.TickCount64 - stepMs });
                 if (!stepOk)
                 {
@@ -88,7 +89,7 @@ namespace SetUp
 
                 // [段4] 步4：mau proj 全组扫描（工作目录=仓库根——黄金对比/积木索引依赖相对路径；经 Mau-public\Mau.exe 调用）
                 // 扫描化：遍历 corpus/ch4/ 目录，有 .mauproj 即构建（design-ch4-flow-scan §3.1——新增 Flow 零 SetUp 改动）
-                string mauExe = Path.Combine(repoRoot, "Mau-public", "Mau.exe");
+                string mauExe = Path.Combine(repoRoot, "Mau-public", PlatformServices.Paths.MauExeName);
                 if (!File.Exists(mauExe))
                 {
                     return Fail("步4 前置缺失：" + mauExe + " 不存在——基座 CLI 未生成。");
@@ -96,7 +97,7 @@ namespace SetUp
                 string corpusDir = Path.Combine(repoRoot, "corpus", "ch4");
                 if (!Directory.Exists(corpusDir))
                 {
-                    return Fail("步4 前置缺失：corpus\\ch4 目录不存在——语料堆未就位。");
+                    return Fail("步4 前置缺失：corpus/ch4 目录不存在——语料堆未就位。");
                 }
                 string[] groupDirs = Directory.GetDirectories(corpusDir);
                 Array.Sort(groupDirs, StringComparer.OrdinalIgnoreCase);
@@ -110,7 +111,7 @@ namespace SetUp
                         continue;
                     }
                     string groupName = Path.GetFileName(groupDirs[d]);
-                    string projRel = "corpus\\ch4\\" + groupName + "\\" + Path.GetFileName(mauprojs[0]);
+                    string projRel = Path.Combine("corpus", "ch4", groupName, Path.GetFileName(mauprojs[0]));
                     groupBuilds.Add(new string[] { projRel, groupName });
                 }
                 if (groupBuilds.Count == 0)
@@ -121,7 +122,7 @@ namespace SetUp
                 {
                     string proj = groupBuilds[i][0];
                     string groupName = groupBuilds[i][1];
-                    string outDir = "public\\src\\" + groupName;
+                    string outDir = Path.Combine("public", "src", groupName);
                     string args = "proj " + proj + " -o " + outDir + " --build";
                     Console.WriteLine("[SetUp] 步4/" + (i + 1) + "/" + groupBuilds.Count + "：" + groupName);
                     long groupMs = Environment.TickCount64;
@@ -135,7 +136,7 @@ namespace SetUp
 
                 // [段5] 步5：dotnet publish CatHome4 -c Debug -o public\app（宿主部署区）
                 long hostMs = Environment.TickCount64;
-                bool hostOk = RunProcess("dotnet", "publish CatHome4\\CatHome4.Desktop.Win\\CatHome4.Desktop.Win.csproj -c Debug -o public\\app", repoRoot);
+                bool hostOk = RunProcess("dotnet", "publish " + Path.Combine("CatHome4", "CatHome4.Desktop.Win", "CatHome4.Desktop.Win.csproj") + " -c Debug -o " + Path.Combine("public", "app"), repoRoot);
                 _steps.Add(new StepReport() { Step = 5, Name = "publish CatHome4 -> public/app", Ok = hostOk, Ms = Environment.TickCount64 - hostMs });
                 if (!hostOk)
                 {
@@ -165,7 +166,7 @@ namespace SetUp
                 }
 
                 // [段6] 步6：宿主自检——CLI 全链（主线程直执 + 进程自退；8080 单例——验证前确认无宿主占用）
-                string hostExe = Path.Combine(repoRoot, "public", "app", "CatHome4.exe");
+                string hostExe = Path.Combine(repoRoot, "public", "app", PlatformServices.Paths.HostExeName);
                 if (!File.Exists(hostExe))
                 {
                     return Fail("步6 前置缺失：" + hostExe + " 不存在——宿主未生成。");

@@ -1,0 +1,7 @@
+# Shell 工具组配置模板——复制为 Data/config/sh.cfg 按需填写
+# ShCat 工具组：sh-exec（Linux 单行指令——bash；Windows 侧工具按平台过滤不入池）
+# sh.shell_path：bash 可执行路径
+#   空值 = 取缺省 /bin/bash（不静默回落其它解释器）
+#   获取路径示例：command -v bash
+# 键格式 key=value；# 开头为注释；空行跳过；键归属 schema.json（sh.* 段）
+sh.shell_path=

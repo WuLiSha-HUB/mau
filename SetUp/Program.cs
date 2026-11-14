@@ -4,52 +4,40 @@ using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Text.Json;
-using System.Windows.Forms;
+using CatHome4.Platform;
 
 namespace SetUp
 {
     /// <summary>
     /// SetUp 启动器——CH4/Mau 一键部署工具。
-    /// 定位：单文件 exe 跟随 Git 放仓库根，clone 即用；双击即部署即运行。
-    /// 规范：Project/CH4/design-ch4-release.md（D2 定稿）
-    /// 模式：无参=WinForms UI 外观层（主线程） / prepare（重建全发布链） / deploy &lt;目标目录&gt;（产出正式运行实例）
+    /// 定位：单文件 exe 跟随 Git 放仓库根，clone 即用；无参打印帮助（P4 去 WinForms GUI）。
+    /// 规范：Project/CH4/design-ch4-release.md（D2 定稿）· Project/CH4/design-ch4-platform.md（§七 P4）
+    /// 模式：无参 / -h / --help = 打印帮助 / prepare（重建全发布链） / deploy &lt;目标目录&gt;（产出正式运行实例）
     ///      / sync-html（外观层静态资源镜像同步——源区 → 产物区 + 运行区） / relaunch（宿主自更新接力）
-    /// 前置检测：.NET 10 Runtime + SDK + WindowsDesktop + 同目录存在 Mau.sln 才运行。
+    /// 前置检测：.NET 10 Runtime + SDK + 同目录存在 Mau.sln 才运行。
     /// </summary>
     public static partial class Program
     {
         /// <summary>
         /// 主入口——模式分发。
         /// </summary>
-        /// <param name="args">命令行参数：无参=UI 界面 / prepare / deploy &lt;目标目录&gt;</param>
+        /// <param name="args">命令行参数：无参=打印帮助 / prepare / deploy &lt;目标目录&gt; / sync-html / relaunch</param>
         /// <returns>退出码（0=成功，非0=失败）</returns>
         [STAThread]
         public static int Main(string[] args)
         {
-            // [段1] UI 模式——无参双击进入 WinForms 外观层（主线程 = Application.Run）
+            // [段1] 无参 / 帮助——打印用法（P4 去 WinForms GUI：无参不再起窗口）
             if (args.Length == 0)
             {
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new SetUpForm());
+                PrintHelp();
                 return 0;
             }
 
-            // [段1b] CLI 模式——尽力附加父控制台（WinExe 无自有控制台；交互终端可见输出）
-            // 附加成功后 .NET Console 流不会自动绑定控制台句柄——手动 GetStdHandle 绑定（否则 WriteLine 仍丢失）
-            bool attached = AttachConsole(ATTACH_PARENT_PROCESS);
-            if (attached)
+            // [段1b] 帮助开关——-h / --help 同无参
+            if (args[0] == "-h" || args[0] == "--help")
             {
-                IntPtr outHandle = GetStdHandle(STD_OUTPUT_HANDLE);
-                if (outHandle != IntPtr.Zero && outHandle != new IntPtr(-1))
-                {
-                    Console.SetOut(new StreamWriter(new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(outHandle, false), FileAccess.Write), Console.OutputEncoding) { AutoFlush = true });
-                }
-                IntPtr errHandle = GetStdHandle(STD_ERROR_HANDLE);
-                if (errHandle != IntPtr.Zero && errHandle != new IntPtr(-1))
-                {
-                    Console.SetError(new StreamWriter(new FileStream(new Microsoft.Win32.SafeHandles.SafeFileHandle(errHandle, false), FileAccess.Write), Console.OutputEncoding) { AutoFlush = true });
-                }
+                PrintHelp();
+                return 0;
             }
 
             // [段1c] 报告参数解析——--report <path>（Agent 确定性部署验证面：同路径 .log 全量日志 + 结束写 JSON 报告）
@@ -169,14 +157,14 @@ namespace SetUp
         {
             Console.WriteLine("SetUp —— CH4/Mau 一键部署工具");
             Console.WriteLine("用法:");
-            Console.WriteLine("  SetUp.exe            打开图形界面（无参双击）");
+            Console.WriteLine("  SetUp.exe            打印本帮助（等同 -h / --help）");
             Console.WriteLine("  SetUp.exe prepare    重建全发布链（public/ + Mau-public/）");
             Console.WriteLine("  SetUp.exe deploy <目录>  部署正式运行实例到目标目录（原子切换——现行更名 _old 留作回退源）");
             Console.WriteLine("  SetUp.exe sync-html [--target <运行区目录>] [--no-run] [--report <路径>]");
             Console.WriteLine("                           外观层静态资源镜像同步：源区 html → 产物区 + 运行区（--target 缺省从运行中宿主反推）");
             Console.WriteLine("  SetUp.exe relaunch [--mode <full|incr|host>] --wait-pid <pid> --target <目录> [--majordomopush <串>] [--report <路径>]");
             Console.WriteLine("                           宿主自更新接力（--mode 缺省 full）：等旧宿主退出 → 全链 prepare / 纯搬运 / 原地 → 原子切换 → 自启新宿主（回执注入）");
-            Console.WriteLine("前置：.NET 10 Runtime + SDK + WindowsDesktop；本 exe 须位于 Mau 仓库根（含 Mau.sln）。");
+            Console.WriteLine("前置：.NET 10 Runtime + SDK；本 exe 须位于 Mau 仓库根（含 Mau.sln）。");
         }
 
         /// <summary>
@@ -239,26 +227,6 @@ namespace SetUp
                 return false;
             }
 
-            // [段2b] WindowsDesktop 检测——WinForms 外观层前置（UI 模式必需；SDK 安装默认带）
-            bool desktop10 = false;
-            for (int i = 0; i < runtimeLines.Length; i = i + 1)
-            {
-                string line = runtimeLines[i].Trim();
-                if (line.StartsWith("Microsoft.WindowsDesktop.App", StringComparison.Ordinal))
-                {
-                    if (VersionAtLeast10(line))
-                    {
-                        desktop10 = true;
-                    }
-                }
-            }
-            if (!desktop10)
-            {
-                Console.WriteLine("[SetUp] 错误：需要 .NET 10 及以上 WindowsDesktop Runtime（WinForms 外观层）。");
-                Console.WriteLine("  安装指引: https://dotnet.microsoft.com/download/dotnet/10.0");
-                return false;
-            }
-
             // [段3] SDK 检测——dotnet --list-sdks 找主版本 ≥ 10
             string sdkOut = RunProcessCapture("dotnet", "--list-sdks", Environment.CurrentDirectory);
             bool sdk10 = false;
@@ -280,7 +248,7 @@ namespace SetUp
                 return false;
             }
 
-            Console.WriteLine("[SetUp] 环境就绪：.NET 10 Runtime + SDK + WindowsDesktop 已检测到。");
+            Console.WriteLine("[SetUp] 环境就绪：.NET 10 Runtime + SDK 已检测到。");
             return true;
         }
 
@@ -447,8 +415,8 @@ namespace SetUp
         private static List<ArtifactReport> CollectArtifacts(string repoRoot)
         {
             List<ArtifactReport> list = new List<ArtifactReport>();
-            AddArtifact(list, Path.Combine(repoRoot, "public", "app", "CatHome4.exe"));
-            AddArtifact(list, Path.Combine(repoRoot, "Mau-public", "Mau.exe"));
+            AddArtifact(list, Path.Combine(repoRoot, "public", "app", PlatformServices.Paths.HostExeName));
+            AddArtifact(list, Path.Combine(repoRoot, "Mau-public", PlatformServices.Paths.MauExeName));
             string flowsDir = Path.Combine(repoRoot, "public", "app", "Flows");
             if (Directory.Exists(flowsDir))
             {
@@ -637,13 +605,13 @@ namespace SetUp
         }
 
         /// <summary>
-        /// 失败暂停——保留窗口（双击运行场景看得到错误）。
-        /// 自动化/无控制台场景不等待——防 shell 无按键输入无限阻塞：
-        ///   1) stdout 被重定向（管道捕获） 2) --report 显式自动化模式（Agent 调用） 3) 无控制台窗口（GetConsoleWindow 为空——WinExe 未附加成功）
+        /// 失败暂停——交互终端里保留窗口看得到错误。
+        /// 自动化场景不等待——防 shell 无按键输入无限阻塞：
+        ///   1) stdout 被重定向（管道捕获） 2) --report 显式自动化模式（Agent 调用）
         /// </summary>
         private static void Pause()
         {
-            if (Console.IsOutputRedirected || _reportRequested || GetConsoleWindow() == IntPtr.Zero)
+            if (Console.IsOutputRedirected || _reportRequested)
             {
                 return;
             }

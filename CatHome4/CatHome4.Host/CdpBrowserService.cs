@@ -7,6 +7,7 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using CatHome4.Platform;
 using Mau.Runtime;
 
 namespace CH4
@@ -783,7 +784,7 @@ namespace CH4
             int port = WaitPortFile(portFile, BootTimeoutMs);
             if (port == 0)
             {
-                KillTree(proc);
+                PlatformServices.ProcessService.KillTree(proc, "BROWSER");
                 error = "ERR|BROWSER_LAUNCH|浏览器内核未在 " + BootTimeoutMs + "ms 内就绪（DevToolsActivePort 未出现）";
                 return null;
             }
@@ -801,7 +802,7 @@ namespace CH4
             }
             catch (Exception ex)
             {
-                KillTree(proc);
+                PlatformServices.ProcessService.KillTree(proc, "BROWSER");
                 error = "ERR|BROWSER_CONNECT|连接首个页签失败: " + ex.GetType().Name + ": " + ex.Message;
                 return null;
             }
@@ -960,7 +961,7 @@ namespace CH4
                 {
                     if (!browser.Edge.HasExited)
                     {
-                        KillTree(browser.Edge);
+                        PlatformServices.ProcessService.KillTree(browser.Edge, "BROWSER");
                     }
                 }
                 catch (InvalidOperationException ex)
@@ -1227,7 +1228,7 @@ namespace CH4
                 if (stale.ProcessName == "msedge" || stale.ProcessName == "chrome")
                 {
                     LogStore.Add("CatHome4", 2, "自愈：清理残留浏览器内核实例 pid=" + pid.ToString(), "BROWSER");
-                    KillTree(stale);
+                    PlatformServices.ProcessService.KillTree(stale, "BROWSER");
                 }
             }
             catch (ArgumentException ex)
@@ -1518,39 +1519,6 @@ namespace CH4
             {
                 LogStore.Add("CatHome4", 2, "PNG 尺寸读取失败: " + ex.Message, "BROWSER");
                 return "?";
-            }
-        }
-
-        /// <summary>
-        /// 杀进程树——taskkill /T /F（子进程一并终止；失败静默，进程可能已退出）
-        /// </summary>
-        /// <param name="proc">目标进程</param>
-        private static void KillTree(Process proc)
-        {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = "taskkill.exe";
-                psi.Arguments = "/T /F /PID " + proc.Id.ToString();
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                Process killer = Process.Start(psi);
-                if (killer != null)
-                {
-                    killer.WaitForExit(5000);
-                }
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 2, "进程树强杀失败: " + ex.Message, "BROWSER");
-            }
-            try
-            {
-                proc.Kill();
-            }
-            catch (Exception ex)
-            {
-                LogStore.Add("CatHome4", 1, "进程已退出，Kill 跳过: " + ex.Message, "BROWSER");
             }
         }
 

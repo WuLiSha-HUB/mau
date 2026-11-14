@@ -2,25 +2,31 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using Mau.Contracts;
 
 namespace Mau.Runtime
 {
     /// <summary>
-    /// 常驻服务进程统计——工作集读数 / 进程树合计 / 系统父子关系快照。
+    /// 进程统计·Windows 实现——toolhelp32 全量进程快照 + OS 口径工作集读数。
     /// <para>
-    /// py 与 node 两侧共用的机制面（单点实现，避免双份漂移）。
-    /// OS 口径读数（<see cref="Process.WorkingSet64"/>）；进程不存在 / 已退出 / 不可读一律按 0 计，不抛。
+    /// 平台差异按环境分实现（design-ch4-platform §二）——本类只在 Windows 环境被
+    /// <see cref="ProcessStats.Current"/> 选中；非 Windows 误调用时全部读面返回安全默认并出声（design-ch4-platform §九-5）。
     /// </para>
     /// </summary>
-    internal static class ServiceStat
+    public sealed class ProcessStatWindows : IProcessStat
     {
         /// <summary>
         /// 读进程工作集字节数（OS 口径）——进程不存在 / 已退出不可读返回 0。
         /// </summary>
         /// <param name="pid">进程号</param>
         /// <returns>工作集字节数；不可读 0</returns>
-        internal static long ReadWorkingSet(int pid)
+        public long ReadWorkingSet(int pid)
         {
+            if (OperatingSystem.IsWindows() == false)
+            {
+                ReportNotWindows();
+                return 0;
+            }
             if (pid <= 0)
             {
                 return 0;
@@ -44,7 +50,7 @@ namespace Mau.Runtime
         /// </summary>
         /// <param name="rootPid">服务进程号（进程树根）</param>
         /// <returns>根进程及其全部后代的工作集之和（不可读项按 0 计）；根无效 0</returns>
-        internal static long ReadProcessTreeWorkingSet(int rootPid)
+        public long ReadProcessTreeWorkingSet(int rootPid)
         {
             if (rootPid <= 0)
             {
@@ -77,9 +83,14 @@ namespace Mau.Runtime
         /// 快照系统进程父子关系——toolhelp32 全量遍历（父进程号 → 子进程号列表）。
         /// </summary>
         /// <returns>父子关系表；枚举失败返回已收集部分（空表）</returns>
-        internal static Dictionary<int, List<int>> SnapshotParentLinks()
+        public Dictionary<int, List<int>> SnapshotParentLinks()
         {
             Dictionary<int, List<int>> links = new Dictionary<int, List<int>>();
+            if (OperatingSystem.IsWindows() == false)
+            {
+                ReportNotWindows();
+                return links;
+            }
             IntPtr snapshot = CreateToolhelp32Snapshot(Th32csSnapProcess, 0);
             if (snapshot == InvalidHandleValue)
             {
@@ -107,13 +118,21 @@ namespace Mau.Runtime
             catch (Exception ex)
             {
                 // 枚举异常——出声后返回已收集部分（资源面宁可少算不炸）
-                LogStore.Add("ServiceStat", 2, "进程关系枚举异常（进程树内存将少算）: " + ex.Message, "SYS");
+                LogStore.Add("ProcessStat", 2, "进程关系枚举异常（进程树内存将少算）: " + ex.Message, "SYS");
             }
             finally
             {
                 CloseHandle(snapshot);
             }
             return links;
+        }
+
+        /// <summary>
+        /// 非 Windows 误调用出声——平台实现选型错位必须可见（失败必须可见）。
+        /// </summary>
+        private static void ReportNotWindows()
+        {
+            LogStore.Add("ProcessStat", 2, "Windows 进程实现被非 Windows 环境调用——读面返回 0（选型应由 ProcessStats.Current 单点决定）", "SYS");
         }
 
         /// <summary>toolhelp32 进程快照标志——TH32CS_SNAPPROCESS</summary>

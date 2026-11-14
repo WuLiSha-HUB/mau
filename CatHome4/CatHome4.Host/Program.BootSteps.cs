@@ -324,6 +324,9 @@ namespace CH4
             DataBox.Bind<IVisionService>(new Mau.Providers.DeepSeekVisionService(apiConfigStore, llmConfig));
             // PsCat PowerShell 执行服务——EncodedCommand 免转义 + UTF-8 内建 + 写文件拦截 + 超时进程树杀（PsService）
             DataBox.Bind<IPsService>(new PsService());
+            // ShCat Linux 命令行服务——bash 单行指令（解释器读配置 sh.shell_path；Windows 侧 Available=false）
+            // 工具面按平台过滤（工具定义 platforms 字段）——Windows 侧 sh-exec 不入池，此处绑定只为让积木拿到具名不可用回执
+            DataBox.Bind<Mau.Runtime.IShellService>(CatHome4.Platform.PlatformServices.CreateShell(llmConfig.Get("sh.shell_path", "")));
             // py 执行与 py 服务进程管理——解释器读配置 py.python_path；句柄归基座持有（design-ch4-pytools §二）
             // 运行期目录注入——锚文件落点（启动前自愈 + 服务锚；§5.2 清理第③层）
             Mau.Runtime.PyService pySvc = new Mau.Runtime.PyService(WritableRootPaths(workspace));

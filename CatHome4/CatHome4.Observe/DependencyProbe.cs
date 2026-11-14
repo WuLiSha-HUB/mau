@@ -7,6 +7,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Mau.Runtime;
 using CH4;
+using CatHome4.Platform;
 
 namespace CatHome4.Observe
 {
@@ -473,7 +474,7 @@ namespace CatHome4.Observe
             cliJob.Name = "Mau.exe";
             cliJob.Kind = "filever";
             cliJob.TtlMs = TtlStaticMs;
-            cliJob.Paths.Add(Path.Combine(repoRoot, "Mau-public", "Mau.exe"));
+            cliJob.Paths.Add(Path.Combine(repoRoot, "Mau-public", PlatformServices.Paths.MauExeName));
             jobs.Add(cliJob);
             ProbeJob nodeJob = new ProbeJob();
             nodeJob.Level = LevelDev;

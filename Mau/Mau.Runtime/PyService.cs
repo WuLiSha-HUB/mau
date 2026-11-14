@@ -73,9 +73,9 @@ namespace Mau.Runtime
         private const int MaxLaunchFailures = 5;
 
         /// <summary>
-        /// Job 对象句柄——强杀兜底（构造时建立；不可用 0）
+        /// 进程组句柄——强杀兜底（构造时建立；不可用 null）
         /// </summary>
-        private readonly IntPtr _jobHandle;
+        private readonly object? _jobHandle;
 
         /// <summary>
         /// 释放标志
@@ -392,7 +392,7 @@ namespace Mau.Runtime
                     if (alive && server != null)
                     {
                         pid = server.ProcessId();
-                        ws = ServiceStat.ReadProcessTreeWorkingSet(pid);
+                        ws = ProcessStats.Current.ReadProcessTreeWorkingSet(pid);
                     }
 
                     Dictionary<string, object> item = new Dictionary<string, object>();
@@ -411,13 +411,13 @@ namespace Mau.Runtime
         }
 
         /// <summary>
-        /// 建立 Job 对象——惰性创建（KILL_ON_JOB_CLOSE）。
-        /// 非 Windows / 创建失败返回 <see cref="IntPtr.Zero"/>（强杀兜底关闭，启动前自愈仍生效，其余功能不受影响）。
+        /// 建立进程组宿主——惰性创建（宿主退出即连带终止组内服务）。
+        /// 非 Windows / 创建失败返回 null（强杀兜底关闭，启动前自愈仍生效，其余功能不受影响）。
         /// </summary>
-        /// <returns>Job 句柄；不可用 0</returns>
-        private IntPtr EnsureJob()
+        /// <returns>组句柄；不可用 null</returns>
+        private object? EnsureJob()
         {
-            return ServiceJob.Ensure("PyService");
+            return ProcessGroups.Current.CreateGroup("PyService");
         }
 
         // [段7] 释放

@@ -9,12 +9,15 @@
 // 登记：`fx/registry.js` 的 `FX_FEATURES`（契约 §12「独立功能面」节）
 // ═══════════════════════════════════════════
 
-/// 适用判据——命令类工具（PS 双线）
+/// 适用判据——命令类工具（PS 双线 + Linux 单线 sh-exec）
 function fxCmdIntentApplies(name) {
     if (name === 'powershell') {
         return true;
     }
     if (name === 'powershell7') {
+        return true;
+    }
+    if (name === 'sh-exec') {
         return true;
     }
     return false;

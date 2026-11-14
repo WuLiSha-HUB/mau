@@ -1,5 +1,6 @@
 ﻿using System;
 using System.IO;
+using CatHome4.Platform;
 
 namespace SetUp
 {
@@ -37,10 +38,10 @@ namespace SetUp
             }
 
             // [段2] 前置校验——public\app 已就绪（prepare 过）
-            string hostExe = Path.Combine(sourceDir, "CatHome4.exe");
+            string hostExe = Path.Combine(sourceDir, PlatformServices.Paths.HostExeName);
             if (!File.Exists(hostExe))
             {
-                return Fail("public\\app\\CatHome4.exe 不存在——请先运行 SetUp.exe prepare 重建发布链。");
+                return Fail("public/app/ 下的宿主可执行文件不存在——请先运行 SetUp.exe prepare 重建发布链。");
             }
 
             // [段2b-4] 准备段——外观层对齐 + 复制 _new + config 模板 + version.txt（与 incr 重启链共用同一实现）
@@ -64,7 +65,7 @@ namespace SetUp
             Console.WriteLine("[SetUp] deploy 完成。");
             Console.WriteLine("  正式实例 Data 落位: " + Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CatHome4", "Data"));
-            Console.WriteLine("  启动: " + Path.Combine(targetFull, "CatHome4.exe"));
+            Console.WriteLine("  启动: " + Path.Combine(targetFull, PlatformServices.Paths.HostExeName));
             Console.WriteLine("  回退源: " + targetOld);
             return 0;
         }

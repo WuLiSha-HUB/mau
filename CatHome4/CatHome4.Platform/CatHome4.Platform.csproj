@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>CatHome4.Platform</RootNamespace>
+    <AssemblyName>CatHome4.Platform</AssemblyName>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- 合约层：7 平台接口（design-ch4-platform §二） -->
+    <ProjectReference Include="..\CatHome4.Contracts\CatHome4.Contracts.csproj" />
+    <!-- 基座运行时：日志面（LogStore）——平台实现出声用，不引入业务依赖 -->
+    <ProjectReference Include="..\..\Mau\Mau.Runtime\Mau.Runtime.csproj" />
+  </ItemGroup>
+
+</Project>

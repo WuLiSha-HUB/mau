@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using CatHome4.Platform;
 using Mau.Runtime;
 
 namespace CH4
@@ -131,7 +132,7 @@ namespace CH4
                 if (!proc.WaitForExit((int)timeoutMs))
                 {
                     timeout = true;
-                    KillTree(proc);
+                    PlatformServices.ProcessService.KillTree(proc, "SYS");
                 }
             }
             catch (Exception ex)
@@ -473,41 +474,6 @@ namespace CH4
                 return ms;
             }
             return DefaultTimeoutMs;
-        }
-
-        /// <summary>
-        /// 杀进程树——taskkill /T /F（子进程一并终止；杀不掉静默——进程已退出）
-        /// </summary>
-        /// <param name="proc">目标进程</param>
-        private static void KillTree(Process proc)
-        {
-            try
-            {
-                ProcessStartInfo psi = new ProcessStartInfo();
-                psi.FileName = "taskkill.exe";
-                psi.Arguments = "/T /F /PID " + proc.Id.ToString();
-                psi.UseShellExecute = false;
-                psi.CreateNoWindow = true;
-                Process killer = Process.Start(psi);
-                if (killer != null)
-                {
-                    killer.WaitForExit(5000);
-                }
-            }
-            catch (Exception ex)
-            {
-                // 杀树失败静默——进程可能已退出
-                LogStore.Add("CatHome4", 2, "进程树强杀失败: " + ex.Message, "SYS");
-            }
-            try
-            {
-                proc.Kill();
-            }
-            catch (Exception ex)
-            {
-                // 已退出
-                LogStore.Add("CatHome4", 1, "进程已退出，Kill 跳过: " + ex.Message, "SYS");
-            }
         }
 
         /// <summary>

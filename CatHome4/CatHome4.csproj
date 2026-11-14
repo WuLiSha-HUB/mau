@@ -9,7 +9,7 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <RootNamespace>CH4</RootNamespace>
     <!-- 域子项目与出口目录排除——SDK 默认递归编译会包含子项目源码（CS0579 特性重复），必须显式排除 -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);CatHome4.Contracts\**;CatHome4.Core\**;CatHome4.Http\**;CatHome4.Admin\**;CatHome4.Observe\**;CatHome4.Core.Tests\**;CatHome4.Host\**;CatHome4.Desktop.Win\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);CatHome4.Contracts\**;CatHome4.Core\**;CatHome4.Http\**;CatHome4.Admin\**;CatHome4.Observe\**;CatHome4.Core.Tests\**;CatHome4.Host\**;CatHome4.Desktop.Win\**;CatHome4.Platform\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

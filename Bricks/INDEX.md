@@ -71,6 +71,7 @@
 | BRIK-PY-003 | py.service | PY | PY/BRIK-PY-003_py.service.cs | 无 | active |  |
 | BRIK-SELF-001 | self.desc | SELF | SELF/BRIK-SELF-001_self.desc.cs | 无 | active |  |
 | BRIK-SELF-002 | self.desc.add | SELF | SELF/BRIK-SELF-002_self.desc.add.cs | 无 | active |  |
+| BRIK-SH-001 | sh.exec | SH | SH/BRIK-SH-001_sh.exec.cs | 无 | active |  |
 | BRIK-TEMP-001 | temp.exec | TEMP | TEMP/BRIK-TEMP-001_temp.exec.cs | 无 | active |  |
 | BRIK-TEMP-002 | temp.keys | TEMP | TEMP/BRIK-TEMP-002_temp.keys.cs | 无 | active |  |
 | BRIK-TEST-001 | probe.source | TEST | TEST/BRIK-TEST-001_probe.source.cs | 无 | active |  |
@@ -100,6 +101,7 @@
 | BRIK-TOOLS-018 | tools.dbadmin | TOOLS | TOOLS/BRIK-TOOLS-018_tools.dbadmin.cs | 无 | active |  |
 | BRIK-TOOLS-019 | tools.tscat | TOOLS | TOOLS/BRIK-TOOLS-019_tools.tscat.cs | 无 | active |  |
 | BRIK-TOOLS-020 | tools.groupcat | TOOLS | TOOLS/BRIK-TOOLS-020_tools.groupcat.cs | 无 | active |  |
+| BRIK-TOOLS-021 | tools.shcat | TOOLS | TOOLS/BRIK-TOOLS-021_tools.shcat.cs | 无 | active |  |
 | BRIK-TS-001 | ts.check | TS | TS/BRIK-TS-001_ts.check.cs | 无 | active |  |
 | BRIK-TS-002 | ts.list | TS | TS/BRIK-TS-002_ts.list.cs | 无 | active |  |
 | BRIK-TS-003 | ts.read | TS | TS/BRIK-TS-003_ts.read.cs | 无 | active |  |

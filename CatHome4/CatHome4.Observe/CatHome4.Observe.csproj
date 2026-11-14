@@ -19,6 +19,7 @@
     <ProjectReference Include="..\CatHome4.Contracts\CatHome4.Contracts.csproj" />
     <ProjectReference Include="..\CatHome4.Core\CatHome4.Core.csproj" />
     <ProjectReference Include="..\CatHome4.Http\CatHome4.Http.csproj" />
+    <ProjectReference Include="..\CatHome4.Platform\CatHome4.Platform.csproj" />
   </ItemGroup>
 
 </Project>
