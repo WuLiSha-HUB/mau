@@ -37,6 +37,10 @@ fi
 echo "[4/7] 权限归一（运行用户 cathome）"
 chown -R cathome:cathome "$NEW"
 chmod -R g+rX "$NEW"
+# Windows 侧 tar 不保留 Unix 权限位——apphost 执行位在此显式补回
+if [ -f "$NEW/CatHome4" ]; then
+    chmod 0755 "$NEW/CatHome4"
+fi
 
 echo "[5/7] 完整性闸"
 if [ ! -x "$NEW/CatHome4" ]; then
