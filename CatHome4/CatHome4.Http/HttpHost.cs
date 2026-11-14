@@ -273,7 +273,17 @@ namespace CatHome4.Http
             builder.Logging.AddFilter("Microsoft.AspNetCore", LogLevel.Warning);
             builder.WebHost.ConfigureKestrel((options) =>
             {
-                options.ListenLocalhost(_port);
+                // 监听地址——默认仅回环（安全：面板不进公网）；云主机 / 容器需对外时设 CH4_HTTP_BIND=0.0.0.0
+                // （A361 判据的「远程等价本地端口」靠这一条：绑回环则 tailnet 设备一律连不上，与端口段无关）
+                string bindEnv = Environment.GetEnvironmentVariable("CH4_HTTP_BIND");
+                if (bindEnv == "0.0.0.0" || bindEnv == "*" || bindEnv == "+")
+                {
+                    options.Listen(System.Net.IPAddress.Any, _port);
+                }
+                else
+                {
+                    options.ListenLocalhost(_port);
+                }
             });
             _app = builder.Build();
             // A328——端口面收缩：非 console 面只放行最小端点集（其余 /api/v1 请求 404）
