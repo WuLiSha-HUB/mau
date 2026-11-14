@@ -7,3 +7,9 @@ tools/*/reports/
 
 # 仓库根旧残留可执行（构建入口是 bin/cathome5.exe）
 /cathome5.exe
+
+# 基线参考区（旧 C# Mau 历史 + raw 参考，约 1.4 GB——本地只读，不入库；2026-11-14 Go 主仓切换）
+/raw/
+
+# C# 仓历史备份（切换 Go 主仓后的一轮临时保留，验证后删除）
+/.git.csharp-20261114/
