@@ -281,12 +281,25 @@ func (r *deployRun) resolveProductSource(name, explicit, targetRel string) (stri
 		name, strings.ToLower(name), r.o.Target, targetRel)
 }
 
-// resolveCsBridgeSource 桥产物源目录（--csbridge 覆盖；空 = <repo>/host/csbridge/bin/Debug/net10.0）。
+// resolveCsBridgeSource 桥产物源目录——显式 --csbridge > repo 内产物 > 运行区现有（沿用）。
+//
+// 与四个产物源同口径（resolveProductSource）：仓库不自持桥产物时，运行区那份就是唯一真相。
+// 差异保留：桥「缺失」仍不阻断主部署链（只出声跳过）——只改 Go 面时桥本就不重编。
 func (r *deployRun) resolveCsBridgeSource() string {
 	if r.o.CsBridge != "" {
 		return r.o.CsBridge
 	}
-	return filepath.Join(r.o.Repo, "host", "csbridge", "bin", "Debug", "net10.0")
+	repoSide := filepath.Join(r.o.Repo, "host", "csbridge", "bin", "Debug", "net10.0")
+	if _, err := os.Stat(filepath.Join(repoSide, csBridgeExeName)); err == nil {
+		return repoSide
+	}
+	if r.o.Target != "" {
+		targetSide := filepath.Join(r.o.Target, "csbridge")
+		if _, err := os.Stat(filepath.Join(targetSide, csBridgeExeName)); err == nil {
+			return targetSide
+		}
+	}
+	return repoSide
 }
 
 // collectCsBridge 收集 cs 桥产物到暂存区 csbridge/（部署实例起服走 <exeDir>/csbridge/ 候选链）。
