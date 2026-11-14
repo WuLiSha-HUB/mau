@@ -33,14 +33,65 @@ function liveMarkType(type) {
     }
 }
 
+// ── 增量累积层（A362）───────────────────────
+// 后端 live 段有两种下发：整段（无 mode 字段——首次 / type 切换 / 内容改写）与增量
+// （mode=delta + base + 新增尾巴）。本层把两种拼回「该 type 的当前全文」，下游呈现链零改动。
+// 基线不符（帧被丢弃 / 累积错位）不静默：出声并清累积，后续整段帧自动自愈。
+var liveAccumType = '';
+var liveAccumText = '';
+
+/// 传输统计（A362）——前端侧分片与失配计数（观测面：异常不静默，验收可直读）
+var liveTransferStats = { fullFrames: 0, deltaFrames: 0, baseMiss: 0, typeMiss: 0 };
+
+/// 统计对象直读：window.liveTransferStats（不设转发函数——零引用声明即死代码，由前端符号自检拦下）
+
+/// 临时区正文解析——整段即重置基线；增量按 base 校验后追加。
+/// 🔴 失配不丢已收内容（丢历史 = 屏幕上只剩最后一片）：保留历史 + 可见缺口标记 + 统计出声。
+function liveResolveContext(type, seg) {
+    if (seg === null || seg === undefined) {
+        liveAccumType = type;
+        liveAccumText = '';
+        return '';
+    }
+    var ctx = (seg.context === undefined || seg.context === null) ? '' : String(seg.context);
+    if (seg.mode !== 'delta') {
+        liveTransferStats.fullFrames = liveTransferStats.fullFrames + 1;
+        liveAccumType = type;
+        liveAccumText = ctx;
+        return ctx;
+    }
+    liveTransferStats.deltaFrames = liveTransferStats.deltaFrames + 1;
+    if (type !== liveAccumType) {
+        liveTransferStats.typeMiss = liveTransferStats.typeMiss + 1;
+        if (liveTransferStats.typeMiss === 1) {
+            warn('临时区增量基线错位（type 变更未带整段）——按该尾巴重建');
+        }
+        liveAccumType = type;
+        liveAccumText = ctx;
+        return ctx;
+    }
+    var base = (typeof seg.base === 'number') ? seg.base : -1;
+    if (base !== liveAccumText.length) {
+        liveTransferStats.baseMiss = liveTransferStats.baseMiss + 1;
+        if (liveTransferStats.baseMiss === 1) {
+            warn('临时区增量基线不匹配（本地 ' + liveAccumText.length + ' / 期望 ' + base + '）——保留已收内容续接，缺口已标记');
+        }
+        liveAccumText = liveAccumText + '\u26a0[缺口]' + ctx;
+        return liveAccumText;
+    }
+    liveAccumText = liveAccumText + ctx;
+    return liveAccumText;
+}
+
 /// 临时段入口——挂载件走流式呈现机制（stream.js），其余走整体替换；**功能隔离**：单段异常不中断其他
 function liveApply(seg) {
+    var type = seg ? (seg.type || 'empty') : 'empty';
+    // 🔴 累积层先于面板检查推进——面板缺失期间也连着基线：否则恢复后每帧都判失配，历史被丢弃只剩尾巴
+    var ctx = liveResolveContext(type, seg);
     var box = liveContainer();
     if (!box) {
         return;
     }
-    var type = seg ? (seg.type || 'empty') : 'empty';
-    var ctx = seg ? ((seg.context === undefined || seg.context === null) ? '' : String(seg.context)) : '';
     liveMarkType(type);
     // 流式工具计时锚清零（A263）——离开 toolrun 面（空 / 其它类型）即让下一轮同名同序工具重新起算
     if (type !== 'toolrun' && typeof toolRunForgetAll === 'function') {

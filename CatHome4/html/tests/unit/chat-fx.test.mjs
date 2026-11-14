@@ -293,3 +293,34 @@ describe('流式统计行（fx/live-stats）', () => {
         expect(el.style.display).toBe('none');
     });
 });
+
+// ── ⑦ 资产基址（A362）────────────────────────
+describe('桌宠素材 URL——资产基址（A362）', () => {
+    it('无基址时保持相对路径（同源，行为不变）', () => {
+        window.__ASSET_BASE__ = '';
+        window.chatPetSkin = 'default';
+        const url = window.chatPetUrl('loop-idle');
+        expect(url.indexOf('pet/default/loop-idle.webp')).toBe(0);
+    });
+
+    it('有基址时指向 console 端口（跨端口共享同一份缓存）', () => {
+        window.__ASSET_BASE__ = 'http://127.0.0.1:8080/';
+        window.chatPetSkin = 'default';
+        const url = window.chatPetUrl('loop-idle');
+        expect(url.indexOf('http://127.0.0.1:8080/pet/default/loop-idle.webp')).toBe(0);
+        window.__ASSET_BASE__ = '';
+    });
+});
+
+describe('缓存键归一（A362 · 防剪枝误删）', () => {
+    it('带基址的绝对 URL 与同源相对 URL 归一为同一键', () => {
+        window.__ASSET_BASE__ = 'http://127.0.0.1:8080/';
+        const abs = window.chatPetUrl('loop-idle');
+        window.__ASSET_BASE__ = '';
+        const rel = window.chatPetUrl('loop-idle');
+        expect(abs.indexOf('http://127.0.0.1:8080/pet/'), '绝对形态带基址').toBe(0);
+        expect(rel.indexOf('http'), '同源形态为相对').toBe(-1);
+        expect(window.chatPetUrlTail(abs), '归一后同键').toBe(window.chatPetUrlTail(rel));
+        delete window.__ASSET_BASE__;
+    });
+});

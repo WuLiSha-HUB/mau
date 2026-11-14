@@ -268,22 +268,49 @@ namespace CatHome4.Core.Tests
             Assert.Null(TakeFrame(bus));
         }
 
-        /// <summary>整段覆盖——同 type 连续写入只发最新内容（无累积、无条目）；同值零帧</summary>
+        /// <summary>同流增量——同 type 且以已发内容为前缀时只发新增尾巴（mode=delta + base = 已发长度）；同值零帧</summary>
         [Fact]
-        public void SetLiveOverwritesPreviousContent()
+        public void SetLiveSendsDeltaForExtension()
         {
             RecordingHost host = new RecordingHost();
             CH4.ViewBus bus = new CH4.ViewBus();
             bus.Attach(host);
 
             bus.SetLive("replysse", "甲");
-            Assert.Equal("甲", LiveSeg(TakeFrame(bus)).GetProperty("context").GetString());
+            JsonElement first = LiveSeg(TakeFrame(bus));
+            Assert.Equal("甲", first.GetProperty("context").GetString());
+            Assert.False(first.TryGetProperty("mode", out JsonElement firstMode));
+
+            bus.SetLive("replysse", "甲乙");
+            JsonElement second = LiveSeg(TakeFrame(bus));
+            Assert.Equal("delta", second.GetProperty("mode").GetString());
+            Assert.Equal(1, second.GetProperty("base").GetInt32());
+            Assert.Equal("乙", second.GetProperty("context").GetString());
+
+            bus.SetLive("replysse", "甲乙丙");
+            JsonElement third = LiveSeg(TakeFrame(bus));
+            Assert.Equal(2, third.GetProperty("base").GetInt32());
+            Assert.Equal("丙", third.GetProperty("context").GetString());
+
+            bus.SetLive("replysse", "甲乙丙");
+            Assert.Null(TakeFrame(bus));
+        }
+
+        /// <summary>改写回退——新内容不以已发内容为前缀（重排 / 回缩）时下发整段（不带 mode，前端按基线重置）</summary>
+        [Fact]
+        public void SetLiveSendsFullWhenPrefixBreaks()
+        {
+            RecordingHost host = new RecordingHost();
+            CH4.ViewBus bus = new CH4.ViewBus();
+            bus.Attach(host);
 
             bus.SetLive("replysse", "甲乙");
             Assert.Equal("甲乙", LiveSeg(TakeFrame(bus)).GetProperty("context").GetString());
 
-            bus.SetLive("replysse", "甲乙");
-            Assert.Null(TakeFrame(bus));
+            bus.SetLive("replysse", "甲丙");
+            JsonElement seg = LiveSeg(TakeFrame(bus));
+            Assert.False(seg.TryGetProperty("mode", out JsonElement mode));
+            Assert.Equal("甲丙", seg.GetProperty("context").GetString());
         }
 
         /// <summary>非法 type——出声并按 empty 落（失败可见；不静默写入未知类型）</summary>

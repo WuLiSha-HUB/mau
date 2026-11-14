@@ -237,3 +237,71 @@ describe('统计出口口径（2026-10-06 微调 · 莎定）', () => {
         expect(window.liveStatsText(st)).toBe('line: 0\nchar: 0\ntime: 0.0s');
     });
 });
+
+describe('临时区增量传输（A362）——后端 delta 与本地累积', () => {
+    it('整段 + 增量拼回全文——呈现链仍拿全集（与原整段行为一致）', () => {
+        const panel = document.getElementById('chatLivePanel');
+        window.liveApply({ type: 'replysse', context: '甲乙' });
+        window.streamDrain();
+        expect(panelText()).toBe('甲乙');
+
+        window.liveApply({ type: 'replysse', mode: 'delta', base: 2, context: '丙丁' });
+        window.streamDrain();
+        expect(panelText(), '增量累积成全文').toBe('甲乙丙丁');
+    });
+
+    it('连续多次增量——每次只带尾巴，累积不回退', () => {
+        const panel = document.getElementById('chatLivePanel');
+        window.liveApply({ type: 'thinksse', context: '想' });
+        window.liveApply({ type: 'thinksse', mode: 'delta', base: 1, context: '一' });
+        window.liveApply({ type: 'thinksse', mode: 'delta', base: 2, context: '二' });
+        window.streamDrain();
+        expect(panelText()).toBe('想一二');
+    });
+
+    it('基线不符——保留已收内容 + 可见缺口标记（不丢历史、不静默）', () => {
+        const warns = [];
+        const oldWarn = window.warn;
+        window.warn = function (msg) {
+            warns.push(String(msg));
+        };
+        window.liveTransferStats.baseMiss = 0;
+        window.liveApply({ type: 'thinksse', context: '甲' });
+        window.liveApply({ type: 'thinksse', mode: 'delta', base: 9, context: '乙' });
+        window.warn = oldWarn;
+        window.streamDrain();
+        const text = panelText();
+        expect(warns.length, '首次失配出声').toBeGreaterThan(0);
+        expect(text.indexOf('甲'), '已收内容不被丢弃').toBeGreaterThanOrEqual(0);
+        expect(text.indexOf('乙'), '尾巴续接上').toBeGreaterThanOrEqual(0);
+        expect(text.indexOf('缺口'), '缺口有可见标记').toBeGreaterThanOrEqual(0);
+        expect(window.liveTransferStats.baseMiss, '失配已计数').toBeGreaterThan(0);
+    });
+
+    it('传输统计——整段 / 增量帧分别计数', () => {
+        window.liveTransferStats.fullFrames = 0;
+        window.liveTransferStats.deltaFrames = 0;
+        window.liveApply({ type: 'replysse', context: '甲' });
+        window.liveApply({ type: 'replysse', mode: 'delta', base: 1, context: '乙' });
+        window.streamDrain();
+        const st = window.liveTransferStats;
+        expect(st.fullFrames, '整段 1 帧').toBe(1);
+        expect(st.deltaFrames, '增量 1 帧').toBe(1);
+        expect(panelText(), '累积 = 全文').toBe('甲乙');
+    });
+
+    it('type 变更却只带增量——出声并重建（帧序异常可见）', () => {
+        const warns = [];
+        const oldWarn = window.warn;
+        window.warn = function (msg) {
+            warns.push(String(msg));
+        };
+        window.liveTransferStats.typeMiss = 0;
+        window.liveApply({ type: 'thinksse', context: '想' });
+        window.liveApply({ type: 'replysse', mode: 'delta', base: 1, context: '答' });
+        window.warn = oldWarn;
+        window.streamDrain();
+        expect(warns.length, '出声').toBeGreaterThan(0);
+        expect(panelText()).toBe('答');
+    });
+});

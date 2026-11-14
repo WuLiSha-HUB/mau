@@ -419,8 +419,26 @@ function chatPetManifestItem(name) {
 }
 
 /// 素材 URL——按皮肤分目录 + 内容哈希版本（改图 / 换皮肤即换 URL，缓存自动失效且只重下变动那张）
+/// A362——资产基址：页面从 console 端口取资产时由服务端注入 window.__ASSET_BASE__（同源时为空串，行为不变）
+function chatPetAssetBase() {
+    if (typeof window !== 'undefined' && window.__ASSET_BASE__) {
+        return window.__ASSET_BASE__;
+    }
+    return '';
+}
+
+/// 缓存键归一（A362）——带资产基址时素材 URL 为绝对形态（http://host:port/pet/…），
+/// 桶内比对一律取 /pet/ 之后的相对段：否则剪枝把每条都当死条目删光，每次启动重下 14.5 MB
+function chatPetUrlTail(url) {
+    var k = url.indexOf('/pet/');
+    if (k < 0) {
+        return url;
+    }
+    return url.substring(k + 1);
+}
+
 function chatPetUrl(name) {
-    var base = 'pet/' + chatPetSkin + '/' + name + '.webp';
+    var base = chatPetAssetBase() + 'pet/' + chatPetSkin + '/' + name + '.webp';
     var m = chatPetManifestItem(name);
     if (m === undefined || m.h === undefined) {
         return base;
@@ -464,7 +482,7 @@ function chatPetPruneEntries(cache, names) {
     }
     var want = {};
     for (var i = 0; i < names.length; i = i + 1) {
-        want[chatPetUrl(names[i])] = true;
+        want[chatPetUrlTail(chatPetUrl(names[i]))] = true;
     }
     return cache.keys().then(function (reqs) {
         var jobs = [];

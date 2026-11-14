@@ -50,6 +50,10 @@ namespace CH4
 
         /// <summary>临时区变化标记——自上次取帧以来内容有变化</summary>
         private bool _liveDirty;
+        /// <summary>上次实际发出的临时区 type（A362 增量基线——只用于判断是否同一条流，不作业务真相）</summary>
+        private string _liveSentType = "";
+        /// <summary>上次实际发出的临时区内容（A362——增量帧只发它之后的新增尾巴；前端按 base 长度校验）</summary>
+        private string _liveSent = "";
 
         /// <summary>状态段 JSON——会话侧 SetState 供（后端权威业务态整段：轮阶段 / token / 前文长度与条数 / Note / 连接健康）</summary>
         private string _stateJson = "{}";
@@ -156,6 +160,9 @@ namespace CH4
             _liveDirty = false;
             _stateDirty = false;
             _fullPending = false;
+            // A362——全量帧即增量基线复位：本帧把临时区整段送出，后续增量以它为准
+            _liveSentType = _liveType;
+            _liveSent = _liveContext == null ? "" : _liveContext;
             return JsonUtil.Object(
                 ("v", 2),
                 ("state", JsonUtil.Raw(StateJson())),
@@ -217,7 +224,7 @@ namespace CH4
             if (_liveDirty)
             {
                 _liveDirty = false;
-                parts.Add("\"live\":" + LiveJson());
+                parts.Add("\"live\":" + TakeLiveJson());
             }
             json = "{" + string.Join(",", parts) + "}";
             return true;
@@ -276,6 +283,33 @@ namespace CH4
             return JsonUtil.Object(
                 ("type", _liveType),
                 ("context", _liveContext == null ? "" : _liveContext));
+        }
+        /// <summary>
+        /// 临时区帧载荷（A362）——**同一条流**（type 未变）且新内容以「上次发出内容」为前缀时下发增量：
+        /// 只带新增尾巴 + 基线长度（`base`）；type 切换 / 内容被改写 / 首次下发一律整段（不带 mode = 全量）。
+        /// 前端按 base 校验后累积成全文，仍走原有呈现链（流式前缀逻辑与整体替换均不改）。
+        /// </summary>
+        /// <returns>live 段 JSON</returns>
+        private string TakeLiveJson()
+        {
+            string type = _liveType;
+            string context = _liveContext == null ? "" : _liveContext;
+            bool sameStream = type == _liveSentType;
+            bool prefixOk = context.Length >= _liveSent.Length && context.StartsWith(_liveSent, StringComparison.Ordinal);
+            if (!sameStream || !prefixOk)
+            {
+                _liveSentType = type;
+                _liveSent = context;
+                return LiveJson();
+            }
+            int baseLen = _liveSent.Length;
+            string tail = context.Substring(baseLen);
+            _liveSent = context;
+            return JsonUtil.Object(
+                ("type", type),
+                ("mode", "delta"),
+                ("base", baseLen),
+                ("context", tail));
         }
 
         /// <summary>

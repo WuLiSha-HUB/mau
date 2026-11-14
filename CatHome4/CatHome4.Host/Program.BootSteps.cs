@@ -850,6 +850,8 @@ namespace CH4
             // A260 端口回退——首选端口被占时在端口段内回退；段内全占 = 无外观层（宿主继续运行）
             int mainPort = 0;
             _httpHost = StartMainHostWithFallback(mainHostOptions, mainHostOptions.Port, out mainPort);
+            // A362——console 资产源端口：各猫 / 组页面从主端口取 js / css / 字体 / 桌宠（浏览器同 site 缓存分区共享一份）
+            HttpHost.ConsoleAssetPort = mainPort;
             // F2.2 majordomo 特殊会话——独立端口 serve chat.html + 强制自启（DefaultSession 事件推送绑独立端口 host）
             CatHostService.StartMajorHost();
             if (_httpHost != null)

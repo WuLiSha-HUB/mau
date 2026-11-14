@@ -5,7 +5,9 @@
 
 function loadUiVersion() {
     // 前端版本自动化——data-version 组件统一填充（js/frontend-version.json——Vitest 每次运行自动递增；两外观层同函数同文件）
-    fetch('js/frontend-version.json')
+    // A362——资产基址：非 console 端口页面由服务端注入 window.__ASSET_BASE__（同源时为空串，行为不变）
+    var assetBase = (typeof window !== 'undefined' && window.__ASSET_BASE__) ? window.__ASSET_BASE__ : '';
+    fetch(assetBase + 'js/frontend-version.json')
         .then(function (r) { return r.json(); })
         .then(function (v) {
             var txt = 'UI v' + v.version + ' | ' + (v.time || '');

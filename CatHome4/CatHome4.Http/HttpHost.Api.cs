@@ -368,7 +368,7 @@ namespace CatHome4.Http
         /// 静态页服务——双页模式（协议 §六：GET / 本地面板）：_serveChatPage=true 返回 chat.html 独立对话页 / false 返回 index.html 主面板（P9.3 每猫实例按端口路由）。
         /// </summary>
         /// <returns>HTML 响应</returns>
-        private IResult ServeIndex()
+        private IResult ServeIndex(HttpContext ctx)
         {
             string htmlRoot = _htmlRootProvider.ResolveHtmlRoot();
             string fileName = "index.html";
@@ -386,9 +386,59 @@ namespace CatHome4.Http
                 string html = System.IO.File.ReadAllText(htmlPath);
                 // 前端版本号注入——__V__ 占位符替换为程序集版本（cache-busting：版本变化 URL 变 → 浏览器强制拉新；治缓存纠结）
                 html = html.Replace("__V__", GetFrontendVersion());
+                // [段2] 资产基址注入（A362）——非 console 端口的页面把 js / css 一律指向 console：
+                //   等价于构建期 publicPath（业界资产宿主 / CDN 模式），源文件保持相对路径不变；
+                //   浏览器 HTTP 缓存分区键取 scheme://eTLD+1（忽略端口），故同 site 全端口命中同一份缓存。
+                //   CSS 内部相对 url(../fonts/…) 随 CSS 的 URL 解析 → 自动落到 console，无需改样式表。
+                string assetBase = ResolveAssetBase(ctx);
+                if (assetBase.Length > 0)
+                {
+                    html = html.Replace("src=\"js/", "src=\"" + assetBase + "js/");
+                    html = html.Replace("href=\"css/", "href=\"" + assetBase + "css/");
+                    // 脚本内相对取数（桌宠 pet/… / 版本 json）走同一基址——前端读 window.__ASSET_BASE__
+                    html = html.Replace("<head>", "<head>\n    <script>window.__ASSET_BASE__=\"" + assetBase + "\";</script>");
+                }
+                // [段3] 条件缓存（A362）——ETag 取**替换后的正文**：刷新即校验，正文未变回 304（版本自增 / 页面改动即新正文 → 200）
+                string etag = ResolveContentETag(html);
+                ctx.Response.Headers["Cache-Control"] = "no-cache";
+                ctx.Response.Headers["ETag"] = etag;
+                if (MatchIfNoneMatch(ctx, etag))
+                {
+                    return Results.StatusCode(304);
+                }
                 return Results.Text(html, "text/html");
             }
             return Results.Text("CH4 外观层——" + fileName + " 未找到: " + htmlPath + "（源码区 CatHome4/html/ 或部署区 html/ 需放置静态页）", "text/plain");
+        }
+
+        /// <summary>
+        /// 资产基址（A362）——console 端口与当前实例端口不同时返回 `http://&lt;host&gt;:&lt;console端口&gt;/`，同源时返回空串。
+        /// host 取请求 Host（本机 127.0.0.1 / 远程 tailscale 地址各自成立），故同一份页面配置在本地与远程都正确。
+        /// </summary>
+        /// <param name="ctx">HTTP 上下文</param>
+        /// <returns>基地址（以斜杠结尾）或空串（同源）</returns>
+        private static string ResolveAssetBase(HttpContext ctx)
+        {
+            int assetPort = ConsoleAssetPort;
+            if (assetPort <= 0)
+            {
+                return "";
+            }
+            string host = ctx.Request.Host.Host;
+            if (host == null || host.Length == 0)
+            {
+                return "";
+            }
+            int currentPort = 80;
+            if (ctx.Request.Host.Port != null)
+            {
+                currentPort = ctx.Request.Host.Port.Value;
+            }
+            if (currentPort == assetPort)
+            {
+                return "";
+            }
+            return "http://" + host + ":" + assetPort.ToString() + "/";
         }
 
         /// <summary>
@@ -416,7 +466,7 @@ namespace CatHome4.Http
             return "0";
         }
 
-        /// <summary>静态资源服务——html/css|js|pet|fonts/{file}（路径穿越校验 GetFullPath+StartsWith；缓存口径按面——fonts 长缓存 / 其余禁缓存；二进制安全——Bytes 响应）。</summary>
+        /// <summary>静态资源服务——html/css|js|pet|fonts/{file}（路径穿越校验 GetFullPath+StartsWith；缓存口径按面分层 + ETag 条件请求 → 304；二进制安全——Bytes 响应）。</summary>
         /// <param name="ctx">HTTP 上下文</param>
         /// <param name="subDir">子目录名（css/js/pet/fonts）</param>
         /// <param name="mime">响应 MIME</param>
@@ -441,19 +491,110 @@ namespace CatHome4.Http
             {
                 return Results.NotFound();
             }
-            // 缓存口径分面（A120）——fonts：几十 MB 二进制走长缓存（URL 固定，换代随文件名/版本变化）；
-            // 其余静态资源保持禁缓存（前端频繁迭代，同 index 策略）
-            if (subDir == "fonts")
+            // [段3] 缓存口径分面 + 内容校验器（A362）——校验器取内容哈希：部署复制 / 版本自增均不改变它
+            System.IO.FileInfo info = new System.IO.FileInfo(filePath);
+            string etag = ResolveETag(filePath, info);
+            ApplyStaticCache(ctx, subDir, etag);
+            // [段4] 条件请求——ETag 命中即 304（零字节；浏览器刷新校验走此路，不回传资源体）
+            if (MatchIfNoneMatch(ctx, etag))
             {
-                ctx.Response.Headers["Cache-Control"] = "public, max-age=604800";
-            }
-            else
-            {
-                ctx.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
+                return Results.StatusCode(304);
             }
             // 二进制安全——文本（css/js）与二进制（pet webp）共用；ReadAllText 会破坏二进制资源
             byte[] bytes = System.IO.File.ReadAllBytes(filePath);
             return Results.Bytes(bytes, mime);
+        }
+        /// <summary>
+        /// 静态资源缓存口径（A362）——按面分层 + ETag 内容校验器：字体长期可用（不随宿主版本变更而失效）、
+        /// css / js 每次校验（改文件即生效，未变走 304 零字节）、pet 七日缓存（前端 Cache API 为第一层）。
+        /// </summary>
+        /// <param name="ctx">HTTP 上下文</param>
+        /// <param name="subDir">子目录名（css/js/pet/fonts）</param>
+        /// <param name="etag">内容校验器（内容哈希前 8 字节；哈希失败回落长度 + 写入时刻）</param>
+        private static void ApplyStaticCache(HttpContext ctx, string subDir, string etag)
+        {
+            ctx.Response.Headers["ETag"] = etag;
+            // 跨端口资产共享（A362）——页面可从 console 端口取字体 / 桌宠 / 脚本：字体与 fetch 跨源必须 CORS，
+            // 缺头时浏览器静默丢弃（字体回退系统字体、桌宠 Cache API 拒存 opaque 响应）；CORP 放行跨源读取。
+            ctx.Response.Headers["Access-Control-Allow-Origin"] = "*";
+            ctx.Response.Headers["Cross-Origin-Resource-Policy"] = "cross-origin";
+            // 性能观测可见面（A362）——跨源资源默认屏蔽 transferSize / decodedBodySize / deliveryType，
+            // 无此头则「是否来自缓存」在本机不可判定（浏览器侧只能看到 0）；允许跨源读取计时数据。
+            ctx.Response.Headers["Timing-Allow-Origin"] = "*";
+            // 字体与宿主版本解耦——一次拉取后长期复用；文件自身变更靠 ETag 到期校验兜底
+            if (subDir == "fonts")
+            {
+                ctx.Response.Headers["Cache-Control"] = "public, max-age=2592000";
+                return;
+            }
+            // 桌宠七日内不重复请求（前端 Cache API 命中时根本不发请求，此为第二层）
+            if (subDir == "pet")
+            {
+                ctx.Response.Headers["Cache-Control"] = "public, max-age=604800";
+                return;
+            }
+            // css / js——必须重新校验：开发期改文件不升版本同样即时生效，未变不回传资源体
+            ctx.Response.Headers["Cache-Control"] = "no-cache";
+        }
+        /// <summary>
+        /// 静态资源内容校验器（A362）——取内容哈希而非文件时刻：部署复制 / 版本自增都不改变它，
+        /// 浏览器缓存的资产因此跨版本持续可用（核心诉求：拉过一次就不再从远端拉）。
+        /// </summary>
+        /// <param name="filePath">资源物理路径</param>
+        /// <param name="info">文件信息（哈希失败时的回落源）</param>
+        /// <returns>弱校验器串（W/"&lt;内容哈希前 8 字节&gt;"）</returns>
+        private static string ResolveETag(string filePath, System.IO.FileInfo info)
+        {
+            // [段1] 内容哈希——8 字节（16 hex）足够区分静态资源，且不随复制 / 时间变化
+            try
+            {
+                using (System.IO.FileStream stream = System.IO.File.OpenRead(filePath))
+                {
+                    using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+                    {
+                        byte[] digest = sha.ComputeHash(stream);
+                        return "W/\"" + System.Convert.ToHexString(digest, 0, 8).ToLowerInvariant() + "\"";
+                    }
+                }
+            }
+            catch (System.Exception ex)
+            {
+                // [段2] 失败必须可见——回落长度 + 时刻（保守取向：内容变即换值，宁可多下一次）
+                LogStore.Add("CatHome4", 2, "静态资源 ETag 哈希失败（回落长度+时刻）: " + ex.Message, "HTTP");
+                return "W/\"" + info.Length.ToString() + "-" + info.LastWriteTimeUtc.Ticks.ToString() + "\"";
+            }
+        }
+        /// <summary>
+        /// 条件请求判定（A362）——请求头 If-None-Match 与当前内容校验器相等即命中（回 304，零字节资源体）。
+        /// </summary>
+        /// <param name="ctx">HTTP 上下文</param>
+        /// <param name="etag">当前内容校验器</param>
+        /// <returns>true = 命中，应回 304</returns>
+        private static bool MatchIfNoneMatch(HttpContext ctx, string etag)
+        {
+            Microsoft.Extensions.Primitives.StringValues inm = ctx.Request.Headers["If-None-Match"];
+            for (int i = 0; i < inm.Count; i = i + 1)
+            {
+                if (string.Equals(inm[i], etag, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        /// <summary>
+        /// 文本内容校验器（A362）——对已组装正文取内容哈希（页面 ETag 取替换版本号后的正文，版本变化即换值）。
+        /// </summary>
+        /// <param name="text">正文</param>
+        /// <returns>弱校验器串（W/"&lt;内容哈希前 8 字节&gt;"）</returns>
+        private static string ResolveContentETag(string text)
+        {
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            using (System.Security.Cryptography.SHA256 sha = System.Security.Cryptography.SHA256.Create())
+            {
+                byte[] digest = sha.ComputeHash(bytes);
+                return "W/\"" + System.Convert.ToHexString(digest, 0, 8).ToLowerInvariant() + "\"";
+            }
         }
 
         /// <summary>
@@ -463,7 +604,7 @@ namespace CatHome4.Http
         /// <param name="fileName">文件名（不含路径分隔符）</param>
         /// <param name="mime">响应 MIME</param>
         /// <returns>文件响应；未找到/越界 404</returns>
-        private IResult ServeRootFile(string fileName, string mime)
+        private IResult ServeRootFile(HttpContext ctx, string fileName, string mime)
         {
             string htmlRoot = System.IO.Path.GetFullPath(_htmlRootProvider.ResolveHtmlRoot());
             string filePath = System.IO.Path.GetFullPath(System.IO.Path.Combine(htmlRoot, fileName));
@@ -474,6 +615,15 @@ namespace CatHome4.Http
             if (!System.IO.File.Exists(filePath))
             {
                 return Results.NotFound();
+            }
+            // [段2] 条件缓存（A362）——顶层文件同口径：no-cache 即每次校验，内容未变回 304（图标换代不再全量回传）
+            System.IO.FileInfo info = new System.IO.FileInfo(filePath);
+            string etag = ResolveETag(filePath, info);
+            ctx.Response.Headers["Cache-Control"] = "no-cache";
+            ctx.Response.Headers["ETag"] = etag;
+            if (MatchIfNoneMatch(ctx, etag))
+            {
+                return Results.StatusCode(304);
             }
             byte[] bytes = System.IO.File.ReadAllBytes(filePath);
             return Results.Bytes(bytes, mime);

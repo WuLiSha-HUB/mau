@@ -343,9 +343,8 @@ namespace CatHome4.Http
             }
             _app.MapGet("/", (HttpContext ctx) =>
             {
-                // B4 修复：静态页禁缓存——前端频繁迭代，浏览器启发式缓存导致拿旧版 html（工具回填等新 JS 不生效）
-                ctx.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
-                return ServeIndex();
+                // A362——静态页改条件缓存：no-cache 即每次校验，正文未变回 304（B4「禁缓存」由 ETag 取代，旧版 html 不再被启发式缓存复用）
+                return ServeIndex(ctx);
             });
             // 2026-08-25 模块化拆分——静态资源多文件路由（css/js 子目录；禁缓存同 index 策略；路径穿越校验）
             // A167——js 面改 catch-all（{**file}）：前端重构后脚本分 lib/ · blocks/ 子目录，单段 {file} 匹配不到含斜杠路径；
@@ -360,8 +359,8 @@ namespace CatHome4.Http
             // A118 应用图标——浏览器标签页 favicon（html/favicon.ico；与 exe 内嵌图标同源，由 tools/icongen 一并产出）
             _app.MapGet("/favicon.ico", (HttpContext ctx) =>
             {
-                ctx.Response.Headers["Cache-Control"] = "no-cache, no-store, must-revalidate";
-                return ServeRootFile("favicon.ico", "image/x-icon");
+                // A362——图标同口径：条件缓存，未变回 304
+                return ServeRootFile(ctx, "favicon.ico", "image/x-icon");
             });
             // 前端测试服务代理——CH4 通过宿主端点触发前端测试（开发流程：改前端 → 跑测试 → 刷新生效；转发区段端口）
             _app.MapGet("/api/v1/frontend-test", async (HttpContext ctx) =>
@@ -522,5 +521,10 @@ namespace CatHome4.Http
             h.Timeout = TimeSpan.FromSeconds(120);
             return h;
         }
+        /// <summary>
+        /// 资产源端口（A362）——console（主端口）端口号：各猫 / 组端口页面从该端口取 js / css / 字体 / 桌宠，
+        /// 浏览器 HTTP 缓存分区键取 scheme://eTLD+1（忽略端口）故全端口共享一份。0 = 未设置（各页取自身端口）。
+        /// </summary>
+        public static int ConsoleAssetPort { get; set; }
     }
 }
