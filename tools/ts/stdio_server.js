@@ -153,41 +153,49 @@ function resolveTsconfig(input)
 }
 
 /**
- * 取（或建立）工程上下文——LanguageService 常驻，文件版本按 mtime+size 变化
+ * 取工程上下文——每次调用从磁盘重读 tsconfig 并重扫编译面
  * @param {string} configPath tsconfig 绝对路径
  * @returns {object} 工程上下文
  */
 function getProject(configPath)
 {
-    var key = nodePath.resolve(configPath).toLowerCase();
-    var existing = projects[key];
-    if (existing)
+    var resolved = nodePath.resolve(configPath);
+    var key = resolved.toLowerCase();
+    var project = projects[key];
+    if (!project)
     {
-        return existing;
+        project = createProject(resolved);
+        projects[key] = project;
     }
+    refreshProject(project);
+    return project;
+}
+
+/**
+ * 建立工程上下文——首次创建 LanguageService 宿主（此后只刷新数据面）
+ * @param {string} resolved tsconfig 绝对路径
+ * @returns {object} 工程上下文
+ */
+function createProject(resolved)
+{
     var TS = ensureTs();
-    var readResult = TS.readConfigFile(configPath, TS.sys.readFile);
-    if (readResult.error)
-    {
-        throw new Error('tsconfig 读取失败：' + TS.flattenDiagnosticMessageText(readResult.error.messageText, ' '));
-    }
-    var baseDir = nodePath.dirname(configPath);
-    var parsed = TS.parseJsonConfigFileContent(readResult.config, TS.sys, baseDir, null, configPath);
-    if (parsed.errors && parsed.errors.length > 0)
-    {
-        var first = parsed.errors[0];
-        throw new Error('tsconfig 解析失败：' + TS.flattenDiagnosticMessageText(first.messageText, ' '));
-    }
-    var fileNames = (parsed.fileNames || []).slice();
-    var versions = Object.create(null);
+    var project = {
+        configPath: resolved,
+        baseDir: nodePath.dirname(resolved),
+        fileNames: [],
+        options: {},
+        service: null,
+        versions: Object.create(null),
+        fileSet: Object.create(null)
+    };
     var host = {
-        getScriptFileNames: function () { return fileNames; },
+        getScriptFileNames: function () { return project.fileNames; },
         getScriptVersion: function (fileName)
         {
             // 现算不缓存——缓存版本会让外部写入（ts-patch / 编辑器）对 LanguageService 不可见，
             // 诊断停留在旧 Program 上（判例 2026-10-30：patch 落盘后 ts-check 仍报旧错）
             var v = fileVersion(fileName);
-            versions[fileName] = v;
+            project.versions[fileName] = v;
             return v;
         },
         getScriptSnapshot: function (fileName)
@@ -198,8 +206,8 @@ function getProject(configPath)
             }
             return TS.ScriptSnapshot.fromString(fs.readFileSync(fileName, 'utf8'));
         },
-        getCurrentDirectory: function () { return baseDir; },
-        getCompilationSettings: function () { return parsed.options; },
+        getCurrentDirectory: function () { return project.baseDir; },
+        getCompilationSettings: function () { return project.options; },
         getDefaultLibFileName: function (options) { return TS.getDefaultLibFilePath(options); },
         fileExists: TS.sys.fileExists,
         readFile: TS.sys.readFile,
@@ -208,18 +216,32 @@ function getProject(configPath)
         getDirectories: TS.sys.getDirectories,
         useCaseSensitiveFileNames: function () { return TS.sys.useCaseSensitiveFileNames; }
     };
-    var service = TS.createLanguageService(host);
-    var project = {
-        configPath: nodePath.resolve(configPath),
-        baseDir: baseDir,
-        fileNames: fileNames,
-        options: parsed.options,
-        service: service,
-        versions: versions,
-        fileSet: buildFileSet(fileNames)
-    };
-    projects[key] = project;
+    project.service = TS.createLanguageService(host);
     return project;
+}
+
+/**
+ * 刷新工程数据面——tsconfig、编译面、选项每次从磁盘重取
+ * 新增 / 删除源文件、改 include / exclude / compilerOptions 都立即反映
+ * @param {object} project 工程上下文
+ */
+function refreshProject(project)
+{
+    var TS = ensureTs();
+    var readResult = TS.readConfigFile(project.configPath, TS.sys.readFile);
+    if (readResult.error)
+    {
+        throw new Error('tsconfig 读取失败：' + TS.flattenDiagnosticMessageText(readResult.error.messageText, ' '));
+    }
+    var parsed = TS.parseJsonConfigFileContent(readResult.config, TS.sys, project.baseDir, null, project.configPath);
+    if (parsed.errors && parsed.errors.length > 0)
+    {
+        var first = parsed.errors[0];
+        throw new Error('tsconfig 解析失败：' + TS.flattenDiagnosticMessageText(first.messageText, ' '));
+    }
+    project.fileNames = (parsed.fileNames || []).slice();
+    project.options = parsed.options;
+    project.fileSet = buildFileSet(project.fileNames);
 }
 
 /**
