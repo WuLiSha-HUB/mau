@@ -1,0 +1,34 @@
+[Unit]
+Description=linux-see-window (CatHome4 Linux health dashboard, tailnet only)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=cathome
+Group=cathome
+WorkingDirectory=/cathome4/mau/tools/linux-see-window
+Environment=LSW_PORT=7900
+Environment=LSW_BIND=0.0.0.0
+ExecStart=/usr/bin/node /cathome4/mau/tools/linux-see-window/server.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillSignal=SIGTERM
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryHigh=150M
+MemoryMax=200M
+IPAddressDeny=any
+IPAddressAllow=100.64.0.0/10
+IPAddressAllow=127.0.0.1
+
+[Install]
+WantedBy=multi-user.target

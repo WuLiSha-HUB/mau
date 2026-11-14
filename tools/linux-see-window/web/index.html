@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>linux-see-window</title>
+<style>
+:root {
+    --bg: #12141a;
+    --panel: #1a1d26;
+    --line: #2a2f3d;
+    --txt: #d6dae4;
+    --dim: #7f8798;
+    --ok: #4ec9a5;
+    --warn: #e2b33c;
+    --err: #e2574c;
+    --acc: #6aa9ff;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--txt);
+    font: 13px/1.5 "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+}
+header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 0 2px 12px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 14px;
+}
+h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .5px; }
+.meta { color: var(--dim); font-size: 12px; }
+#status { margin-left: auto; font-size: 12px; }
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+}
+.card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+}
+.card h2 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+.big { font-size: 26px; font-weight: 600; line-height: 1.1; }
+.big small { font-size: 12px; color: var(--dim); font-weight: 400; margin-left: 4px; }
+.row { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; font-size: 12px; }
+.row span:last-child { color: var(--txt); font-variant-numeric: tabular-nums; }
+.row span:first-child { color: var(--dim); }
+.bar { height: 5px; background: #262b36; border-radius: 3px; overflow: hidden; margin: 6px 0 4px; }
+.bar i { display: block; height: 100%; background: var(--ok); transition: width .3s; }
+.bar i.warn { background: var(--warn); }
+.bar i.err { background: var(--err); }
+.cores { display: grid; grid-template-columns: repeat(auto-fit, minmax(56px, 1fr)); gap: 6px; margin-top: 8px; }
+.core { font-size: 11px; color: var(--dim); }
+.core .bar { margin: 3px 0 0; height: 4px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; color: var(--dim); font-weight: 400; padding: 2px 4px; font-size: 11px; }
+td { padding: 2px 4px; font-variant-numeric: tabular-nums; }
+td.comm { max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.num { text-align: right; }
+#errors {
+    margin-top: 12px;
+    border: 1px solid var(--err);
+    border-radius: 8px;
+    padding: 10px 14px;
+    background: rgba(226, 87, 76, .08);
+    font-size: 12px;
+    color: #f0a49d;
+}
+#errors.hidden { display: none; }
+#errors ul { margin: 6px 0 0; padding-left: 18px; }
+</style>
+</head>
+<body>
+<header>
+    <h1 id="host">linux-see-window</h1>
+    <div class="meta" id="sysmeta">连接中…</div>
+    <div id="status" class="meta">—</div>
+</header>
+
+<div class="grid">
+    <div class="card">
+        <h2>CPU</h2>
+        <div class="big" id="cpuUsage">—<small>%</small></div>
+        <div class="bar"><i id="cpuBar" style="width:0%"></i></div>
+        <div class="row"><span>核心数</span><span id="cpuCores">—</span></div>
+        <div class="cores" id="cpuCoreList"></div>
+    </div>
+
+    <div class="card">
+        <h2>负载</h2>
+        <div class="big" id="load1">—</div>
+        <div class="bar"><i id="loadBar" style="width:0%"></i></div>
+        <div class="row"><span>1 / 5 / 15 分钟</span><span id="loadAll">—</span></div>
+        <div class="row"><span>运行 / 总进程</span><span id="loadRun">—</span></div>
+    </div>
+
+    <div class="card">
+        <h2>内存</h2>
+        <div class="big" id="memUsed">—<small id="memPct"></small></div>
+        <div class="bar"><i id="memBar" style="width:0%"></i></div>
+        <div class="row"><span>可用</span><span id="memAvail">—</span></div>
+        <div class="row"><span>缓存 / Buffers</span><span id="memCache">—</span></div>
+        <div class="row"><span>Swap</span><span id="memSwap">—</span></div>
+    </div>
+
+    <div class="card">
+        <h2>磁盘</h2>
+        <div id="diskList"></div>
+    </div>
+
+    <div class="card">
+        <h2>网络</h2>
+        <div class="row"><span>接收</span><span id="netRx">—</span></div>
+        <div class="row"><span>发送</span><span id="netTx">—</span></div>
+        <div class="row"><span>接口</span><span id="netIf">—</span></div>
+    </div>
+
+    <div class="card">
+        <h2>磁盘 IO</h2>
+        <div class="row"><span>读</span><span id="ioRead">—</span></div>
+        <div class="row"><span>写</span><span id="ioWrite">—</span></div>
+        <div class="row"><span>忙碌度</span><span id="ioUtil">—</span></div>
+    </div>
+
+    <div class="card">
+        <h2>进程 TOP</h2>
+        <table>
+            <thead><tr><th>PID</th><th>命令</th><th class="num">CPU</th><th class="num">内存</th></tr></thead>
+            <tbody id="procBody"></tbody>
+        </table>
+    </div>
+
+    <div class="card">
+        <h2>本服务</h2>
+        <div class="row"><span>版本</span><span id="svcVer">—</span></div>
+        <div class="row"><span>运行时长</span><span id="svcUp">—</span></div>
+        <div class="row"><span>常驻内存</span><span id="svcRss">—</span></div>
+        <div class="row"><span>采样时刻</span><span id="svcAt">—</span></div>
+    </div>
+</div>
+
+<div id="errors" class="hidden"><strong>采集异常</strong><ul id="errorList"></ul></div>
+
+<script>
+(function () {
+    'use strict';
+
+    var INTERVAL_MS = 2000;
+
+    function bytes(n) {
+        if (n === null || n === undefined) {
+            return '—';
+        }
+        var units = ['B', 'KB', 'MB', 'GB', 'TB'];
+        var v = n;
+        var i = 0;
+        while (v >= 1024 && i < units.length - 1) {
+            v = v / 1024;
+            i = i + 1;
+        }
+        return (v >= 100 || i === 0 ? Math.round(v) : v.toFixed(1)) + ' ' + units[i];
+    }
+
+    function rate(n) {
+        if (n === null || n === undefined) {
+            return '—';
+        }
+        return bytes(n) + '/s';
+    }
+
+    function duration(sec) {
+        if (sec === null || sec === undefined) {
+            return '—';
+        }
+        var d = Math.floor(sec / 86400);
+        var h = Math.floor((sec % 86400) / 3600);
+        var m = Math.floor((sec % 3600) / 60);
+        if (d > 0) {
+            return d + '天 ' + h + '小时';
+        }
+        if (h > 0) {
+            return h + '小时 ' + m + '分';
+        }
+        return m + '分 ' + (sec % 60) + '秒';
+    }
+
+    function cls(pct) {
+        if (pct === null || pct === undefined) {
+            return '';
+        }
+        if (pct >= 90) {
+            return 'err';
+        }
+        if (pct >= 70) {
+            return 'warn';
+        }
+        return '';
+    }
+
+    function set(id, text) {
+        var el = document.getElementById(id);
+        if (el) {
+            el.textContent = text;
+        }
+    }
+
+    function setBar(id, pct) {
+        var el = document.getElementById(id);
+        if (!el) {
+            return;
+        }
+        var p = pct === null || pct === undefined ? 0 : Math.max(0, Math.min(100, pct));
+        el.style.width = p + '%';
+        el.className = cls(pct);
+    }
+
+    function render(data) {
+        var sys = data.system || {};
+        set('host', sys.hostname || 'linux-see-window');
+        set('sysmeta', [sys.distro, sys.kernel, sys.arch].filter(Boolean).join(' · '));
+
+        var cpu = data.cpu || {};
+        set('cpuUsage', cpu.usage === null || cpu.usage === undefined ? '—' : cpu.usage);
+        document.getElementById('cpuUsage').innerHTML = (cpu.usage === null || cpu.usage === undefined ? '—' : cpu.usage) + '<small>%</small>';
+        setBar('cpuBar', cpu.usage);
+        set('cpuCores', cpu.coreCount === null || cpu.coreCount === undefined ? '—' : cpu.coreCount);
+        var coreHtml = '';
+        var cores = cpu.cores || [];
+        for (var i = 0; i < cores.length; i = i + 1) {
+            var c = cores[i];
+            var pct = c.usage === null || c.usage === undefined ? 0 : c.usage;
+            coreHtml = coreHtml + '<div class="core">' + c.name.replace('cpu', '#') + ' ' +
+                (c.usage === null || c.usage === undefined ? '—' : c.usage + '%') +
+                '<div class="bar"><i class="' + cls(c.usage) + '" style="width:' + Math.min(100, pct) + '%"></i></div></div>';
+        }
+        document.getElementById('cpuCoreList').innerHTML = coreHtml;
+
+        var load = data.load || {};
+        set('load1', load.load1 === null || load.load1 === undefined ? '—' : load.load1.toFixed(2));
+        var coreN = cpu.coreCount || 1;
+        setBar('loadBar', load.load1 === null || load.load1 === undefined ? 0 : (load.load1 / coreN) * 100);
+        set('loadAll', [load.load5, load.load15].filter(function (x) {
+            return x !== null && x !== undefined;
+        }).map(function (x) {
+            return x.toFixed(2);
+        }).join(' / '));
+        set('loadRun', load.running || '—');
+
+        var mem = data.memory || {};
+        set('memUsed', bytes(mem.usedBytes));
+        document.getElementById('memUsed').innerHTML = bytes(mem.usedBytes) +
+            '<small>' + (mem.usedPercent === null || mem.usedPercent === undefined ? '' : mem.usedPercent + '% / ' + bytes(mem.totalBytes)) + '</small>';
+        setBar('memBar', mem.usedPercent);
+        set('memAvail', bytes(mem.availableBytes));
+        set('memCache', bytes(mem.cachedBytes));
+        set('memSwap', (mem.swapTotalBytes ? bytes(mem.swapUsedBytes) + ' / ' + bytes(mem.swapTotalBytes) : '未启用'));
+
+        var diskHtml = '';
+        var disks = data.disks || [];
+        for (var j = 0; j < disks.length; j = j + 1) {
+            var d = disks[j];
+            diskHtml = diskHtml + '<div class="row"><span>' + d.mount + '</span><span>' +
+                bytes(d.usedBytes) + ' / ' + bytes(d.totalBytes) + '（' +
+                (d.usedPercent === null || d.usedPercent === undefined ? '—' : d.usedPercent + '%') + '）</span></div>' +
+                '<div class="bar"><i class="' + cls(d.usedPercent) + '" style="width:' +
+                (d.usedPercent === null || d.usedPercent === undefined ? 0 : Math.min(100, d.usedPercent)) + '%"></i></div>';
+        }
+        document.getElementById('diskList').innerHTML = diskHtml || '<div class="row"><span>无数据</span><span>—</span></div>';
+
+        var net = data.network || {};
+        set('netRx', rate(net.rxPerSec));
+        set('netTx', rate(net.txPerSec));
+        set('netIf', (net.ifaces || []).map(function (x) {
+            return x.name;
+        }).join(', ') || '—');
+
+        var io = data.diskIo || {};
+        set('ioRead', rate(io.readPerSec));
+        set('ioWrite', rate(io.writePerSec));
+        set('ioUtil', io.utilPercent === null || io.utilPercent === undefined ? '—' : io.utilPercent + '%');
+
+        var rows = '';
+        var procs = data.processes || [];
+        for (var k = 0; k < procs.length; k = k + 1) {
+            var p = procs[k];
+            rows = rows + '<tr><td>' + p.pid + '</td><td class="comm" title="' + p.comm + '">' + p.comm +
+                '</td><td class="num">' + (p.cpuPercent === null || p.cpuPercent === undefined ? '—' : p.cpuPercent + '%') +
+                '</td><td class="num">' + bytes(p.rssBytes) + '</td></tr>';
+        }
+        document.getElementById('procBody').innerHTML = rows;
+
+        set('svcVer', data.version || '—');
+        set('svcUp', duration(data.serviceUptimeSec));
+        set('svcRss', bytes(data.serviceRssBytes));
+        set('svcAt', data.sampledAt ? data.sampledAt.replace('T', ' ').slice(0, 19) : '—');
+
+        var box = document.getElementById('errors');
+        var errs = data.errors || [];
+        if (errs.length === 0) {
+            box.className = 'hidden';
+        } else {
+            box.className = '';
+            var li = '';
+            for (var m = 0; m < errs.length; m = m + 1) {
+                li = li + '<li>' + errs[m] + '</li>';
+            }
+            document.getElementById('errorList').innerHTML = li;
+        }
+    }
+
+    function tick() {
+        fetch('/api/health', { cache: 'no-store' })
+            .then(function (r) {
+                if (!r.ok) {
+                    throw new Error('HTTP ' + r.status);
+                }
+                return r.json();
+            })
+            .then(function (data) {
+                render(data);
+                var st = document.getElementById('status');
+                st.textContent = '● 实时';
+                st.style.color = 'var(--ok)';
+            })
+            .catch(function (err) {
+                var st = document.getElementById('status');
+                st.textContent = '● 断开：' + err.message;
+                st.style.color = 'var(--err)';
+            });
+    }
+
+    tick();
+    setInterval(tick, INTERVAL_MS);
+})();
+</script>
+</body>
+</html>

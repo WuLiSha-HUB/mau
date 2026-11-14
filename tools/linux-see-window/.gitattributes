@@ -1,0 +1,2 @@
+# 本目录整体按 LF 入库与检出——Linux 部署脚本（.sh）与 systemd unit 对 CRLF 零容忍。
+* text=auto eol=lf
