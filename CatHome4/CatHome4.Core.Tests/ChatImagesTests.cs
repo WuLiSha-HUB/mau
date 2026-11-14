@@ -56,7 +56,12 @@ namespace CatHome4.Core.Tests
             Assert.False(AdminService.IsSafeImageName("sub/a.png"));
             Assert.False(AdminService.IsSafeImageName("sub\\a.png"));
             Assert.False(AdminService.IsSafeImageName(".."));
-            Assert.False(AdminService.IsSafeImageName("C:"));
+            if (OperatingSystem.IsWindows())
+            {
+                // Windows 下 "C:" 是驱动器引用（Path.GetFileName 返空串）需拒；
+                // Linux 下 ":" 不是分隔符，它是合法纯文件名，判据不覆盖
+                Assert.False(AdminService.IsSafeImageName("C:"));
+            }
         }
 
         /// <summary>
