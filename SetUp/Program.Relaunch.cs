@@ -257,18 +257,13 @@ namespace SetUp
             {
                 return Fail("旧宿主未在 " + RelaunchWaitPidMs.ToString() + " ms 内退出——中止，不触碰运行区。");
             }
-            // [段4] 覆盖——incr 原子切换（准备段已备好 _new）；host 跳过
+            // [段4] 覆盖——incr 已在前置段完成切换（托管环境提前切换，消除重启竞态）；host 跳过
             long depMs = Environment.TickCount64;
             bool replaced = false;
             if (mode == "incr")
             {
-                string switchErr = SwitchDirectory(targetFull, targetFull + "_new", targetFull + "_old");
-                replaced = switchErr.Length == 0;
-                _steps.Add(new StepReport() { Step = 13, Name = "incr 原子切换运行区", Ok = replaced, Ms = Environment.TickCount64 - depMs, Detail = switchErr });
-                if (!replaced)
-                {
-                    Console.WriteLine("[SetUp] 警告：原子切换失败——" + switchErr);
-                }
+                replaced = true;
+                _steps.Add(new StepReport() { Step = 13, Name = "incr 切换已完成（前置段，宿主退场前）", Ok = true, Ms = Environment.TickCount64 - depMs });
             }
             else
             {
@@ -868,6 +863,24 @@ namespace SetUp
                 Console.WriteLine("[SetUp] ❌ " + probeReason);
                 WriteRelay(repoRoot, false, probeReason);
                 return false;
+            }
+            // [段20] 托管环境提前切换——Linux 允许替换运行中的文件与目录（进程持旧 inode），
+            //        故把切换放在宿主退场之前：消除「切换」与「服务管理器按 RestartSec 拉起」之间的竞态窗口，
+            //        RestartSec 回归防崩溃循环的本职，不再承担正确性（A370 修）。
+            //        Windows 侧不适用（运行中程序集被 ALC 持锁）——那里的切换仍在宿主退出之后。
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                long swMs = Environment.TickCount64;
+                string swErr = SwitchDirectory(targetFull, targetFull + "_new", targetFull + "_old");
+                _steps.Add(new StepReport() { Step = 20, Name = "incr 前置切换（宿主退场前）", Ok = swErr.Length == 0, Ms = Environment.TickCount64 - swMs, Detail = swErr });
+                if (swErr.Length > 0)
+                {
+                    string swReason = "前置切换失败（宿主未退场，运行区未替换）：" + swErr;
+                    Console.WriteLine("[SetUp] ❌ " + swReason);
+                    WriteRelay(repoRoot, false, swReason);
+                    return false;
+                }
+                Console.WriteLine("[SetUp] incr 前置切换完成——新产物已就位，宿主退场后由服务管理器直接拉起。");
             }
             WriteRelay(repoRoot, true, "");
             Console.WriteLine("[SetUp] incr 前置段通过——已放行宿主退场。");
