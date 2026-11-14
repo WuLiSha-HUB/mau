@@ -3397,6 +3397,7 @@ namespace CH4
         private static int _summarySegmentSeq;
         /// <summary>
         /// RoundSummary——总结文本自动出声：外观配置启用时后台合成并播放（不阻塞主线程；失败记 Log、不影响轮次）。
+        /// A371——「总结成音频」关闭（或外观为空）时仍产只含提示音的单文件：总结播放保留，只是不出人声。
         /// </summary>
         /// <param name="text">总结文本（非 ERR| 的正常总结）</param>
         /// <param name="audioName">拼接后单文件名（与块 payload 同源，A265）</param>
@@ -3409,17 +3410,19 @@ namespace CH4
             }
             string catKey = _catKey;
             string[] cfg = provider(catKey);
-            if (cfg == null || cfg.Length < 2 || !string.Equals(cfg[0], "1", StringComparison.Ordinal))
+            if (cfg == null || cfg.Length < 2)
             {
                 return;
             }
-            string voice = cfg[1] == null ? "" : cfg[1];
+            // A371——「总结成音频」关闭时不再整条跳过：仍产只含提示音的单文件（总结播放保留，仅不出人声）
+            bool chimeOnly = !string.Equals(cfg[0], "1", StringComparison.Ordinal);
+            string voice = chimeOnly ? "" : (cfg[1] == null ? "" : cfg[1]);
             string displayName = ResolveSpeakName(catKey);
             Task.Run(delegate ()
             {
                 try
                 {
-                    RunSummarySpeak(catKey, displayName, voice, text, audioName);
+                    RunSummarySpeak(catKey, displayName, voice, text, audioName, chimeOnly);
                 }
                 catch (Exception ex)
                 {

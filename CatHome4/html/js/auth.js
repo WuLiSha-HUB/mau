@@ -39,7 +39,10 @@ if (CONSOLE_NATIVE_FETCH) {
         return CONSOLE_NATIVE_FETCH(input, opts).then(function (res) {
             if (res.status === 401 && CONSOLE_TOKEN) {
                 CONSOLE_TOKEN = '';
-                showAuthOverlay('login', '会话已失效（宿主可能已重启）——请按 F5 刷新页面重新登录');
+                // A373——断联态优先：断线期间后台请求的 401 不得把断联态顶成可输入的口令框
+                if (AUTH_MODE !== 'offline') {
+                    showAuthOverlay('login', '会话已失效（宿主可能已重启）——请按 F5 刷新页面重新登录');
+                }
             }
             return res;
         });
@@ -62,8 +65,9 @@ if (CONSOLE_NATIVE_ES) {
     window.EventSource.CLOSED = CONSOLE_NATIVE_ES.CLOSED;
 }
 
-// [段4] 登录层——单例遮罩；mode=login（输入口令）/ setup（首次设置，两遍确认）
+// [段4] 登录层——单例遮罩；mode=login（输入口令）/ setup（首次设置，两遍确认）/ offline（SSE 断联，不给输入）
 var AUTH_OVERLAY_ID = 'consoleAuthOverlay';
+var AUTH_MODE = '';   // 当前遮罩态：'' 无遮罩 / login / setup / offline
 
 function buildAuthOverlay(mode, message) {
     var old = document.getElementById(AUTH_OVERLAY_ID);
@@ -78,7 +82,7 @@ function buildAuthOverlay(mode, message) {
     title.style.cssText = 'font-size:15px;font-weight:bold;color:#8fd6a8;margin-bottom:4px';
     var hint = document.createElement('div');
     hint.id = 'consoleAuthHint';
-    hint.textContent = message || (mode === 'setup' ? '本机尚未设置 console 口令——请设置（至少 6 位，只存哈希）' : '请输入 console 口令');
+    hint.textContent = message || (mode === 'setup' ? '本机尚未设置 console 口令——请设置（至少 6 位，只存哈希）' : (mode === 'offline' ? 'SSE 断联，正在尝试重新连接…' : '请输入 console 口令'));
     hint.style.cssText = 'font-size:12px;color:#9aa5a0;margin-bottom:10px;line-height:1.5;white-space:pre-wrap';
     var pwd = document.createElement('input');
     pwd.id = 'consoleAuthPwd';
@@ -88,6 +92,12 @@ function buildAuthOverlay(mode, message) {
     pwd.style.cssText = 'width:100%;box-sizing:border-box;background:#0d1110;border:1px solid #2b3330;color:#e6e1d8;padding:8px;font-family:inherit;font-size:13px';
     box.appendChild(title);
     box.appendChild(hint);
+    if (mode === 'offline') {
+        // A372——断联态：只显示重连提示，不给输入框与按钮；连接恢复后由 consoleSseUp 转 login
+        wrap.appendChild(box);
+        document.body.appendChild(wrap);
+        return wrap;
+    }
     box.appendChild(pwd);
     if (mode === 'setup') {
         var pwd2 = document.createElement('input');
@@ -112,7 +122,62 @@ function buildAuthOverlay(mode, message) {
 }
 
 function showAuthOverlay(mode, message) {
+    AUTH_MODE = mode;
     buildAuthOverlay(mode, message);
+}
+
+// [段4b] SSE 断联 / 恢复——A373：断联即视为未认证（令牌当场作废）；A372：恢复后回到口令输入
+// A374——断联后主动探测：EventSource 收到非 event-stream 响应（如宿主重启后的 401）会按规范 fail 且**不再自动重连**，
+//          所以「正在尝试重新连接」必须有真实动作——每 10 秒问一次认证面，可达即转口令输入
+var AUTH_PROBE_TIMER = null;
+
+function consoleSseDown() {
+    CONSOLE_TOKEN = '';
+    if (AUTH_MODE === 'offline') { return; }
+    showAuthOverlay('offline');
+    consoleStartProbe();
+}
+
+function consoleSseUp() {
+    consoleStopProbe();
+    if (AUTH_MODE !== 'offline') { return; }
+    showAuthOverlay('login', '连接已恢复——请输入 console 口令（断联期间令牌已作废）');
+}
+
+// [段4c] 恢复探测——单次探测：可达则按有无口令分流（有口令 → 转 login；无口令 → 免认证直接回业务面重建 SSE）
+function consoleProbeOnce() {
+    CONSOLE_NATIVE_FETCH('/api/v1/auth/status', { method: 'GET' })
+        .then(function (res) {
+            if (!res || !res.ok) { return null; }
+            return res.json();
+        })
+        .then(function (d) {
+            if (!d) { return; }
+            consoleStopProbe();
+            if (AUTH_MODE !== 'offline') { return; }
+            if (d.hasPassword) {
+                showAuthOverlay('login', '连接已恢复——请输入 console 口令（断联期间令牌已作废）');
+                return;
+            }
+            AUTH_MODE = '';
+            var old = document.getElementById(AUTH_OVERLAY_ID);
+            if (old && old.parentNode) { old.parentNode.removeChild(old); }
+            if (typeof consoleReconnectSse === 'function') { consoleReconnectSse(); }
+        })
+        .catch(function () { });   // 仍不可达——保持断联态，下一个周期再试
+}
+
+function consoleStartProbe() {
+    if (AUTH_PROBE_TIMER) { return; }
+    consoleProbeOnce();   // 首探立即执行——短暂断联即刻回到登录框，不必干等 10 秒
+    AUTH_PROBE_TIMER = setInterval(function () {
+        if (AUTH_MODE !== 'offline') { consoleStopProbe(); return; }
+        consoleProbeOnce();
+    }, 10000);
+}
+
+function consoleStopProbe() {
+    if (AUTH_PROBE_TIMER) { clearInterval(AUTH_PROBE_TIMER); AUTH_PROBE_TIMER = null; }
 }
 
 function authSetHint(text) {
@@ -157,8 +222,15 @@ function submitAuth(mode) {
             return;
         }
         CONSOLE_TOKEN = d.token;
+        AUTH_MODE = '';
+        consoleStopProbe();
         var old = document.getElementById(AUTH_OVERLAY_ID);
         if (old && old.parentNode) { old.parentNode.removeChild(old); }
+        if (CONSOLE_SCRIPTS_LOADED) {
+            // 断联重连场景：业务脚本已在运行，不重载，改用新令牌重建 SSE（旧连接 URL 里是作废令牌）
+            if (typeof consoleReconnectSse === 'function') { consoleReconnectSse(); }
+            return;
+        }
         loadConsoleScripts();
     }).catch(function (e) {
         CONSOLE_AUTH_BUSY = false;

@@ -428,7 +428,8 @@ namespace CH4
         /// <param name="voice">正文音色（外观池 ttsStyle；空=服务默认）</param>
         /// <param name="text">总结正文</param>
         /// <param name="audioName">拼接后单文件名（与块 payload 同源）</param>
-        private static void RunSummarySpeak(string catKey, string displayName, string voice, string text, string audioName)
+        /// <param name="chimeOnly">只产提示音（A371——TTS 关闭时总结播放保留：跳过播报名与正文，单文件只含提示音）</param>
+        private static void RunSummarySpeak(string catKey, string displayName, string voice, string text, string audioName, bool chimeOnly)
         {
             ITtsService tts = null;
             if (!DataBox.TryResolve<ITtsService>(out tts) || tts == null)
@@ -444,25 +445,29 @@ namespace CH4
             {
                 segments.Add(chimePath);
             }
-            // [段1] 播报名——全局默认音色（先告诉听众是谁在说）
-            // 🔴 莎 2026-11-14 裁：**播报名用全局 audio.voice、正文用该猫外观池 ttsStyle，二者不同属预期**——
-            //    不是缺陷、不要"顺便统一"（有人问过"为什么换声音"，答案是设计如此）。
-            string intro = displayName == null || displayName.Length == 0 ? "" : displayName + "说";
-            if (intro.Length > 0)
+            // A371——chimeOnly：外观池「总结成音频」关闭时只产提示音单文件（总结播放保留、不出人声）
+            if (!chimeOnly)
             {
-                string introFile = SpeakOne(tts, intro, ResolveGlobalVoice(), catKey);
-                if (introFile.Length > 0)
+                // [段1] 播报名——全局默认音色（先告诉听众是谁在说）
+                // 🔴 莎 2026-11-14 裁：**播报名用全局 audio.voice、正文用该猫外观池 ttsStyle，二者不同属预期**——
+                //    不是缺陷、不要"顺便统一"（有人问过"为什么换声音"，答案是设计如此）。
+                string intro = displayName == null || displayName.Length == 0 ? "" : displayName + "说";
+                if (intro.Length > 0)
                 {
-                    segments.Add(introFile);
-                    temps.Add(introFile);
+                    string introFile = SpeakOne(tts, intro, ResolveGlobalVoice(), catKey);
+                    if (introFile.Length > 0)
+                    {
+                        segments.Add(introFile);
+                        temps.Add(introFile);
+                    }
                 }
-            }
-            // [段2] 正文——该猫外观音色
-            string bodyFile = SpeakOne(tts, text, voice, catKey);
-            if (bodyFile.Length > 0)
-            {
-                segments.Add(bodyFile);
-                temps.Add(bodyFile);
+                // [段2] 正文——该猫外观音色
+                string bodyFile = SpeakOne(tts, text, voice, catKey);
+                if (bodyFile.Length > 0)
+                {
+                    segments.Add(bodyFile);
+                    temps.Add(bodyFile);
+                }
             }
             if (segments.Count == 0)
             {
@@ -643,17 +648,19 @@ namespace CH4
             new string[] { "重跑", "虫跑" }
         };
         /// <summary>
-        /// 轮末总结提示音路径——部署包 assets/audio/roundsummary_chime.wav；缺失记 WARN 并跳过（不阻断播报）。
+        /// 轮末总结提示音路径——A371：固定落 console 静态资产区 `html/assets/audio/roundsummary_chime.wav`
+        /// （与字体同类复用素材，随 sync-html 三区同步、经 console 端点持久化；不再走部署包根 assets 副本）。
+        /// 缺失记 WARN 并跳过（不阻断播报）。
         /// </summary>
         /// <returns>提示音绝对路径；缺失空串</returns>
         private static string ResolveChimePath()
         {
-            string path = System.IO.Path.Combine(AppContext.BaseDirectory, "assets", "audio", "roundsummary_chime.wav");
+            string path = System.IO.Path.Combine(AppContext.BaseDirectory, "html", "assets", "audio", "roundsummary_chime.wav");
             if (System.IO.File.Exists(path))
             {
                 return path;
             }
-            LogStore.Add("CatHome4", 2, "轮末总结提示音缺失（assets/audio/roundsummary_chime.wav）——跳过提示音", "CHAT");
+            LogStore.Add("CatHome4", 2, "轮末总结提示音缺失（html/assets/audio/roundsummary_chime.wav）——跳过提示音", "CHAT");
             return "";
         }
     }

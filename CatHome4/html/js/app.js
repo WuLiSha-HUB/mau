@@ -39,37 +39,58 @@ for (var i = 0; i < tabs.length; i++) {
 
 // [段3] SSE 事件流——四类事件分派
 // A141——按订阅推送：面板只订阅四类（对话页另订阅 view/note——管理面事件不入 chat 流，A181）
-var es = new EventSource('/api/v1/stream?topics=snapshot,patch,log,cmd,state');
-es.addEventListener('snapshot', function (ev) {
-    // 增量流式——全量快照到达（helloFrame 重连兜底）整体替换本地全快照
-    var s = JSON.parse(ev.data);
-    fullSnapshot = s;
-    applySnapshot(s);
-});
-es.addEventListener('patch', function (ev) { applyPatch(JSON.parse(ev.data)); });   // 增量流式——变化段合并进本地全快照
-es.addEventListener('state', function (ev) {
-    // A225c——猫卡实时状态（后端多猫列表变化即推；管理页猫卡自动跟随，不再靠手动刷新）
-    var d = JSON.parse(ev.data);
-    if (typeof applyCatState === 'function') { applyCatState(d.cats || []); }
-});
-es.addEventListener('log', function (ev) {
-    // A141——服务端批量合帧：载荷为数组（兼容单条形态）
-    var d = JSON.parse(ev.data);
-    if (Object.prototype.toString.call(d) === '[object Array]') {
-        for (var i = 0; i < d.length; i++) { pushLog(d[i]); }
-    } else {
-        pushLog(d);
-    }
-});
-es.addEventListener('cmd', function (ev) {
-    var d = JSON.parse(ev.data);
-    pushLog({ time: '', frame: d.frame, level: d.ok ? 'INFO' : 'ERROR', category: 'CMD', module: d.cmdId, message: d.ok ? 'ok' : ('err=' + (d.error || '')) });
-    cmdResultEl.textContent = '回执: ' + d.cmdId + ' ok=' + d.ok + ' frame=' + d.frame + (d.error ? ' error=' + d.error : '');
-});
-es.onerror = function () { metaEl.textContent = 'SSE 断线——自动重连...'; };
-es.onopen = function () {
-    // 对话已迁 chat.html 独立页（F2.1 主面板纯管理面）——重连无需对话历史兜底（A162：落差检测已退役）
-};
+// A372/A373——断联即视为未认证：连接一断即清令牌并切断联态（auth.js consoleSseDown）；恢复后须重输口令，
+// 由 auth.js 回调 consoleReconnectSse 用新令牌重建连接（旧连接的 URL 里带的是已作废令牌）
+var ES_TOPICS = 'snapshot,patch,log,cmd,state';
+var es = null;
+
+// [段3a] 建连——可重入（重连时先关旧实例，避免同一页面挂着两条流）
+function connectSse() {
+    if (es) { es.close(); }
+    es = new EventSource('/api/v1/stream?topics=' + ES_TOPICS);
+    es.addEventListener('snapshot', function (ev) {
+        // 增量流式——全量快照到达（helloFrame 重连兜底）整体替换本地全快照
+        var s = JSON.parse(ev.data);
+        fullSnapshot = s;
+        applySnapshot(s);
+    });
+    es.addEventListener('patch', function (ev) { applyPatch(JSON.parse(ev.data)); });   // 增量流式——变化段合并进本地全快照
+    es.addEventListener('state', function (ev) {
+        // A225c——猫卡实时状态（后端多猫列表变化即推；管理页猫卡自动跟随，不再靠手动刷新）
+        var d = JSON.parse(ev.data);
+        if (typeof applyCatState === 'function') { applyCatState(d.cats || []); }
+    });
+    es.addEventListener('log', function (ev) {
+        // A141——服务端批量合帧：载荷为数组（兼容单条形态）
+        var d = JSON.parse(ev.data);
+        if (Object.prototype.toString.call(d) === '[object Array]') {
+            for (var i = 0; i < d.length; i++) { pushLog(d[i]); }
+        } else {
+            pushLog(d);
+        }
+    });
+    es.addEventListener('cmd', function (ev) {
+        var d = JSON.parse(ev.data);
+        pushLog({ time: '', frame: d.frame, level: d.ok ? 'INFO' : 'ERROR', category: 'CMD', module: d.cmdId, message: d.ok ? 'ok' : ('err=' + (d.error || '')) });
+        cmdResultEl.textContent = '回执: ' + d.cmdId + ' ok=' + d.ok + ' frame=' + d.frame + (d.error ? ' error=' + d.error : '');
+    });
+    es.onerror = function () {
+        metaEl.textContent = 'SSE 断线——自动重连...';
+        if (typeof consoleSseDown === 'function') { consoleSseDown(); }
+    };
+    es.onopen = function () {
+        // 对话已迁 chat.html 独立页（F2.1 主面板纯管理面）——重连无需对话历史兜底（A162：落差检测已退役）
+        metaEl.textContent = '';
+        if (typeof consoleSseUp === 'function') { consoleSseUp(); }
+    };
+}
+
+// [段3b] 重建入口——auth.js 登录成功后调用（令牌已换新）
+function consoleReconnectSse() {
+    connectSse();
+}
+
+connectSse();
 
 // 初始兜底——帧号守卫（旧快照不覆盖新）
 fetch('/api/v1/snapshot?logs=200')
