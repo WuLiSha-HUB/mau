@@ -189,7 +189,8 @@ namespace Mau.Development
                 {
                     continue;
                 }
-                string rel = path.Substring(cache.ProjectDir.Length).TrimStart('\\', '/');
+                // 相对路径统一成反斜杠口径——与 dirPrefixes 同形（Linux 上 Directory.GetFiles 返正斜杠，不归一则排除式永不命中）
+                string rel = path.Substring(cache.ProjectDir.Length).TrimStart('\\', '/').Replace('/', '\\');
                 bool excluded = false;
                 for (int d = 0; d < dirPrefixes.Count; d = d + 1)
                 {
