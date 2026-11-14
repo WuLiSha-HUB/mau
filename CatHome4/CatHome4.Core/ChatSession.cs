@@ -3170,8 +3170,9 @@ namespace CH4
             return "你是「" + name + "」。这一轮你刚做完事，现在向用户亲口交代你做了什么、结果如何。"
                 + "第一人称（我 / 我这边），口语，像当面说话；只说自己的动作与结果，不复述用户的要求，"
                 + "不用「用户」「助手」「该轮」这类旁观措辞；一句话 20-50 字；不要客套、不要分点、不要引号。"
-                + "这句话会被直接念出来，数字与缩写按读音写：版本号、编号、端口号逐位写成汉字（1.8.152 写成 一点八点一五二，8080 写成 八零八零），"
-                + "只有表示数量时才用阿拉伯数字（3 个文件）；技术缩写拆成大写单字母加空格（CUDA 写成 C U D A）。";
+                + "这句话会被直接念出来：版本号、编号、端口号逐位写成汉字（1.8.152 写成 一点八点一五二，8080 写成 八零八零），"
+                + "只有表示数量时才用阿拉伯数字（3 个文件）；技术缩写拆成大写单字母加空格（CUDA 写成 C U D A，LLM 写成 L L M）。"
+                + "不要写链接或网址（念出来是乱码），需要时改说「详见文档」；不要写 Markdown 符号（星号 / 反引号 / 井号）与代码块，直接说口语。";
         }
         /// <summary>
         /// RoundSummary——轮末调度：组 prompt 并投 LLMSimpleRequest 服务工单（开关开 + 配置可用 + 有内容时才发）。
@@ -3429,16 +3430,16 @@ namespace CH4
             });
         }
         /// <summary>
-        /// 总结音频产物目录——配置 py.service.kokoro.out_dir（未配置返回空串，不猜目录；缺失则创建）。
+        /// 总结音频产物目录——TTS 服务产物目录（数据根 Data/tts，固定落点；不可用返回空串，不猜目录）。
         /// </summary>
-        /// <returns>目录全路径；未配置空串</returns>
+        /// <returns>目录全路径；不可用空串</returns>
         private static string ResolveSummaryAudioDir()
         {
-            ConfigStore cfg = null;
+            ITtsService tts = null;
             string dir = "";
-            if (DataBox.TryResolve<ConfigStore>(out cfg) && cfg != null)
+            if (DataBox.TryResolve<ITtsService>(out tts) && tts != null)
             {
-                dir = cfg.Get("py.service.kokoro.out_dir", "");
+                dir = tts.OutputDir;
             }
             if (dir.Length == 0)
             {

@@ -347,6 +347,11 @@ namespace CH4
             DataBox.Bind<IGroupService>(new CatHome4.Admin.GroupService());
             // A239 音频播放服务——per-Key 串行 + 组间并发（NAudio.Wasapi；design-mau-audio §三）
             DataBox.Bind<Mau.Contracts.IAudioService>(new Mau.Audio.AudioService());
+            // A347 语音合成服务——云端 TTS（文本 → WAV；audio.speak 积木与轮末总结播报共用）
+            // 产物落点 = 数据根 Data/tts（固定逻辑，不做配置项——前端点播端点按同目录取文件）
+            Mau.Audio.TtsService ttsSvc = new Mau.Audio.TtsService();
+            ttsSvc.Configure(dataRoot);
+            DataBox.Bind<Mau.Contracts.ITtsService>(ttsSvc);
             AuditStore audit = new AuditStore();
             AuditStore.Default = audit;
             _runner.Audit = audit;

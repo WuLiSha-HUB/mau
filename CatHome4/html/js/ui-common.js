@@ -87,26 +87,24 @@ function fmtNumHtml(s, tailCls) {
 
 
 
-// Kokoro 播报音色候选——前端两处下拉共用（全局配置区 audio.voice / 外观池 TTS 音色）
-// 口径：id = Kokoro 音色库键（voices-v1.1-zh.bin）；note = 莎的听感标注（小 / 中 / 大 / 巨）
+// 播报音色候选——前端两处下拉共用（全局配置区 audio.voice / 外观池 TTS 音色）
+// 口径：id = 云端 TTS 的 voice_id（DeepSeek TTS 仅两档）；note = 音色特征
 // 与后端契约同步：config/schema.json.example 的 audio.voice.values 与此表同集（改一处须改另一处）
-var KOKORO_VOICES = [
-    { id: 'zf_038', note: '小' },
-    { id: 'zf_072', note: '中' },
-    { id: 'zf_059', note: '大' },
-    { id: 'zf_022', note: '巨' }
+var TTS_VOICES = [
+    { id: 'stella', note: '海星·女声' },
+    { id: 'tide', note: '暗潮·男声' }
 ];
 
 /**
- * 音色显示名——id 追加听感注释（未知 id 原样返回，不隐藏）
- * @param {string} id 音色 id（如 zf_072）
- * @returns {string} 显示名（如 zf_072（中））
+ * 音色显示名——id 追加音色特征（未知 id 原样返回，不隐藏）
+ * @param {string} id 音色 id（如 stella）
+ * @returns {string} 显示名（如 stella（海星·女声））
  */
-function kokoroVoiceLabel(id) {
+function ttsVoiceLabel(id) {
     var key = String(id || '');
-    for (var i = 0; i < KOKORO_VOICES.length; i++) {
-        if (KOKORO_VOICES[i].id === key) {
-            return key + '（' + KOKORO_VOICES[i].note + '）';
+    for (var i = 0; i < TTS_VOICES.length; i++) {
+        if (TTS_VOICES[i].id === key) {
+            return key + '（' + TTS_VOICES[i].note + '）';
         }
     }
     return key;

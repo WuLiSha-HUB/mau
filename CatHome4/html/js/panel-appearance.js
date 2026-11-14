@@ -40,7 +40,7 @@ function renderAppearanceRow(apc) {
     if (!apc.petKind) { tdPet.style.color = 'var(--ch-fg-weak)'; }
     tr.appendChild(tdPet);
     var tdTts = document.createElement('td');
-    tdTts.textContent = apc.ttsStyle ? kokoroVoiceLabel(apc.ttsStyle) : '（无）';
+    tdTts.textContent = apc.ttsStyle ? ttsVoiceLabel(apc.ttsStyle) : '（无）';
     if (!apc.ttsStyle) { tdTts.style.color = 'var(--ch-fg-weak)'; }
     tr.appendChild(tdTts);
     var tdSummary = document.createElement('td');
@@ -176,7 +176,7 @@ document.getElementById('apcRefresh').onclick = loadAppearances;
 document.getElementById('apcCancelEdit').onclick = cancelAppearanceEdit;
 loadAppearances();
 
-// [段2] 音色下拉——选项来自 ui-common.KOKORO_VOICES（与 schema audio.voice.values 同集）
+// [段2] 音色下拉——选项来自 ui-common.TTS_VOICES（与 schema audio.voice.values 同集）
 // 旧数据容错：库里存着不在候选集内的音色名时，临时补一项显示原名，不静默清空
 function fillVoiceSelect() {
     var sel = document.getElementById('apcNewTts');
@@ -185,10 +185,10 @@ function fillVoiceSelect() {
     emptyOpt.value = '';
     emptyOpt.textContent = '（空 = 服务默认）';
     sel.appendChild(emptyOpt);
-    for (var i = 0; i < KOKORO_VOICES.length; i++) {
+    for (var i = 0; i < TTS_VOICES.length; i++) {
         var opt = document.createElement('option');
-        opt.value = KOKORO_VOICES[i].id;
-        opt.textContent = kokoroVoiceLabel(KOKORO_VOICES[i].id);
+        opt.value = TTS_VOICES[i].id;
+        opt.textContent = ttsVoiceLabel(TTS_VOICES[i].id);
         sel.appendChild(opt);
     }
 }

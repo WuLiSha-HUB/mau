@@ -606,7 +606,7 @@ function renderConfig(items) {
         var td2 = document.createElement('td');
         var inp;
         if (it.key === 'audio.voice') {
-            // 音色专用——schema 值域四项渲染下拉（注释来自 ui-common.KOKORO_VOICES；空=服务默认）
+            // 音色专用——schema 值域两项渲染下拉（注释来自 ui-common.TTS_VOICES；空=服务默认）
             inp = document.createElement('select');
             inp.className = 'input-mini';
             inp.style.width = '100%';
@@ -614,10 +614,10 @@ function renderConfig(items) {
             emptyOpt.value = '';
             emptyOpt.textContent = '（空 = 服务默认音色）';
             inp.appendChild(emptyOpt);
-            for (var vi = 0; vi < KOKORO_VOICES.length; vi++) {
+            for (var vi = 0; vi < TTS_VOICES.length; vi++) {
                 var voiceOpt = document.createElement('option');
-                voiceOpt.value = KOKORO_VOICES[vi].id;
-                voiceOpt.textContent = kokoroVoiceLabel(KOKORO_VOICES[vi].id);
+                voiceOpt.value = TTS_VOICES[vi].id;
+                voiceOpt.textContent = ttsVoiceLabel(TTS_VOICES[vi].id);
                 inp.appendChild(voiceOpt);
             }
             inp.value = String(it.value || '');

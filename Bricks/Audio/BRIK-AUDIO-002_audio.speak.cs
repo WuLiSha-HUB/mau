@@ -2,12 +2,12 @@
 // 积木: audio.speak
 // ID:   BRIK-AUDIO-002
 // 类别: AUDIO
-// 作用: 文本转语音并播放——调 Kokoro py 服务合成 WAV，再入队播放（LLM 工具 audio-speak 语料执行面）
+// 作用: 文本转语音并播放——调云端 TTS 合成 WAV，再入队播放（LLM 工具 audio-speak 语料执行面）
 // 依赖: 无
-// 引用: Mau.Runtime（DataBox/JsonArgs/JsonUtil/IPyService/WorkspaceConfig）· Mau.Contracts（IAudioService）
-// 原理: 解析 text/voice/speed/key/out → out 根寻址展开 → IPyService.Invoke(kokoro,{op:speak}) → 取产物路径 → IAudioService.Enqueue
+// 引用: Mau.Runtime（DataBox/JsonArgs/JsonUtil/ConfigStore/ConfigSchema/WorkspaceConfig）· Mau.Contracts（IAudioService/ITtsService）
+// 原理: 解析 text/voice/speed/key/out → out 根寻址展开 → ITtsService.Synthesize(text,voice,out) → IAudioService.Enqueue
 // 常用: audio_cat.mau 认领线——'audio.speak'[@adArgs] > @adRes
-// 注意: 合成为同步往返（含冷启动，主线程等待）；播放入队即返回（design-mau-audio §四）
+// 注意: 合成是云端同步往返（短句约 2 秒；本线在途期间不接新单）；播放入队即返回。语速参数当前 provider 不支持——回执显式出声忽略
 // ═══════════════════════════════════════════════════
 using System;
 using System.Collections.Generic;
@@ -74,78 +74,45 @@ namespace Mau.Bricks
             // 根寻址展开——out 显式给定时按工作区根表展开；缺省产物路径已是绝对路径
             string outPath = outArg.Length > 0 ? ExpandPath(outArg) : BuildOutPath();
 
-            // [段1] 合成——py 服务同步往返
-            IPyService py = null;
-            if (!DataBox.TryResolve<IPyService>(out py) || py == null)
+            // [段1] 合成——云端 TTS 同步往返
+            ITtsService tts = null;
+            if (!DataBox.TryResolve<ITtsService>(out tts) || tts == null)
             {
-                result = "ERR|PY_NO_SERVICE|宿主未注入 IPyService";
+                result = "ERR|TTS_NO_SERVICE|宿主未注入 ITtsService";
                 return false;
             }
-            Dictionary<string, object> payload = new Dictionary<string, object>();
-            payload["id"] = "speak";
-            payload["op"] = "speak";
-            payload["text"] = text;
-            if (voice.Length > 0)
+            string synthError = tts.Synthesize(text, voice, outPath);
+            if (synthError.Length > 0)
             {
-                payload["voice"] = voice;
-            }
-            payload["speed"] = speed;
-            payload["out"] = outPath;
-            string invokeArgs = JsonUtil.Object(("name", "kokoro"), ("payload", JsonUtil.Serialize(payload)));
-            string reply = py.Invoke(invokeArgs);
-            if (reply == null || reply.Length == 0)
-            {
-                result = "ERR|TTS_FAIL|Kokoro 服务无回执";
+                result = synthError;
                 return false;
             }
-            if (reply.StartsWith("ERR|", StringComparison.Ordinal))
+            if (!File.Exists(outPath))
             {
-                result = reply;
+                result = "ERR|TTS_FAIL|产物不存在: " + outPath;
                 return false;
+            }
+            // 语速——当前 provider 不接受该参数：显式出声（不静默丢参数）
+            string speedNote = "";
+            if (speed > 1.001f || speed < 0.999f)
+            {
+                speedNote = "｜⚠ 当前 TTS 不支持语速调节，speed 已忽略";
             }
 
-            // [段2] 回执解析——ok / out / error
-            string produced = outPath;
-            JsonDocument doc = JsonUtil.Parse(reply, "audio.speak");
-            if (doc == null)
-            {
-                result = "ERR|TTS_FAIL|Kokoro 回执不可解析: " + reply;
-                return false;
-            }
-            try
-            {
-                JsonElement root = doc.RootElement;
-                if (!JsonUtil.GetBool(root, "ok", false))
-                {
-                    result = "ERR|TTS_FAIL|" + JsonUtil.GetStr(root, "error", reply);
-                    return false;
-                }
-                produced = JsonUtil.GetStr(root, "out", outPath);
-            }
-            finally
-            {
-                doc.Dispose();
-            }
-            if (produced.Length == 0 || !File.Exists(produced))
-            {
-                result = "ERR|TTS_FAIL|产物不存在: " + produced;
-                return false;
-            }
-
-            // [段3] 播放——入队即返回
+            // [段2] 播放——入队即返回
             IAudioService audio = null;
             if (!DataBox.TryResolve<IAudioService>(out audio) || audio == null)
             {
                 result = "ERR|AUDIO_NO_SERVICE|宿主未注入 IAudioService";
                 return false;
             }
-            string enqueue = audio.Enqueue(key, produced, -1f);
+            string enqueue = audio.Enqueue(key, outPath, -1f);
             if (enqueue != null && enqueue.Length > 0)
             {
                 result = enqueue;
                 return false;
             }
-            result = "OK|" + produced;
+            result = "OK|" + outPath + speedNote;
             return true;
         }
 
@@ -203,16 +170,16 @@ namespace Mau.Bricks
         }
 
         /// <summary>
-        /// 生成产物路径——配置 out_dir 优先，缺省落系统临时目录 cat-home4-tts。
+        /// 生成产物路径——TTS 产物目录（数据根 Data/tts，由服务注入；未注入时落系统临时目录）。
         /// </summary>
         /// <returns>WAV 全路径</returns>
         private static string BuildOutPath()
         {
-            ConfigStore cfg = null;
+            ITtsService tts = null;
             string dir = "";
-            if (DataBox.TryResolve<ConfigStore>(out cfg) && cfg != null)
+            if (DataBox.TryResolve<ITtsService>(out tts) && tts != null)
             {
-                dir = cfg.Get("py.service.kokoro.out_dir", "");
+                dir = tts.OutputDir;
             }
             if (dir.Length == 0)
             {
@@ -226,4 +193,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:84B7475D669FF2BFCA75CBAD1703C89D8649A0DF6A9E1BE632240F74C2D70EAD
+// #MAU_CHECKSUM:SHA256:315793BCA6081B71F1CF04AC862EA6D0DDC71860E71BE74BF62F77D495212D8B

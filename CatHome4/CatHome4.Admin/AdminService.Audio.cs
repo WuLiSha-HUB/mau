@@ -7,7 +7,7 @@ namespace CatHome4.Admin
 {
     /// <summary>
     /// 音频资产分部（A265）——轮末总结拼接音频的取回面。
-    /// 端点：GET /api/v1/audio/{**file}（裸文件名 + .wav；目录 = 配置 py.service.kokoro.out_dir）。
+    /// 端点：GET /api/v1/audio/{**file}（裸文件名 + .wav；目录 = 配置 audio.out_dir）。
     /// 设计取舍：单独资产入口，不与图片端点混面（图片面认受控根寻址 / 绝对路径，音频只认产物目录裸名——最小可读面）。
     /// </summary>
     internal static partial class AdminService
@@ -39,10 +39,11 @@ namespace CatHome4.Admin
             {
                 return Results.NotFound();
             }
+            Mau.Contracts.ITtsService tts = null;
             string dir = "";
-            if (_globalConfig != null)
+            if (Mau.Runtime.DataBox.TryResolve<Mau.Contracts.ITtsService>(out tts) && tts != null)
             {
-                dir = _globalConfig.Get("py.service.kokoro.out_dir", "");
+                dir = tts.OutputDir;
             }
             if (dir == null || dir.Length == 0)
             {

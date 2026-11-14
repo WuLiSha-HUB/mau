@@ -237,8 +237,8 @@ namespace CatHome4.Observe
             AddPathCommandProbe(cfg, direct, jobs, "py.python_path", LevelRequired, "Python", "--version", TtlStaticMs, now);
             AddPathCommandProbe(cfg, direct, jobs, "node.node_path", LevelRequired, "Node.js", "--version", TtlStaticMs, now);
             AddPathFileVersionProbe(cfg, direct, jobs, "browser.kernel_path", LevelRequired, "浏览器内核", TtlStaticMs, now);
-            // [段3] Kokoro 服务——配置完整性（不探活：探活会拉起 1.2 GB 进程，副作用不可接受）
-            CollectKokoro(cfg, ws, direct, jobs, now);
+            // [段3] 语音合成（云端 TTS）——配置完整性（不探活：真合成计费且耗时，可用性归调用期报错）
+            CollectTts(cfg, direct, now);
             // [段3b] node 服务——配置完整性（不探活：拉起常驻进程副作用不可接受，存活态归资源页签）
             CollectNodeService(cfg, ws, direct, jobs, now);
             // [段4] LLM 端点池——**已移出 deps 段**（A253 扩展）：改为管理面板独立区块 + 手动探活
@@ -335,57 +335,33 @@ namespace CatHome4.Observe
         }
 
         /// <summary>
-        /// Kokoro 服务探测——解释器（服务级覆盖优先）+ 入口脚本（受控根寻址展开）双双存在即就绪。
-        /// 不探活：探活会按需拉起服务进程（1.2 GB / 2.6 s 冷启），副作用不可接受。
+        /// 语音合成（云端 TTS）探测——端点与池配置 ID 双项非空即视为已配置。
+        /// 不探活：真合成本身计费且耗时，实际可用性归调用期报错（ERR|API_NOT_CONFIGURED / ERR|TTS_FAIL）。
         /// </summary>
         /// <param name="cfg">配置读面（可 null）</param>
-        /// <param name="ws">工作区配置（受控根寻址基准；可 null）</param>
         /// <param name="direct">配置类直接结果</param>
-        /// <param name="jobs">IO 待探任务</param>
         /// <param name="now">当前时刻</param>
-        private static void CollectKokoro(ConfigStore cfg, WorkspaceConfig ws, List<ProbeResult> direct, List<ProbeJob> jobs, long now)
+        private static void CollectTts(ConfigStore cfg, List<ProbeResult> direct, long now)
         {
-            string name = "Kokoro TTS";
-            string script = "";
-            string python = "";
+            string name = "语音合成（TTS）";
+            string endpoint = "";
+            string apiId = "";
             if (cfg != null)
             {
-                script = cfg.Get("py.service.kokoro.script", "");
-                python = cfg.Get("py.service.kokoro.python", "");
-                if (python.Length == 0)
-                {
-                    python = cfg.Get("py.python_path", "");
-                }
+                endpoint = cfg.Get("audio.tts_endpoint", "");
+                apiId = cfg.Get("audio.tts_api_config_id", "");
             }
-            if (script.Length == 0)
+            if (endpoint.Length == 0)
             {
-                direct.Add(MakeResultAt(LevelRequired, name, StateUnconfigured, "未配置（py.service.kokoro.script 空）", TtlStaticMs, now));
+                direct.Add(MakeResultAt(LevelOptional, name, StateUnconfigured, "未配置（audio.tts_endpoint 空——播报不可用）", TtlStaticMs, now));
                 return;
             }
-            if (ws == null)
+            if (apiId.Length == 0)
             {
-                direct.Add(MakeResultAt(LevelRequired, name, StateUnusable, "受控根表不可用——脚本寻址无法解析", TtlStaticMs, now));
+                direct.Add(MakeResultAt(LevelOptional, name, StateUnconfigured, "未配置（audio.tts_api_config_id 空——播报不可用）", TtlStaticMs, now));
                 return;
             }
-            RootResolveResult rr = RootPathResolver.Expand(script, ws.Roots, Environment.CurrentDirectory);
-            if (!rr.Ok)
-            {
-                direct.Add(MakeResultAt(LevelRequired, name, StateUnusable, "脚本寻址非法：" + rr.ErrorCode, TtlStaticMs, now));
-                return;
-            }
-            if (python.Length == 0)
-            {
-                direct.Add(MakeResultAt(LevelRequired, name, StateUnconfigured, "未配置（解释器空——服务与 py.python_path 均未设）", TtlStaticMs, now));
-                return;
-            }
-            ProbeJob job = new ProbeJob();
-            job.Level = LevelRequired;
-            job.Name = name;
-            job.Kind = "paths";
-            job.TtlMs = TtlStaticMs;
-            job.Paths.Add(python);
-            job.Paths.Add(rr.FullPath);
-            jobs.Add(job);
+            direct.Add(MakeResultAt(LevelOptional, name, StateOk, "已配置（端点 + 池配置 ID）", TtlStaticMs, now));
         }
 
         /// <summary>

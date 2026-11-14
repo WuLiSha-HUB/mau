@@ -429,10 +429,10 @@ namespace CH4
         /// <param name="audioName">拼接后单文件名（与块 payload 同源）</param>
         private static void RunSummarySpeak(string catKey, string displayName, string voice, string text, string audioName)
         {
-            IPyService py = null;
-            if (!DataBox.TryResolve<IPyService>(out py) || py == null)
+            ITtsService tts = null;
+            if (!DataBox.TryResolve<ITtsService>(out tts) || tts == null)
             {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——IPyService 未注入", "CHAT");
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——ITtsService 未注入", "CHAT");
                 return;
             }
             IAudioService audio = null;
@@ -450,10 +450,12 @@ namespace CH4
                 segments.Add(chimePath);
             }
             // [段1] 播报名——全局默认音色（先告诉听众是谁在说）
+            // 🔴 莎 2026-11-14 裁：**播报名用全局 audio.voice、正文用该猫外观池 ttsStyle，二者不同属预期**——
+            //    不是缺陷、不要"顺便统一"（有人问过"为什么换声音"，答案是设计如此）。
             string intro = displayName == null || displayName.Length == 0 ? "" : displayName + "说";
             if (intro.Length > 0)
             {
-                string introFile = SpeakOne(py, intro, ResolveGlobalVoice(), catKey);
+                string introFile = SpeakOne(tts, intro, ResolveGlobalVoice(), catKey);
                 if (introFile.Length > 0)
                 {
                     segments.Add(introFile);
@@ -461,7 +463,7 @@ namespace CH4
                 }
             }
             // [段2] 正文——该猫外观音色
-            string bodyFile = SpeakOne(py, text, voice, catKey);
+            string bodyFile = SpeakOne(tts, text, voice, catKey);
             if (bodyFile.Length > 0)
             {
                 segments.Add(bodyFile);
@@ -476,7 +478,7 @@ namespace CH4
             string dir = ResolveSummaryAudioDir();
             if (dir.Length == 0)
             {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录未配置（py.service.kokoro.out_dir）", "CHAT");
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录不可用（audio.out_dir）", "CHAT");
                 return;
             }
             string joined = System.IO.Path.Combine(dir, audioName);
@@ -532,12 +534,12 @@ namespace CH4
         /// <summary>
         /// 单段合成——失败记 Log 即返回空串（不影响后续段）；只产临时文件，播放与拼接归调用方。
         /// </summary>
-        /// <param name="py">py 服务</param>
+        /// <param name="tts">语音合成服务</param>
         /// <param name="text">待合成文本</param>
         /// <param name="voice">音色（空=服务默认）</param>
         /// <param name="catKey">猫 key（日志定位用）</param>
         /// <returns>合成产物路径；失败空串</returns>
-        private static string SpeakOne(IPyService py, string text, string voice, string catKey)
+        private static string SpeakOne(ITtsService tts, string text, string voice, string catKey)
         {
             if (text == null || text.Length == 0)
             {
@@ -546,52 +548,21 @@ namespace CH4
             string dir = ResolveSummaryAudioDir();
             if (dir.Length == 0)
             {
-                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录未配置（py.service.kokoro.out_dir）", "CHAT");
+                LogStore.Add("CatHome4", 2, "轮末总结播报跳过——产物目录不可用（audio.out_dir）", "CHAT");
                 return "";
             }
             string outPath = BuildSummarySegmentPath(dir);
-            Dictionary<string, object> payload = new Dictionary<string, object>();
-            payload["id"] = "summary";
-            payload["op"] = "speak";
-            payload["text"] = NormalizeForSpeech(text);
-            if (voice != null && voice.Length > 0)
+            // 文本规范化（数字 / 符号 / 链接的可朗读化）——交给合成前一步，服务端不做业务层改写
+            string synthError = tts.Synthesize(NormalizeForSpeech(text), voice, outPath);
+            if (synthError.Length > 0)
             {
-                payload["voice"] = voice;
-            }
-            payload["speed"] = 1.0;
-            payload["out"] = outPath;
-            string invokeArgs = JsonUtil.Object(("name", "kokoro"), ("payload", JsonUtil.Serialize(payload)));
-            string reply = py.Invoke(invokeArgs);
-            if (reply == null || reply.Length == 0 || reply.StartsWith("ERR|", StringComparison.Ordinal))
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + (reply == null ? "(无回执)" : reply) + " | cat=" + catKey, "CHAT");
+                LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + synthError + " | cat=" + catKey, "CHAT");
                 return "";
             }
-            string produced = outPath;
-            JsonDocument doc = JsonUtil.Parse(reply, "summary-speak");
-            if (doc == null)
-            {
-                LogStore.Add("CatHome4", 2, "轮末总结合成回执不可解析: " + reply, "CHAT");
-                return "";
-            }
-            try
-            {
-                JsonElement root = doc.RootElement;
-                if (!JsonUtil.GetBool(root, "ok", false))
-                {
-                    LogStore.Add("CatHome4", 2, "轮末总结合成失败: " + reply, "CHAT");
-                    return "";
-                }
-                produced = JsonUtil.GetStr(root, "out", outPath);
-            }
-            finally
-            {
-                doc.Dispose();
-            }
-            return produced;
+            return outPath;
         }
         /// <summary>
-        /// 全局默认音色——audio.voice 落盘值优先，未落盘回落 schema 默认；空=服务默认（zf_001）。
+        /// 全局默认音色——audio.voice 落盘值优先，未落盘回落 schema 默认；空=服务默认音色。
         /// </summary>
         /// <returns>音色名</returns>
         private static string ResolveGlobalVoice()
@@ -673,8 +644,10 @@ namespace CH4
             });
         }
         /// <summary>
-        /// 播报同音替换表——只收明确读错的词（Kokoro 的 ZHG2P 按分词选音，独词形态下「重」读成 zhòng）。
+        /// 播报同音替换表——只收明确读错的词（词表源自 Kokoro 时代：ZHG2P 按分词选音，独词形态下「重」读成 zhòng）。
         /// 词表外一律不动；新增词目须先实测确认读错（判例：「重来/重做/重跑」读 zhòng，「重启/重新/重量/重要」正确）。
+        /// 🔴 A348 判定：云端 TTS 下**保留**——替换后读 chóng，音正确、代价仅字面（播报只出声不显示文本）；
+        /// 云端是否本来就读对，ASR 回读无法区分同形字，须人耳试听才能定，故保守保留。
         /// </summary>
         private static readonly string[][] SpeechReplacements = new string[][]
         {
