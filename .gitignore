@@ -54,7 +54,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# === Node.js 前端测试（CH4.Entry/html/tests）===
+# === Node.js 前端测试（CatHome4/html/tests——依赖不入库，产物区亦不入包）===
 node_modules/
 playwright-report/
 .fe-deploying

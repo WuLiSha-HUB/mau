@@ -9,7 +9,7 @@ namespace Mau.Development
 {
     /// <summary>
     /// 组翻译共享服务——统一构筑链（design-ch4-deploy.md §三）的库形态承载。
-    /// B3 下沉：自 Mau.Cli/CommandProjV3 提取——Mau.Cli 与 CH4.Entry 共用同一实现（消灭双轨）；
+    /// B3 下沉：自 Mau.Cli/CommandProjV3 提取——Mau.Cli 与宿主 CatHome4（原名 CH4.Entry）共用同一实现（消灭双轨）；
     /// 返回结构化结果，输出由调用方格式化（CLI Console / CH4 工具结果）。
     /// 流程：解析 mauproj → 收集成员 → 组翻译（MauCompilerV3.CompileGroup）→ 落盘 public/src/&lt;组&gt;/ → 可选 dotnet build → Flows/FL_&lt;组&gt;.dll。
     /// </summary>

@@ -8,7 +8,7 @@ namespace Mau.Cli
     /// mauproj 组工程命令——统一构筑链（design-ch4-deploy.md §三）。
     /// 组翻译：.mau → BRIKGROUP.cs + 各 FL_*.cs + csproj → 落盘 public/src/&lt;组&gt;/；--build 走 dotnet build → public/app/Flows/FL_&lt;组&gt;.dll。
     /// 单 mau 也建 mauproj（dll 粒度 = mauproj 粒度 = 热重载粒度）——无双轨。
-    /// B3 改造：执行段下沉 Mau.Development.MauGroupBuilder（与 CH4.Entry mau.* 工具共用——消灭双轨）；参数解析与输出格式保持 v0.26 等价。
+    /// B3 改造：执行段下沉 Mau.Development.MauGroupBuilder（与宿主 CatHome4 的 mau.* 工具共用——消灭双轨；宿主原名 CH4.Entry）；参数解析与输出格式保持 v0.26 等价。
     /// </summary>
     public static class CommandProjV3
     {

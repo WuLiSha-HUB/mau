@@ -94,7 +94,9 @@ $htmlTarget = Join-Path $appDir "html"
 if (Test-Path $htmlSource)
 {
     Write-Host "[push-app] html 源区 → 产物区"
-    & robocopy $htmlSource $htmlTarget /MIR /NFL /NDL /NJH /NJS /NP | Out-Null
+    # 排除 tests/node_modules——Windows 本机依赖 66 MB 且含平台相关二进制（lightningcss-win32-x64-msvc 等），
+    # 推给 Linux 只增体积并埋「能跑单元测试、浏览器用例必缺」的假绿（A368 缺口）
+    & robocopy $htmlSource $htmlTarget /MIR /XD node_modules /NFL /NDL /NJH /NJS /NP | Out-Null
     if ($LASTEXITCODE -ge 8)
     {
         throw ("html 镜像失败（robocopy 退出码 " + $LASTEXITCODE + "）")

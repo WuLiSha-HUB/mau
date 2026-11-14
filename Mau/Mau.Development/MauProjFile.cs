@@ -9,7 +9,7 @@ namespace Mau.Development
     /// mauproj 组工程文件（v1.0 收紧版）——行指令式：组/版本/引用/文件。
     /// 对应 design-ch4-deploy.md §四：一组一个 mauproj，翻译+编译统一链的输入声明。
     /// 移除 v2 的 依赖:/bricks: 字段——v3 积木是文本资产，依赖面由翻译器自动扫描。
-    /// B3 下沉：自 Mau.Cli 移入 Mau.Development 共享库（Mau.Cli 与 CH4.Entry 共用——消灭双轨）。
+    /// B3 下沉：自 Mau.Cli 移入 Mau.Development 共享库（Mau.Cli 与宿主 CatHome4 共用——消灭双轨；宿主原名 CH4.Entry）。
     /// </summary>
     public sealed class MauProjFile
     {
