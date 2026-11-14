@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -387,6 +388,89 @@ func (v *ViewStore) TruncateFrom(msgIndex int) {
 	v.pendingTools = nil
 	v.mu.Unlock()
 	v.Rewrite()
+}
+
+// UpdateMessageContent 按消息索引改写派生块载荷——编辑前文后视图与真实前文对齐（返回改写块数）。
+//
+// kind 限定改写面：text → user / systemautomessage / text 块；reason → reason 块；
+// result → toolcard 块。同索引多块并存（reason + text）时按 kind 各改各的，互不串写。
+// 改写后整表重写（编辑是 append-only 的合法例外）；未命中形态（非对象 / 无该字段）不计入。
+func (v *ViewStore) UpdateMessageContent(msgIndex int, kind, content string) int {
+	field := ""
+	switch kind {
+	case "text", "reason":
+		field = "text"
+	case "result":
+		field = "result"
+	default:
+		return 0
+	}
+	v.mu.Lock()
+	changed := 0
+	for _, block := range v.blocks {
+		if block.MsgIndex != msgIndex {
+			continue
+		}
+		if !viewBlockMatchesKind(block.RenderType, kind) {
+			continue
+		}
+		if payload, ok := payloadWithField(block.Payload, field, content); ok {
+			block.Payload = payload
+			changed++
+		}
+	}
+	v.mu.Unlock()
+	if changed > 0 {
+		v.Rewrite()
+	}
+	return changed
+}
+
+// viewBlockMatchesKind 编辑面 → 块型判定（同索引多块并存时按 kind 分流）。
+func viewBlockMatchesKind(renderType, kind string) bool {
+	switch kind {
+	case "text":
+		return renderType == TypeUser || renderType == TypeSystemAutoMessage || renderType == TypeText
+	case "reason":
+		return renderType == TypeReason
+	case "result":
+		return renderType == TypeToolCard
+	}
+	return false
+}
+
+// TruncateAt 视图层按时间戳截断——非前文派生块（轮结算 / 错误 / 重试 / 间隙文本）作切点。
+//
+// 保留面：Timestamp 严格早于 cutoff 的全部块（五类块源同口径）；重写落盘。
+func (v *ViewStore) TruncateAt(cutoff int64) {
+	v.mu.Lock()
+	v.blocks = dropBlocksFrom(v.blocks, cutoff)
+	v.gapTexts = dropBlocksFrom(v.gapTexts, cutoff)
+	v.roundSums = dropBlocksFrom(v.roundSums, cutoff)
+	v.errors = dropBlocksFrom(v.errors, cutoff)
+	v.retries = dropBlocksFrom(v.retries, cutoff)
+	v.pendingTools = nil
+	v.mu.Unlock()
+	v.Rewrite()
+}
+
+// payloadWithField 替换载荷单字段——其余字段按原样（RawMessage）保留。
+func payloadWithField(payload, field, value string) (string, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &obj); err != nil {
+		return "", false
+	}
+	if _, exists := obj[field]; !exists {
+		return "", false
+	}
+	obj[field] = json.RawMessage(jsonStr(value))
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(obj); err != nil {
+		return "", false
+	}
+	return strings.TrimSuffix(buf.String(), "\n"), true
 }
 
 // dropBlocksFrom 丢弃时间戳不早于界限的条目——截断用（保留面 = 界限之前）。

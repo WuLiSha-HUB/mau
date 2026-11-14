@@ -150,6 +150,57 @@ func (c *Context) Clear() {
 	c.markChangedLocked()
 }
 
+// SetMessageContent 替换指定索引消息的正文——编辑前文用（返回是否命中）。
+//
+// 只改 Content：tool_calls / reasoning / 附件 / 工具配对字段一律不动（编辑的是展示与前文正文）。
+// 首条 system 被改时同步提示词缓存；编辑算一次前文变动（刷新 LastChangeAt——编辑也是干活）。
+func (c *Context) SetMessageContent(index int, content string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if index < 0 || index >= len(c.history) {
+		return false
+	}
+	c.history[index].Content = content
+	if c.history[index].Role == RoleSystem {
+		c.systemPrompt = content
+	}
+	c.markChangedLocked()
+	return true
+}
+
+// SetMessageReasoning 替换指定索引 assistant 消息的思考正文——编辑思考块用（返回是否命中）。
+//
+// 只动 ReasoningContent：正文 Content / tool_calls / 附件一律不动；编辑算一次前文变动。
+func (c *Context) SetMessageReasoning(index int, content string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if index < 0 || index >= len(c.history) {
+		return false
+	}
+	if c.history[index].Role != RoleAssistant {
+		return false
+	}
+	c.history[index].ReasoningContent = content
+	c.markChangedLocked()
+	return true
+}
+
+// CountBefore 统计 CreatedAt 严格早于给定时刻的前缀消息条数——回滚切点解析。
+//
+// 前缀语义：遇到第一条 CreatedAt >= stamp 即停（消息按时间升序）。
+func (c *Context) CountBefore(stamp int64) int {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	count := 0
+	for _, msg := range c.history {
+		if msg.CreatedAt >= stamp {
+			break
+		}
+		count++
+	}
+	return count
+}
+
 // ReplaceMessages 以外部历史替换当前上下文（重启恢复 / 回卷 / 重建）。
 //
 // 结构修复：system 唯一（取第一条）、tool 无配对 ID 丢弃、声明无结果按声明序在结果块末尾补占位。

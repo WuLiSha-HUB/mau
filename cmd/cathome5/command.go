@@ -22,7 +22,11 @@ import (
 //
 // 已落地：`Chat ` 投递、`session.new` / `session.new <内容>` 重建（P3-d d3-a）、
 // `cat.list` / `cat.info` 状态查询（d3-b）、`cat.*` / `catcfg.*` 管理族（c-6：单猫形态）与 `delay.*`（见 delaycommand.go）、
-// `session.rollback <msgIndex>` 回滚（截断唯一通道——前文 / 视图 / Note / 会话重置同批）。
+// `session.rollback <msgIndex>` 回滚（任意节点切点——前文 / 视图 / Note / 会话重置同批）、
+// `session.rollbackat <blockTs>` 按视图块时间戳回滚（非前文派生块切点）、
+// `session.edit <idx> <正文>` 编辑前文、`session.editreason <idx> <正文>` 编辑思考内容、
+// `session.resend <idx> <正文>` 编辑用户消息并重发、
+// `session.editrewind <idx> <正文>` / `session.editreasonrewind <idx> <正文>` 编辑并回滚到该条（丢弃其后）。
 // 未落地：session clear / session count / note.* / session.fork / reload（归 P3-d d3 尾部）。
 
 // sessionNewPrefix session.new 带初始消息的前缀（含尾空格，C# line.Substring(12) 同口径）。
@@ -30,6 +34,17 @@ const sessionNewPrefix = "session.new "
 
 // sessionRollbackPrefix 会话回滚指令前缀（含尾空格——对齐 C# line.Substring(17).Trim()）。
 const sessionRollbackPrefix = "session.rollback "
+
+// sessionEditPrefix / sessionEditReasonPrefix / sessionResendPrefix / sessionRollbackAtPrefix 前文编辑族指令前缀（含尾空格）。
+// sessionEditRewindPrefix / sessionEditReasonRewindPrefix 编辑并回滚族（改完截断到该条，丢弃其后）。
+const (
+	sessionEditPrefix             = "session.edit "
+	sessionEditReasonPrefix       = "session.editreason "
+	sessionResendPrefix           = "session.resend "
+	sessionRollbackAtPrefix       = "session.rollbackat "
+	sessionEditRewindPrefix       = "session.editrewind "
+	sessionEditReasonRewindPrefix = "session.editreasonrewind "
+)
 
 // catCfgGetPrefix / catCfgSetPrefix 每猫配置指令前缀（含尾空格——对齐 C# line.Substring(12).Trim()）。
 const (
@@ -128,6 +143,18 @@ func (r *commandRouter) Handle(text string) bool {
 		return r.sessionNew(strings.TrimSpace(strings.TrimPrefix(text, sessionNewPrefix)))
 	case strings.HasPrefix(text, sessionRollbackPrefix):
 		return r.sessionRollbackOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackPrefix)))
+	case strings.HasPrefix(text, sessionRollbackAtPrefix):
+		return r.sessionRollbackAtOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackAtPrefix)))
+	case strings.HasPrefix(text, sessionEditPrefix):
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditPrefix)), "edit")
+	case strings.HasPrefix(text, sessionEditReasonPrefix):
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonPrefix)), "reason")
+	case strings.HasPrefix(text, sessionResendPrefix):
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionResendPrefix)), "resend")
+	case strings.HasPrefix(text, sessionEditRewindPrefix):
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditRewindPrefix)), "editrewind")
+	case strings.HasPrefix(text, sessionEditReasonRewindPrefix):
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonRewindPrefix)), "reasonrewind")
 	case strings.HasPrefix(text, catCfgGetPrefix):
 		return r.catCfgGetCommand(strings.TrimSpace(strings.TrimPrefix(text, catCfgGetPrefix)))
 	case strings.HasPrefix(text, catCfgSetPrefix):
@@ -194,6 +221,18 @@ func (r *commandRouter) HandleFor(catID string, sess *session.Session, text stri
 		return r.sessionNewFor(catID, sess, strings.TrimSpace(strings.TrimPrefix(text, sessionNewPrefix)), "")
 	case strings.HasPrefix(text, sessionRollbackPrefix):
 		return r.sessionRollbackOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackPrefix)))
+	case strings.HasPrefix(text, sessionRollbackAtPrefix):
+		return r.sessionRollbackAtOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackAtPrefix)))
+	case strings.HasPrefix(text, sessionEditPrefix):
+		return r.sessionEditOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionEditPrefix)), "edit")
+	case strings.HasPrefix(text, sessionEditReasonPrefix):
+		return r.sessionEditOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonPrefix)), "reason")
+	case strings.HasPrefix(text, sessionResendPrefix):
+		return r.sessionEditOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionResendPrefix)), "resend")
+	case strings.HasPrefix(text, sessionEditRewindPrefix):
+		return r.sessionEditOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionEditRewindPrefix)), "editrewind")
+	case strings.HasPrefix(text, sessionEditReasonRewindPrefix):
+		return r.sessionEditOn(sess, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonRewindPrefix)), "reasonrewind")
 	}
 	return r.Handle(text)
 }
@@ -253,6 +292,96 @@ func (r *commandRouter) sessionRollbackOn(sess *session.Session, arg string) boo
 	}
 	r.log(level, "session.rollback | "+result, "CHAT")
 	return true
+}
+
+// sessionRollbackAtOn 按视图块时间戳回滚——非前文派生块（轮结算 / 错误 / 重试 / 间隙文本）切点。
+//
+// 指令已识别即受理（返回 true）；失败以 ERR| 文本进日志（忙 / 时间戳非法两类）。
+func (r *commandRouter) sessionRollbackAtOn(sess *session.Session, arg string) bool {
+	if sess == nil {
+		r.log(2, "session.rollbackat | 会话未就绪（参数 "+arg+"）", "CHAT")
+		return false
+	}
+	ts, err := strconv.ParseInt(strings.TrimSpace(arg), 10, 64)
+	if err != nil {
+		r.log(2, "session.rollbackat | 参数非法: "+arg+"（需要块时间戳）", "CHAT")
+		return true
+	}
+	result := sess.RollbackAt(ts)
+	level := 1
+	if strings.HasPrefix(result, "ERR|") {
+		level = 2
+	}
+	r.log(level, "session.rollbackat | "+result, "CHAT")
+	return true
+}
+
+// sessionEditOn 编辑前文内容——mode：edit（正文 / 工具结果）/ reason（思考）/ resend（用户消息编辑重发）。
+//
+// 参数形态 `<消息索引> <新正文>`：索引与正文之间以第一个空白分隔，正文原样保留（可含换行）。
+func (r *commandRouter) sessionEditOn(sess *session.Session, arg, mode string) bool {
+	name := "session.edit"
+	switch mode {
+	case "reason":
+		name = "session.editreason"
+	case "resend":
+		name = "session.resend"
+	case "editrewind":
+		name = "session.editrewind"
+	case "reasonrewind":
+		name = "session.editreasonrewind"
+	}
+	if sess == nil {
+		r.log(2, name+" | 会话未就绪（参数 "+shortArgText(arg)+"）", "CHAT")
+		return false
+	}
+	idx, content, ok := splitIndexedText(arg)
+	if !ok {
+		r.log(2, name+" | 参数非法: "+shortArgText(arg)+"（需要 <消息索引> <新正文>）", "CHAT")
+		return true
+	}
+	var result string
+	switch mode {
+	case "reason":
+		result = sess.EditReasoning(idx, content)
+	case "resend":
+		result = sess.ResendMessage(idx, content)
+	case "editrewind":
+		result = sess.EditMessageAndRewind(idx, content)
+	case "reasonrewind":
+		result = sess.EditReasoningAndRewind(idx, content)
+	default:
+		result = sess.EditMessage(idx, content)
+	}
+	level := 1
+	if strings.HasPrefix(result, "ERR|") {
+		level = 2
+	}
+	r.log(level, name+" | "+result, "CHAT")
+	return true
+}
+
+// splitIndexedText 拆分 `<索引> <正文>`——正文保留原样（不 trim 尾部，可含换行与空格）。
+func splitIndexedText(arg string) (int, string, bool) {
+	arg = strings.TrimLeft(arg, " \t")
+	sp := strings.IndexAny(arg, " \t\r\n")
+	if sp <= 0 {
+		return 0, "", false
+	}
+	idx, err := strconv.Atoi(strings.TrimSpace(arg[:sp]))
+	if err != nil {
+		return 0, "", false
+	}
+	return idx, arg[sp+1:], true
+}
+
+// shortArgText 诊断文本截断——日志不落整段正文（编辑内容可达数千字）。
+func shortArgText(text string) string {
+	runes := []rune(text)
+	if len(runes) <= 48 {
+		return text
+	}
+	return string(runes[:48]) + "…"
 }
 
 // loadCfgFor 读取目标猫配置——失败按默认值 + 出声（不阻断重建）。
