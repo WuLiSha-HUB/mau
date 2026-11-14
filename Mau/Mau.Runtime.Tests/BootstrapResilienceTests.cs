@@ -124,6 +124,10 @@ namespace Mau.Runtime.Tests
         [Fact]
         public void WorkspaceLoad_ResidentRootUnreachable_FallsBackToDefaultRoot()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.Skip("借「不存在的盘符」制造不可达——Linux 无盘符，改用其它手段属另一套用例");
+            }
             string dir = NewTempDir("ch4ws");
             try
             {

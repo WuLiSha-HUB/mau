@@ -246,10 +246,11 @@ namespace Mau.Development.Tests
             Directory.CreateDirectory(subDir);
             File.WriteAllText(Path.Combine(projDir, "Main.cs"), BadText(), new UTF8Encoding(true));
             File.WriteAllText(Path.Combine(subDir, "Sub.cs"), BadText(), new UTF8Encoding(true));
+            // 排除式用平台分隔符——MSBuild glob 在 Windows 吃反斜杠、在 Linux 只认正斜杠
             string csproj = "<Project Sdk=\"Microsoft.NET.Sdk\">" + Environment.NewLine +
                 "  <PropertyGroup>" + Environment.NewLine +
                 "    <TargetFramework>net10.0</TargetFramework>" + Environment.NewLine +
-                "    <DefaultItemExcludes>$(DefaultItemExcludes);Domain.Sub\\**</DefaultItemExcludes>" + Environment.NewLine +
+                "    <DefaultItemExcludes>$(DefaultItemExcludes);Domain.Sub" + Path.DirectorySeparatorChar + "**</DefaultItemExcludes>" + Environment.NewLine +
                 "  </PropertyGroup>" + Environment.NewLine +
                 "</Project>" + Environment.NewLine;
             File.WriteAllText(Path.Combine(projDir, "Domain.csproj"), csproj, new UTF8Encoding(true));

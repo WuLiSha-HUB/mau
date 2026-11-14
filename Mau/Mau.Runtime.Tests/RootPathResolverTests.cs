@@ -123,6 +123,10 @@ namespace Mau.Runtime.Tests
         [Fact]
         public void Expand_DrivePath_TreatedAsPlainPath()
         {
+            if (!OperatingSystem.IsWindows())
+            {
+                Assert.Skip("盘符是 Windows 概念——Linux 无驱动器语义，本断言不适用");
+            }
             string baseDir = Path.Combine(Path.GetTempPath(), "mau_root_drive_" + Guid.NewGuid().ToString("N"));
             string rw = Path.Combine(baseDir, "rw");
             string ro = Path.Combine(baseDir, "ro");
