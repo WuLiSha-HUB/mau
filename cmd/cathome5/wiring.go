@@ -73,6 +73,10 @@ func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsRes
 	session.SessionMetaPathProvider = func(key string) string {
 		return filepath.Join(dataRoot, "sessions", key, key+".session.json")
 	}
+	// 轮续跑现场——sessions/<id>/<id>.pending-round.json（轮首写 / 轮末清；新宿主重启后读它续跑一次）
+	session.PendingRoundPathProvider = func(key string) string {
+		return filepath.Join(dataRoot, "sessions", key, key+".pending-round.json")
+	}
 	messages, _ := sessionStore.TryLoad()
 	ctx := session.NewContext()
 	if len(messages) > 0 {
@@ -368,6 +372,11 @@ func attachSessionRuntime(w *sessionWiring, toolRT *toolRuntime, store *config.S
 	w.DBSvc = toolRT.DBSvc
 	// 工具工单面——非内置工具 Post → 组 Flow 认领执行 → 100ms Tick 收回执
 	sess.SetToolOffice(&oaToolOffice{oa: toolRT.OA})
+	// 语料热重载面（L1+L2）——工具 host-reload / host-flows 与 POST /api/v1/flow/reload 共用同一执行面
+	// （唯一执行体 = toolRuntime.ReloadFlow；本处只注入，不复制逻辑）。
+	if toolRT.Reloader != nil {
+		sess.SetFlowRuntime(toolRT.ReloadFlow, toolRT.Reloader.FlowsReport)
+	}
 	// 轮末总结工单面（SVC/LLMSimpleRequest）与播报面（kokoro → audio.Join → Enqueue）
 	sess.SetRoundSummaryOffice(&oaRoundSummaryOffice{oa: toolRT.OA})
 	sess.SetRoundSummarySpeaker(newSummarySpeaker(toolRT.Py, toolRT.Audio, func(key string) string {

@@ -121,6 +121,10 @@ type roundState struct {
 	toolOffice ToolOffice
 	// infoProvider info 内置工具数据源（nil = 明示不可用）
 	infoProvider func() string
+	// flowReloader host-reload 执行面（nil = 明示不可用——语料级热重载归机制面注入）
+	flowReloader func(name, mode string) string
+	// flowLister host-flows 执行面（nil = 明示不可用）
+	flowLister func() string
 	// cacheUserID 缓存隔离键（空 = 请求不带 user_id）
 	cacheUserID string
 
@@ -449,6 +453,8 @@ func (s *Session) resetRoundCounters() {
 	// 轮末总结——本轮缓冲清零（全部 user / 全部 text 按序累积）
 	s.resetRoundSummaryBuffers()
 	s.enterPhase(PhaseLink)
+	// 轮级续跑现场——轮首落盘（宿主重启打断在途轮时，新宿主据此自动续跑一次）
+	s.MarkRoundPending()
 }
 
 // launchLlm 启动 LLM 流——消息序列固化 + 后台消费 + 链路态。
@@ -940,6 +946,8 @@ func (s *Session) closeRound() {
 	if s.Views != nil {
 		s.Views.AppendRoundSummary(s.BuildRoundSumJSON(), sumTs)
 	}
+	// 轮级续跑现场——正常终态即清（未终态的早退路径不清：timeback / Note 拉起会续轮）
+	s.ClearPendingRound()
 	// 轮末总结——轮末调度总结服务（开关开 + 配置可用；块固定插在 roundsum 之后 = ts + 1）
 	s.PostRoundSummary(sumTs + 1)
 	r := s.roundState()
@@ -1000,6 +1008,8 @@ func (s *Session) pauseFinalize() {
 	// A196 临时区——中断收尾写空态（未落持久块的内容随覆盖消失，不进前文 / 存档）
 	s.sealReasonStream()
 	s.resetRetryView()
+	// 用户中止不是重启——现场清掉，下次启动不自动续跑被打断的轮
+	s.ClearPendingRound()
 }
 
 // sealReasonStream 思考段终结——临时区写空态（A196 状态投影：写 empty 即清面板）。

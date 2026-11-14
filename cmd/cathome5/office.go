@@ -1,20 +1,24 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"cathome5/host/config"
 	"cathome5/host/llm"
 	"cathome5/host/observe"
 	"cathome5/host/session"
+	"cathome5/host/toolpool"
 	"cathome5/mau/bricks"
 	maudb "cathome5/mau/db"
 	"cathome5/mau/fs"
+	"cathome5/mau/graph"
 	"cathome5/mau/runtime"
 	"cathome5/mau/toolset"
 )
@@ -156,6 +160,16 @@ type toolRuntime struct {
 	Py *bricks.PyService
 	// Mau Mau 工具链执行面（MauCat 四件——verify 原生 front / gen·proj 经 cs 桥 / setup SetUp.exe）
 	Mau *bricks.MauService
+	// Bricks 运行时积木表（热重载重建图时与启动期同一份）
+	Bricks graph.BrickSet
+	// CorpusDir 语料根（热重载按名定位组目录）
+	CorpusDir string
+	// BricksIndex 积木索引路径（热重载的门禁数据源）
+	BricksIndex string
+	// Reloader 语料热重载执行面（nil = 语料目录未定位——热重载不可用）
+	Reloader *toolset.Reloader
+	// ReloadTools 工具面同代重建（L2）——重读 Bricks 定义 → 池 + 注册表原子换；返回新注册表或失败原因
+	ReloadTools func() (*toolpool.Registry, string)
 }
 
 // buildToolRuntime 装配机制面——DataBox / OA / Runner / 积木表 / 组注册。
@@ -406,7 +420,116 @@ func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir,
 	for _, group := range groups {
 		result.Runner.RegisterFlow(group.Graph, group.Name)
 	}
+	// 热重载面——门禁 / 迁移 / 换图归 toolset；本处只接线（积木表与启动期同一份）
+	result.Bricks = set
+	result.CorpusDir = corpusDir
+	result.BricksIndex = bricksIndex
+	result.Reloader = toolset.NewReloader(corpusDir, bricksIndex, set, result.Runner, result.OA, report)
+	result.Reloader.Prime(groups)
+	// 工具面同代重建（L2）——定义文本 → 池 → 注册表整体换代（ReadFromBricks 每次重读磁盘，无缓存可失效）
+	result.ReloadTools = func() (*toolpool.Registry, string) {
+		tools := toolpool.BuildWith(bricksIndex, func(level int, message, category string) {
+			report(level, message)
+		})
+		if tools.BrickError != "" {
+			return nil, tools.BrickError
+		}
+		return tools.Registry, ""
+	}
 	return result
+}
+
+// flowReloadJSON 把重载结果编码为回执 JSON——工具 host-reload 与 /api/v1/flow/reload 同一份事实。
+func flowReloadJSON(result toolset.ReloadResult) string {
+	payload := map[string]any{
+		"ok":         result.Error == "",
+		"group":      result.Group,
+		"mode":       result.Mode,
+		"gen":        result.Gen,
+		"hash":       result.CorpusHash,
+		"wires":      result.Wires,
+		"states":     result.States,
+		"boxes":      result.Boxes,
+		"carried":    result.Carried,
+		"inFlight":   result.InFlight,
+		"pending":    result.Pending,
+		"registered": result.Registered,
+		"busyWires":  result.BusyWires,
+		"elapsedMs":  result.Elapsed.Milliseconds(),
+	}
+	if result.Error != "" {
+		payload["error"] = result.Error
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return `{"ok":false,"error":"RELOAD_MARSHAL","message":"回执编码失败"}`
+	}
+	return string(encoded)
+}
+
+// StartCorpusWatcher 启动开发态语料监听（L4）——interval 轮询内容哈希，变化即按组重载。
+//
+// 三条纪律：默认不启用（生产态静默重载是灾难）；变化投递到主循环执行（换图必须与 Tick 串行）；
+// 哈希读不到按「未变化」处置（不猜）。返回停止函数（幂等安全）。
+func (t *toolRuntime) StartCorpusWatcher(interval time.Duration) func() {
+	if t == nil || t.Reloader == nil || interval <= 0 {
+		return func() {}
+	}
+	stop := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		last := map[string]string{}
+		for _, name := range t.Runner.Names() {
+			last[name] = toolset.CorpusHash(t.CorpusDir, name)
+		}
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				for _, name := range t.Runner.Names() {
+					current := toolset.CorpusHash(t.CorpusDir, name)
+					if current == "" || current == last[name] {
+						continue
+					}
+					last[name] = current
+					group := name
+					t.Runner.PostToMain(func() {
+						t.ReloadFlow(group, toolset.ModeFresh)
+					})
+				}
+			}
+		}
+	}()
+	return func() {
+		select {
+		case <-stop:
+		default:
+			close(stop)
+		}
+	}
+}
+
+// ReloadFlow 重载单个语料组并做工具面同代重建——host-reload 与 /api/v1/flow/reload 的唯一执行体。
+//
+// L2 语义：图与 tools[] 定义同代刷新；已开会话的声明面不动（注入面新会话生效，与 C# 两面语义一致）。
+func (t *toolRuntime) ReloadFlow(name, mode string) string {
+	if t == nil || t.Reloader == nil {
+		return `{"ok":false,"error":"FLOW_RELOAD_UNAVAILABLE","message":"语料热重载面未接线"}`
+	}
+	result := t.Reloader.Reload(name, mode)
+	if result.Error == "" && !result.Pending && t.ReloadTools != nil {
+		reg, toolsErr := t.ReloadTools()
+		if toolsErr != "" {
+			if t.Reloader.Logf != nil {
+				t.Reloader.Logf(2, "工具面同代重建失败（保留旧面）："+toolsErr)
+			}
+		} else {
+			session.IsPrivilegedTool = reg.IsPrivilegedName
+		}
+	}
+	return flowReloadJSON(result)
 }
 
 // buildFileService 从受控根表构造文件工具服务——Base = workspace 根，RecycleRoot 固定 tools/CatTemp/fs_recycle。

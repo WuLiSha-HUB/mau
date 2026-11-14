@@ -109,15 +109,20 @@ type CatDefault struct {
 	DefaultInjectDisabled []string `json:"defaultInjectDisabled"`
 }
 
-// ResolveTplEnabledInject 默认前文「启用集」——DefaultInjectList 排除 DefaultInjectDisabled。
+// MountSwitchPrefix 模板前文清单里的「项目挂载段开关」前缀。
+//
+// 形态 `@mount:<段>[@<项目名>]`，段 = job / l3 / design-status / glossary / project / todo。
+// 只作勾选位——不进新猫继承集（见 ResolveTplEnabledInject）；挂载时按勾选状态决定该段挂不挂
+// （不带项目名 = 对所有项目生效，带 @项目名 = 只对该项目生效）。
+const MountSwitchPrefix = "@mount:"
+
+// ResolveTplEnabledInject 默认前文「启用集」——DefaultInjectList 排除 DefaultInjectDisabled，
+// 并剔除挂载段开关位（MountSwitchPrefix）。
 //
 // 新猫继承、跟随广播、点亮即同步三处共用本出口（单点真相源，对齐 C# ResolveTplEnabledInject）。
 func ResolveTplEnabledInject(tpl *CatDefault) []string {
 	if tpl == nil || len(tpl.DefaultInjectList) == 0 {
 		return []string{}
-	}
-	if len(tpl.DefaultInjectDisabled) == 0 {
-		return append([]string{}, tpl.DefaultInjectList...)
 	}
 	disabled := make(map[string]bool, len(tpl.DefaultInjectDisabled))
 	for _, path := range tpl.DefaultInjectDisabled {
@@ -128,6 +133,10 @@ func ResolveTplEnabledInject(tpl *CatDefault) []string {
 	enabled := make([]string, 0, len(tpl.DefaultInjectList))
 	for _, path := range tpl.DefaultInjectList {
 		if path == "" || disabled[path] {
+			continue
+		}
+		// 挂载段开关位只服务项目挂载过滤，不是基线前文——继承时剔除
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(path)), MountSwitchPrefix) {
 			continue
 		}
 		enabled = append(enabled, path)

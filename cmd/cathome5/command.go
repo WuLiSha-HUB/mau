@@ -239,9 +239,16 @@ func (r *commandRouter) loadCfgFor(catID string) *config.CatCfg {
 }
 
 // rebuildSpecsFor 重算声明面——授权面按最新名单实时刷新，声明面按名单裁剪。
+//
+// 注册表取「当前快照」而非启动期快照：工具面热重载（L2）换代后，新会话拿到新声明面，
+// 已开会话仍是旧声明面（注入面新会话生效——与 C# 两面语义一致，不偷偷热改在跑的会话）。
 func (r *commandRouter) rebuildSpecsFor(catID string, sess *session.Session, cfg *config.CatCfg) []session.ToolSpec {
-	authorized := applySessionAuth(r.Registry, sess, catID, cfg.ToolNames)
-	defs := r.Registry.FilterToolSpecs(authorized, toolpool.IsDefaultCatKey(catID))
+	registry := r.Registry
+	if current := toolpool.CurrentRegistry(); current != nil && len(current.GetAllNames()) > 0 {
+		registry = current
+	}
+	authorized := applySessionAuth(registry, sess, catID, cfg.ToolNames)
+	defs := registry.FilterToolSpecs(authorized, toolpool.IsDefaultCatKey(catID))
 	specs := make([]session.ToolSpec, 0, len(defs))
 	for _, def := range defs {
 		specs = append(specs, session.ToolSpec{Name: def.Name, Description: def.Description, ParametersJSON: def.ParametersJSON})

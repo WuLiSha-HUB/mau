@@ -27,6 +27,12 @@ import (
 // hostImageName 宿主进程映像名（tasklist IMAGENAME 过滤值）。
 const hostImageName = "cathome5.exe"
 
+// strayImageNames 运行区残留进程映像名——宿主 + cs 桥（桥名复用 deploy.go 的 csBridgeExeName，单点）。
+//
+// 桥由宿主按需拉起（office.go），常驻运行区并持有目录句柄：只清宿主不清桥 ⇒
+// 原子切换 rename target→_old 仍失败（2026-11-14 17:11 判例：exit=3 未替换 + intent done）。
+var strayImageNames = []string{hostImageName, csBridgeExeName}
+
 // hostProcess 一条宿主进程记录。
 type hostProcess struct {
 	// PID 进程号
@@ -76,9 +82,41 @@ func findHostsInDirectoryImpl(dir string) ([]int, error) {
 	return pids, nil
 }
 
+// listStrayProcesses 枚举目标运行区内的残留进程（宿主 + cs 桥）——部署清扫面用。
+//
+// 与 findHostsInDirectoryImpl 的分工：那个只认宿主（自启前检 / 闸门前置——桥不算「已有实例」）；
+// 本函数认全清扫面（改名要的是「目录无人持有」）。
+func listStrayProcesses(dir string) ([]hostProcess, error) {
+	self := os.Getpid()
+	strays := make([]hostProcess, 0, 2)
+	for _, image := range strayImageNames {
+		pids, err := listPIDsByImage(image)
+		if err != nil {
+			return nil, err
+		}
+		for _, pid := range pids {
+			if pid == self {
+				continue
+			}
+			exe, queryErr := queryProcessImagePath(uint32(pid))
+			if queryErr != nil {
+				continue
+			}
+			if !strings.EqualFold(filepath.Base(exe), image) {
+				continue
+			}
+			if !hostPathUnder(exe, dir) {
+				continue
+			}
+			strays = append(strays, hostProcess{PID: pid, Exe: exe})
+		}
+	}
+	return strays, nil
+}
+
 // listHostProcesses 枚举本机宿主进程（映像名过滤 + 全路径查询；排除当前进程——继电器自身不是占用者）。
 func listHostProcesses(logf func(level int, message, category string)) ([]hostProcess, error) {
-	pids, err := listHostPIDs()
+	pids, err := listPIDsByImage(hostImageName)
 	if err != nil {
 		return nil, err
 	}
@@ -104,9 +142,9 @@ func listHostProcesses(logf func(level int, message, category string)) ([]hostPr
 	return hosts, nil
 }
 
-// listHostPIDs 按映像名枚举本机进程 pid（tasklist CSV；无匹配时回本地化 INFO 行——非引号开头，跳过）。
-func listHostPIDs() ([]int, error) {
-	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+hostImageName, "/FO", "CSV", "/NH").Output()
+// listPIDsByImage 按映像名枚举本机进程 pid（tasklist CSV；无匹配时回本地化 INFO 行——非引号开头，跳过）。
+func listPIDsByImage(image string) ([]int, error) {
+	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+image, "/FO", "CSV", "/NH").Output()
 	if err != nil {
 		return nil, err
 	}
@@ -247,17 +285,19 @@ var (
 	})
 )
 
-// sweepHostsInDirectoryImpl 结束目标运行区内的宿主实例——对齐 CH4 SetUp/Program.Relaunch.cs KillHostsInDirectory。
+// sweepHostsInDirectoryImpl 结束目标运行区内的残留进程（宿主 + cs 桥）——对齐 CH4 SetUp/Program.Relaunch.cs KillHostsInDirectory。
 // 判例 2026-11-07：同一运行区并存多个宿主（历次部署失败自启 + 手动启动），发起方 pid 自退后其余实例仍持 dll
-// 与目录 cwd → 原子切换改名必失败；它们都是待替换运行区里的旧实例，属部署链自身的清理面。
+// 与目录 cwd → 原子切换改名必失败；判例 2026-11-14 17:11：桥（MauCsBridge.exe）同样持目录句柄。
+// 它们都是待替换运行区里的旧进程，属部署链自身的清理面（桥无状态，新宿主按需重拉）。
 // 先请求正常关闭（主窗口 WM_CLOSE，≤2 s），仍在则强制结束（≤3 s）；有强杀则 settle 1 s。逐条出声。
 func sweepHostsInDirectoryImpl(dir string) (hostSweepResult, error) {
 	var res hostSweepResult
-	pids, err := findHostsInDirectoryImpl(dir)
+	strays, err := listStrayProcesses(dir)
 	if err != nil {
 		return res, err
 	}
-	for _, pid := range pids {
+	for _, stray := range strays {
+		pid := stray.PID
 		res.PIDs = append(res.PIDs, pid)
 		if closeMainWindowGracefully(pid) && waitProcessGoneMS(pid, closeMainWindowWaitMS) {
 			res.Graceful++

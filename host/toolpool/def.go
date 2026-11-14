@@ -64,6 +64,25 @@ func newPool() *Pool {
 // current 是当前池快照（唯一可变引用，写侧整体替换）。
 var current atomic.Pointer[Pool]
 
+// currentRegistry 是当前工具注册表快照（与池同代——整体换引用，读侧零锁）。
+var currentRegistry atomic.Pointer[Registry]
+
+// CurrentRegistry 返回当前注册表快照（永不为 nil——首次访问给空表）。
+func CurrentRegistry() *Registry {
+	if r := currentRegistry.Load(); r != nil {
+		return r
+	}
+	return &Registry{entries: map[string]Entry{}, order: []string{}}
+}
+
+// StoreRegistry 原子换注册表引用——工具面热重载的唯一写入口。
+func StoreRegistry(reg *Registry) {
+	if reg == nil {
+		return
+	}
+	currentRegistry.Store(reg)
+}
+
 // Current 返回当前池快照（永不为 nil；首次访问给空池）。
 func Current() *Pool {
 	if p := current.Load(); p != nil {

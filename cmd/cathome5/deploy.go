@@ -13,6 +13,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"cathome5/host/admin"
 )
 
 // 本文件是 CAT5 部署链（D2）——同 exe 子命令 `cathome5 deploy prepare|deploy|relaunch`。
@@ -314,17 +316,18 @@ func (r *deployRun) deploy() error {
 		if err := os.RemoveAll(targetOld); err != nil {
 			return fmt.Errorf("清理 %s 失败: %w", targetOld, err)
 		}
-		if err := os.Rename(r.o.Target, targetOld); err != nil {
-			return fmt.Errorf("切换失败（target→_old）: %w", err)
+		// 重试 20×500 ms = 10 s 窗口（瞬时占用重试即过；常驻占用重试到底再报，附带次数）
+		if err := renameWithRetry(r.o.Target, targetOld, 20, 500*time.Millisecond); err != nil {
+			return fmt.Errorf("切换失败（target→_old，已重试 20×500 ms）: %w", err)
 		}
 		r.add("switch", true, r.o.Target+" → "+targetOld)
 	}
-	if err := os.Rename(targetNew, r.o.Target); err != nil {
+	if err := renameWithRetry(targetNew, r.o.Target, 10, 500*time.Millisecond); err != nil {
 		// 换回旧版本，避免目标目录缺失
 		if _, statErr := os.Stat(targetOld); statErr == nil {
 			_ = os.Rename(targetOld, r.o.Target)
 		}
-		return fmt.Errorf("切换失败（_new→target）: %w", err)
+		return fmt.Errorf("切换失败（_new→target，已重试 10×500 ms）: %w", err)
 	}
 	r.add("switch", true, targetNew+" → "+r.o.Target+"（版本 "+version+"）")
 	r.artifacts["version"] = version
@@ -335,7 +338,10 @@ func (r *deployRun) deploy() error {
 //
 // 对齐 CH4 T5：prepare 未通过 → 跳过 deploy、运行区保持现状（新宿主仍起来，版本不变）；
 // 已替换但新版本起不来 → 回退 _old；新版本与回退版本均起不来 → 需人工介入。
-func (r *deployRun) relaunch() int {
+func (r *deployRun) relaunch() (exitCode int) {
+	// 部署结论写进重启现场（relay 侧最后一步）——重启链走完 ≠ 运行区被替换，
+	// 两者必须分开可查（2026-11-14 17:11 判例：exit=3 未替换 + intent done）。
+	defer func() { r.reportDeployResult(exitCode) }()
 	mode := r.o.Mode
 	if mode == "" {
 		mode = "incr"
@@ -348,9 +354,16 @@ func (r *deployRun) relaunch() int {
 	if r.o.WaitPID > 0 {
 		if err := waitProcessExit(r.o.WaitPID, 120*time.Second); err != nil {
 			r.add("wait", false, err.Error())
+			// 观测缺口修复（2026-11-14 判例）：此前直接 return，失败只有控制台、无报告文件——
+			// 「多步链的部分成功在报告面与完全成功不可区分」的反面：失败也必须留盘。
+			r.writeReport("relaunch", deployExitNotReplaced, true)
 			return deployExitNotReplaced
 		}
 		r.add("wait", true, "旧进程 "+strconv.Itoa(r.o.WaitPID)+" 已退出")
+		// 句柄释放 settle——旧宿主的子进程与其自身句柄在进程消失后仍需片刻才完全关闭；
+		// 不给窗口直接改名会撞「being used by another process」（2026-11-14 17:11 判例）
+		time.Sleep(1500 * time.Millisecond)
+		r.add("settle", true, "等句柄释放 1.5 s（旧宿主子进程 / 目录句柄）")
 	}
 	// [段1b] 同目录残留实例清扫（CH4 SetUp/Program.Relaunch.cs 段1b / KillHostsInDirectory 对位）——
 	//        只有发起方 pid 会自退；历次失败自启 / 手动启动的实例仍持 dll 与目录 cwd → 原子切换改名必失败，
@@ -398,6 +411,13 @@ func (r *deployRun) relaunch() int {
 	}
 	push := buildRestartPush(mode, prepOK, replaced, version, r.o.Target, r.o.PushIn, r.ensureReportPath(), time.Since(r.startedAt))
 	r.writeReport("relaunch", -1, false)
+	// [段4-intent] 预写部署结论——必须在起新实例之前：新宿主启动即 Settle 判 done，
+	// 那时若还没读到部署结论，done 就只剩「重启链走完」一个语义（18:03 判例：deployExit 缺失）。
+	preResult := deployExitNotReplaced
+	if replaced || mode == "host" {
+		preResult = deployExitOK
+	}
+	r.reportDeployResult(preResult)
 	// [段4c] 自启前检（CH4 1.8.266 同因）——目标运行区已有宿主实例在跑：跳过自启，不新增第二个实例。
 	//        判例 2026-11-13：deploy 原子切换失败后自启又拉起一个，运行区并存两个宿主（服务假象 + dll 持锁）。
 	runningHosts, scanErr := hostScanFindInDir(r.o.Target)
@@ -426,6 +446,23 @@ func (r *deployRun) relaunch() int {
 		return deployExitOK
 	}
 	return deployExitNotReplaced
+}
+
+// reportDeployResult 把接力部署结论写进重启现场（relay 侧）——只写停 registered / launching 的现场。
+//
+// 现场路径 = <data-root>/runtime/restart-intent.json，与宿主侧 NewRestartIntentStore 同源；
+// data-root 为空（人工直接跑 deploy）时跳过——那时也没有重启现场可写。
+func (r *deployRun) reportDeployResult(exitCode int) {
+	if strings.TrimSpace(r.o.DataRoot) == "" {
+		r.add("intent", false, "跳过（未传 --data-root——无重启现场可写）")
+		return
+	}
+	store := admin.NewRestartIntentStore(filepath.Join(r.o.DataRoot, "runtime", "restart-intent.json"))
+	if err := store.SetDeployResult(exitCode); err != nil {
+		r.add("intent", false, "部署结论落盘失败: "+err.Error())
+		return
+	}
+	r.add("intent", true, "部署结论已写重启现场：deployExit="+strconv.Itoa(exitCode))
 }
 
 // sweepStrayHosts 同目录残留实例清扫（段1 之后、段2 之前——dll 锁必须先释放，原子切换改名才可能成功）。
@@ -604,6 +641,27 @@ func httpGet(url string) (string, error) {
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return string(raw), nil
+}
+
+// renameWithRetry 同卷改名带重试——Windows 上目录改名要求目录内全部句柄关闭：
+// 旧宿主刚退出时句柄释放有延迟，其子进程（node / python / dotnet）也可能短暂持有 target 内文件。
+//
+// 判例 2026-11-14 17:11：`deploy relaunch --mode incr` 段 3 rename target→_old 报
+// `The process cannot access the file because it is being used by another process`（wait 已通过、
+// sweep 无命中）→ 部署未替换。重试把「瞬时占用」与「常驻占用」分开：前者重试即过，后者重试到底再报。
+func renameWithRetry(src, dst string, attempts int, wait time.Duration) error {
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if err := os.Rename(src, dst); err == nil {
+			return nil
+		} else {
+			lastErr = err
+		}
+		if i+1 < attempts {
+			time.Sleep(wait)
+		}
+	}
+	return lastErr
 }
 
 // waitProcessExit 轮询等进程退出（tasklist 判活）。

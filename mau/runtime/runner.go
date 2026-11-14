@@ -123,6 +123,138 @@ func (r *Runner) RegisterFlow(flow Flow, name string) int64 {
 	return id
 }
 
+// FlowID 按注册名查 ID（未注册回 0, false）。
+func (r *Runner) FlowID(name string) (int64, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for i := range r.flows {
+		if r.flows[i].Name == name {
+			return r.flows[i].ID, true
+		}
+	}
+	return 0, false
+}
+
+// FlowByName 按注册名取注册表投影（含最近一帧状态副本）。
+func (r *Runner) FlowByName(name string) (FlowEntryInfo, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for i := range r.flows {
+		if r.flows[i].Name != name {
+			continue
+		}
+		entry := r.flows[i]
+		info := FlowEntryInfo{ID: entry.ID, Name: entry.Name, TypeName: entry.TypeName, Kind: entry.Kind}
+		if i < len(r.status) {
+			info.Status = r.status[i]
+		}
+		return info, true
+	}
+	return FlowEntryInfo{}, false
+}
+
+// FlowObject 按注册名取实体接口（热重载侧做类型断言用——如 *graph.Graph 的状态快照）。
+func (r *Runner) FlowObject(name string) (Flow, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for i := range r.flows {
+		if r.flows[i].Name == name {
+			return r.flows[i].Flow, true
+		}
+	}
+	return nil, false
+}
+
+// Names 返回注册名列表（注册序即 ID 升序）。
+func (r *Runner) Names() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]string, len(r.flows))
+	for i := range r.flows {
+		out[i] = r.flows[i].Name
+	}
+	return out
+}
+
+// ReplaceFlow 原位替换一个已注册实体——热重载的换句柄面。
+//
+// 三条语义（缺一条就会静默错位）：
+//   - ID 复用：不推进 nextID，OA 归属不断裂（工单 owner 即 Flow ID）；
+//   - 状态清零：status 同下标重置（下一帧由 Tick 按新图重新收集）；
+//   - 传感器重建：sensors 是独立列表，按新图重新安装（旧表项必须摘）。
+//
+// 调用方须与 Tick 串行——主循环内直调，或经 PostToMain 投递（并发替换会与段 3 的状态收集竞争）。
+func (r *Runner) ReplaceFlow(name string, flow Flow) (int64, bool) {
+	if flow == nil {
+		return 0, false
+	}
+	r.mu.Lock()
+	id := int64(0)
+	found := false
+	for i := range r.flows {
+		if r.flows[i].Name != name {
+			continue
+		}
+		id = r.flows[i].ID
+		r.flows[i].Flow = flow
+		r.flows[i].TypeName = flowTypeName(flow)
+		if i < len(r.status) {
+			r.status[i] = FlowStatus{}
+		}
+		found = true
+		break
+	}
+	if found {
+		r.rebuildSensorsLocked()
+	}
+	r.mu.Unlock()
+	if found && r.trace != nil {
+		r.trace.Record("FlowRunner", "flow.replace", -1,
+			Prop{"flowId", itoa(id)}, Prop{"name", name})
+	}
+	return id, found
+}
+
+// UnregisterFlow 摘除一个已注册实体——flows / status / sensors 三处同步摘除。
+//
+// 保序摘除（不交换位）——注册序是观测面与 ID 序的锚，交换位会让整列错位。
+func (r *Runner) UnregisterFlow(name string) (int64, bool) {
+	r.mu.Lock()
+	idx := -1
+	for i := range r.flows {
+		if r.flows[i].Name == name {
+			idx = i
+			break
+		}
+	}
+	id := int64(0)
+	if idx >= 0 {
+		id = r.flows[idx].ID
+		r.flows = append(r.flows[:idx], r.flows[idx+1:]...)
+		if idx < len(r.status) {
+			r.status = append(r.status[:idx], r.status[idx+1:]...)
+		}
+		r.rebuildSensorsLocked()
+	}
+	r.mu.Unlock()
+	if idx >= 0 && r.trace != nil {
+		r.trace.Record("FlowRunner", "flow.unregister", -1,
+			Prop{"flowId", itoa(id)}, Prop{"name", name})
+	}
+	return id, idx >= 0
+}
+
+// rebuildSensorsLocked 按当前 flows 重建传感器列表（调用方须持写锁）。
+func (r *Runner) rebuildSensorsLocked() {
+	sensors := make([]sensorEntry, 0, len(r.flows))
+	for i := range r.flows {
+		if loop, ok := r.flows[i].Flow.(SensorLoop); ok {
+			sensors = append(sensors, sensorEntry{FlowID: r.flows[i].ID, Loop: loop})
+		}
+	}
+	r.sensors = sensors
+}
+
 // CurrentFlowID 是驱动中的 Flow ID（对应 C# FlowContext）。
 var CurrentFlowID int64
 

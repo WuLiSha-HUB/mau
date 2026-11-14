@@ -69,6 +69,8 @@ type Server struct {
 	apiModelsBuilder func() string
 	depsRefresh      func()
 	llmProbe         func() string
+	// flowReloader 语料热重载面（nil = 不挂载 /api/v1/flow/reload——管理面板实例不注入）
+	flowReloader func(name, mode string) string
 	// 对话页条件面——构造期条件注册（nil 即不挂载；C# HttpHostOptions 同语义）
 	contextBuilder        func(max int) string
 	keyInfoBuilder        func(max int) string
@@ -165,6 +167,9 @@ func (s *Server) BindDepsRefresh(fn func()) { s.depsRefresh = fn }
 
 // BindLLMProbe 绑定端点探活；nil = 不注册。
 func (s *Server) BindLLMProbe(fn func() string) { s.llmProbe = fn }
+
+// BindFlowReloader 绑定语料热重载面（name + mode → 回执 JSON）；nil = 不注册 /api/v1/flow/reload。
+func (s *Server) BindFlowReloader(fn func(name, mode string) string) { s.flowReloader = fn }
 
 // BindContext 绑定前文条目视图（?max= 上限）；nil = 不注册 /api/v1/context。
 func (s *Server) BindContext(fn func(max int) string) { s.contextBuilder = fn }

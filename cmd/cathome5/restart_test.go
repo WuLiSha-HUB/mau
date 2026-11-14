@@ -203,3 +203,166 @@ func TestRestartGateAbortsOnForeignHost(t *testing.T) {
 		t.Fatalf("撤销原因应给出处置：\n%s", joined)
 	}
 }
+
+// TestSettleRestartIntent 启动期结算——受控重启写 done / 无接力回执写 stale / 已结算不动。
+func TestSettleRestartIntent(t *testing.T) {
+	dir := t.TempDir()
+	store := admin.NewRestartIntentStore(filepath.Join(dir, "runtime", "restart-intent.json"))
+	// 无现场 → 不结算
+	if _, changed := settleRestartIntent(store, "回执", "0.36.4", 999); changed {
+		t.Fatal("无现场不应结算")
+	}
+	// 受控重启（带 --majordomopush）→ done
+	if err := store.Registered("incr", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Launching(100, 200); err != nil {
+		t.Fatal(err)
+	}
+	settled, changed := settleRestartIntent(store, "[宿主自更新] 重启完成", "0.36.4", 999)
+	if !changed || settled.Phase != admin.RestartPhaseDone {
+		t.Fatalf("受控重启应结算 done: changed=%v %+v", changed, settled)
+	}
+	if settled.NewPID != 999 || settled.Version != "0.36.4" || settled.RelayPID != 200 {
+		t.Fatalf("结算字段不符: %+v", settled)
+	}
+	// 已结算 → 不动
+	if _, changed := settleRestartIntent(store, "", "0.36.4", 1000); changed {
+		t.Fatal("已结算现场不应再改写")
+	}
+	// 停在 launching 且无回执 → stale（重启链未完成）
+	if err := store.Registered("full", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Launching(100, 201); err != nil {
+		t.Fatal(err)
+	}
+	stale, changed := settleRestartIntent(store, "", "0.36.3", 1001)
+	if !changed || stale.Phase != admin.RestartPhaseStale || stale.Reason == "" {
+		t.Fatalf("无接力回执应结算 stale: changed=%v %+v", changed, stale)
+	}
+	summary := restartIntentSummary(stale)
+	for _, want := range []string{"重启现场: stale", "mode=full", "relayPid=201", "原因:"} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("摘要缺 %q：%s", want, summary)
+		}
+	}
+}
+
+// TestResumePendingRounds 轮级续跑——非受控只出声 / 受控续跑一次 / 上限 1 次停手。
+func TestResumePendingRounds(t *testing.T) {
+	dir := t.TempDir()
+	prevRestart := session.HostRestarting
+	prevProvider := session.PendingRoundPathProvider
+	prevPending := session.PendingStoreDir()
+	session.HostRestarting = func() bool { return false }
+	session.PendingRoundPathProvider = func(catID string) string {
+		return filepath.Join(dir, catID+".pending-round.json")
+	}
+	session.ConfigurePendingStore(dir)
+	t.Cleanup(func() {
+		session.HostRestarting = prevRestart
+		session.PendingRoundPathProvider = prevProvider
+		session.ConfigurePendingStore(prevPending)
+	})
+
+	ctx := session.NewContext()
+	store := session.NewSessionStore(filepath.Join(dir, "majordomo.jsonl"))
+	views := session.NewViewStore(filepath.Join(dir, "majordomo.view.jsonl"))
+	sess := session.NewSession("majordomo", ctx, store, views)
+	cats := newCatRegistry(dir)
+	cats.setMajor(&sessionWiring{CatID: "majordomo", Session: sess}, "majordomo", 8079)
+	var logs []string
+	logf := func(level int, message string) { logs = append(logs, message) }
+
+	// 无现场 → 零动作
+	if resumed, skipped := resumePendingRounds(cats, true, logf); resumed != 0 || skipped != 0 {
+		t.Fatalf("无现场应零动作: resumed=%d skipped=%d", resumed, skipped)
+	}
+	// 有现场但非受控重启 → 只出声不续
+	sess.MarkRoundPending()
+	if resumed, skipped := resumePendingRounds(cats, false, logf); resumed != 0 || skipped != 1 {
+		t.Fatalf("非受控应只出声: resumed=%d skipped=%d", resumed, skipped)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "非受控重启") {
+		t.Fatalf("非受控出声缺文案：%v", logs)
+	}
+	if user, _ := sess.Pending.Len(); user != 0 {
+		t.Fatalf("非受控不应注入消息: user=%d", user)
+	}
+	// 受控重启 → 续跑一次（attempts 落盘 1）
+	logs = nil
+	if resumed, skipped := resumePendingRounds(cats, true, logf); resumed != 1 || skipped != 0 {
+		t.Fatalf("受控应续跑一次: resumed=%d skipped=%d logs=%v", resumed, skipped, logs)
+	}
+	if user, _ := sess.Pending.Len(); user != 1 {
+		t.Fatalf("续跑应注入一条用户消息: user=%d", user)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "重启续跑已注入") {
+		t.Fatalf("续跑出声缺文案：%v", logs)
+	}
+	sess.Pending.TakeAll(true)
+	// 上限——attempts=1 再受控重启 → 跳过 + 注入人工提示
+	logs = nil
+	if resumed, skipped := resumePendingRounds(cats, true, logf); resumed != 0 || skipped != 1 {
+		t.Fatalf("attempts 上限应跳过: resumed=%d skipped=%d", resumed, skipped)
+	}
+	if !strings.Contains(strings.Join(logs, "\n"), "上限 1 次") {
+		t.Fatalf("上限出声缺文案：%v", logs)
+	}
+	if _, sys := sess.Pending.Len(); sys != 1 {
+		t.Fatalf("上限应注入一条 system 提示: sys=%d", sys)
+	}
+}
+
+// TestRestartGateScopeSelf scope=self 只判发起会话——其它猫非 Idle 不构成卡点，OA 在途仍是硬等。
+func TestRestartGateScopeSelf(t *testing.T) {
+	dir := t.TempDir()
+	prevRestart := session.HostRestarting
+	prevPending := session.PendingStoreDir()
+	session.HostRestarting = func() bool { return false }
+	session.ConfigurePendingStore(dir)
+	t.Cleanup(func() {
+		session.HostRestarting = prevRestart
+		session.ConfigurePendingStore(prevPending)
+	})
+	newSess := func(key string) *session.Session {
+		ctx := session.NewContext()
+		store := session.NewSessionStore(filepath.Join(dir, key+".jsonl"))
+		views := session.NewViewStore(filepath.Join(dir, key+".view.jsonl"))
+		sess := session.NewSession(key, ctx, store, views)
+		sess.SetDisplayName(key)
+		return sess
+	}
+	major := newSess("majordomo")
+	other := newSess("R喵7")
+	gate := newRestartGate(admin.NewRestartState(nil), major, nil, runtime.NewOA(nil), &config.WorkspaceConfig{}, dir, 8079, "dev", "", nil)
+	gate.setSessionsProvider(func() []*session.Session { return []*session.Session{major, other} })
+
+	// 其它猫排队 → 全局判据卡点；scope=self 只判发起者（Idle）→ 放行
+	if !other.PostUser("hi", "user", "", "") {
+		t.Fatal("投递失败")
+	}
+	if blocker := gate.describeBlockerFor(""); !strings.Contains(blocker, "R喵7") {
+		t.Fatalf("全局判据应列出其它猫卡点，got %q", blocker)
+	}
+	if blocker := gate.describeBlockerFor("self"); blocker != "" {
+		t.Fatalf("scope=self 不应等其它猫，got %q", blocker)
+	}
+	// 发起者自己排队 → self 也卡（打断自己会丢本轮）
+	if !major.PostUser("hi", "user", "", "") {
+		t.Fatal("投递失败")
+	}
+	if blocker := gate.describeBlockerFor("self"); !strings.Contains(blocker, "majordomo") {
+		t.Fatalf("发起者非 Idle 应卡点，got %q", blocker)
+	}
+	major.Pending.TakeAll(true)
+	other.Pending.TakeAll(true)
+	// OA 在途——任何 scope 都硬等（会丢工具回执）
+	oa := runtime.NewOA(nil)
+	gate.oa = oa
+	oa.Post(1, "TOOL", "text-read", 1200)
+	if blocker := gate.describeBlockerFor("self"); !strings.Contains(blocker, "OA 在途") {
+		t.Fatalf("OA 在途应硬等，got %q", blocker)
+	}
+}

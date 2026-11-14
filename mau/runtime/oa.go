@@ -370,6 +370,27 @@ func (o *OA) InFlight() (open, work int) {
 	return open, work
 }
 
+// InFlightByOwner 返回某挂单方的在途工单计数（待认领 / 执行中）——热重载 drain 判据。
+func (o *OA) InFlightByOwner(ownerID int64) (open, work int) {
+	if o == nil {
+		return 0, 0
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, off := range o.offices {
+		if off.Owner != ownerID {
+			continue
+		}
+		switch off.Status {
+		case OfficeOpen:
+			open++
+		case OfficeWork:
+			work++
+		}
+	}
+	return open, work
+}
+
 func cloneOffice(off *Office) *Office {
 	cp := *off
 	cp.Data = make(map[string]string, len(off.Data))

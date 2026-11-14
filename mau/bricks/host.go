@@ -31,7 +31,7 @@ func HostRestart(db *runtime.DataBox, argsJSON, mode string) (string, bool) {
 	if mode != "full" && mode != "incr" && mode != "host" {
 		return "ERR|BAD_ARGS|重启模式非法: " + mode + "（支持 full / incr / host）", false
 	}
-	if badArgs := Validate(argsJSON, "target push", "", "", ""); badArgs != "" {
+	if badArgs := Validate(argsJSON, "target push scope", "", "", ""); badArgs != "" {
 		return badArgs, false
 	}
 	if db == nil {
@@ -43,29 +43,45 @@ func HostRestart(db *runtime.DataBox, argsJSON, mode string) (string, bool) {
 	}
 	target := Get(argsJSON, "target")
 	push := Get(argsJSON, "push")
+	// 闸门判据范围（Go 侧出口）——空 / all = 全局 Idle（既有语义）；self = 只等发起会话自身。
+	// 存在理由：Note 引擎（未完成计划强制拉起）与「所有会话同时 Idle」互斥，闸门在 Note 活跃猫存在时永不通过
+	// （判否现场 `ccbp:L3/Mau/F-推理现场/20261114_restart-gate-global-idle/`）。self 只越过「别的猫在途轮」。
+	scope := strings.TrimSpace(Get(argsJSON, "scope"))
+	if scope != "" && scope != "all" && scope != "self" {
+		return "ERR|BAD_ARGS|scope 非法: " + scope + "（只接受 all / self；空 = all）", false
+	}
 	// 归一载荷——只落声明面字段（catId 为宿主注入保留键，不入请求）
-	payload := `{"mode":` + jsonString(mode) + `,"target":` + jsonString(target) + `,"push":` + jsonString(push) + `}`
+	payload := `{"mode":` + jsonString(mode) + `,"target":` + jsonString(target) +
+		`,"push":` + jsonString(push) + `,"scope":` + jsonString(scope) + `}`
 	db.Set("global", hostRestartRequestKey, payload)
 	targetShow := target
 	if targetShow == "" {
 		targetShow = "受控根 mauout5"
 	}
+	gated := "全局空闲"
+	if scope == "self" {
+		gated = "本会话空闲（scope=self）"
+	}
 	body := ""
 	switch mode {
 	case "incr":
 		body = "宿主增量重启请求已登记（纯搬运产物区 + 重启，不编译不测试；目标运行区: " + targetShow +
-			"）。宿主在全局空闲后接力搬运并重启，结果回执将自动注入本会话。"
+			"）。宿主在" + gated + "后接力搬运并重启，结果回执将自动注入本会话。"
 	case "host":
 		body = "宿主原地重启请求已登记（不编译、不覆盖；目标运行区: " + targetShow +
-			"）。宿主在全局空闲后借接力者原地重启，结果回执将自动注入本会话。"
+			"）。宿主在" + gated + "后借接力者原地重启，结果回执将自动注入本会话。"
 	default:
 		body = "宿主全链重启请求已登记（prepare + 原子切换 + 重启；目标运行区: " + targetShow +
-			"）。宿主在全局空闲后接力部署并重启，结果回执将自动注入本会话。"
+			"）。宿主在" + gated + "后接力部署并重启，结果回执将自动注入本会话。"
+	}
+	if scope == "self" {
+		body += "（scope=self：不等待其它猫在途轮——被打断的在途轮由新宿主 pendingRound 续跑接回）"
 	}
 	head := `{"ok":true,"tool":` + jsonString(restartToolName(mode)) +
 		`,"mode":` + jsonString(mode) +
 		`,"target":` + jsonString(targetShow) +
-		`,"push":` + boolText(push != "") + `}`
+		`,"push":` + boolText(push != "") +
+		`,"scope":` + jsonString(scope) + `}`
 	return head + "\n" + targetShow + " | " + mode + " 重启请求已登记" + "\n" + body, true
 }
 
@@ -134,16 +150,17 @@ func SetInteractiveRunMode(db *runtime.DataBox) {
 	db.Set("global", hostRunModeKey, "interactive")
 }
 
-// DecodeRestartRequest 解析重启请求载荷——mode / target / push 三字段（缺省空串）。
+// DecodeRestartRequest 解析重启请求载荷——mode / target / push / scope 四字段（缺省空串）。
 //
 // 解析失败按空请求处理（调用方按 mode 空 = full 兜底——与 C# ReadJsonField 防御式同义）。
-func DecodeRestartRequest(payload string) (mode, target, push string) {
+// scope 缺省（空）= 全局 Idle；"self" = 只等发起会话自身（Go 侧出口，C# 无此字段）。
+func DecodeRestartRequest(payload string) (mode, target, push, scope string) {
 	if strings.TrimSpace(payload) == "" {
-		return "", "", ""
+		return "", "", "", ""
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
-		return "", "", ""
+		return "", "", "", ""
 	}
 	read := func(key string) string {
 		raw, ok := fields[key]
@@ -156,5 +173,5 @@ func DecodeRestartRequest(payload string) (mode, target, push string) {
 		}
 		return value
 	}
-	return read("mode"), read("target"), read("push")
+	return read("mode"), read("target"), read("push"), read("scope")
 }

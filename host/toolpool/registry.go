@@ -41,6 +41,11 @@ func NewRegistry(specs []Def, ownerFlowMap map[string]string, privilegedMap map[
 		if flag, ok := privilegedMap[spec.Name]; ok {
 			privileged = flag
 		}
+		// 内置 host-* 一律特权——宿主级动作（语料热重载 / Flow 观测）跨会话生效，
+		// 不允许非主干猫触发（与 restart-* 同一授权口径）。
+		if !privileged && builtin && strings.HasPrefix(spec.Name, "host-") {
+			privileged = true
+		}
 		if _, exists := r.entries[spec.Name]; !exists {
 			r.order = append(r.order, spec.Name)
 		}

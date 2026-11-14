@@ -65,6 +65,8 @@ type restartGate struct {
 	warnAt time.Time
 	// launched 接力已拉起（退出通道已触发——防二次执行）
 	launched bool
+	// intent 重启盘上现场（nil = 不落盘——单测实例）
+	intent *admin.RestartIntentStore
 }
 
 // newRestartGate 构造重启闸门（装配层一次）。
@@ -75,6 +77,14 @@ func newRestartGate(state *admin.RestartState, sess *session.Session, runner *ru
 		state: state, sess: sess, runner: runner, oa: oa, workspace: workspace,
 		dataRoot: dataRoot, port: port, area: area, page: page, logf: logf,
 	}
+}
+
+// setIntentStore 接线重启盘上现场（装配层一次；nil = 不落盘）。
+func (g *restartGate) setIntentStore(store *admin.RestartIntentStore) {
+	if g == nil {
+		return
+	}
+	g.intent = store
 }
 
 // Tick 推进闸门——返回 true = 接力已拉起，主循环应走退出通道。
@@ -91,7 +101,7 @@ func (g *restartGate) Tick() bool {
 	if g.waitStart.IsZero() {
 		g.waitStart = time.Now()
 	}
-	blocker := g.describeBlocker()
+	blocker := g.describeBlockerFor(req.Scope)
 	if blocker == "" {
 		if err := g.execute(req); err != nil {
 			reason := "重启接力未拉起——" + err.Error()
@@ -133,9 +143,25 @@ func (g *restartGate) setSessionsProvider(fn func() []*session.Session) {
 
 // describeBlocker 全局 Idle 判据——空串 = 可执行接力；否则逐项列出未就绪卡点。
 func (g *restartGate) describeBlocker() string {
+	return g.describeBlockerFor("")
+}
+
+// describeBlockerFor 按闸门范围列卡点——scope=self 只判发起会话（其它猫 / 其它 Flow 非 Idle 可越过）。
+//
+// 分级判据（为什么这样分）：
+//   - 硬等（任何 scope）：发起会话自身非 Idle（打断自己会丢本轮）、OA 在途（会丢工具回执）、
+//     发起会话视图待推（会丢最后一帧）；
+//   - 可越过（scope=self）：其它会话非 Idle、其它 Flow 非 Idle —— 0.36.4 起有 pendingRound 续跑兜底，
+//     且停机态已拒收新输入（判否现场：Note 引擎与「所有会话同时 Idle」互斥，闸门永不通过）。
+func (g *restartGate) describeBlockerFor(scope string) string {
+	onlySelf := scope == "self"
 	parts := make([]string, 0, 4)
 	sessions := []*session.Session{}
-	if g.sessionsFn != nil {
+	if onlySelf {
+		if g.sess != nil {
+			sessions = append(sessions, g.sess)
+		}
+	} else if g.sessionsFn != nil {
 		sessions = g.sessionsFn()
 	}
 	if len(sessions) == 0 && g.sess != nil {
@@ -148,7 +174,7 @@ func (g *restartGate) describeBlocker() string {
 		name, _, _ := sess.GetRunState()
 		parts = append(parts, "会话「"+sess.DisplayName+"」非 Idle（运行态 "+name+"）")
 	}
-	if g.runner != nil {
+	if !onlySelf && g.runner != nil {
 		for _, entry := range g.runner.Entries() {
 			busy := make([]string, 0, 2)
 			for _, line := range entry.Status.StateLines {
@@ -276,6 +302,12 @@ func (g *restartGate) execute(req admin.RestartRequest) error {
 		}
 	}
 	g.log(1, "重启接力已拉起（mode="+mode+"，pid="+strconv.Itoa(relayPID)+"）→ 目标 "+target)
+	// 盘上现场——接力已起即写 launching（旧宿主即将退出；失败由 Tick 的 Withdraw 覆盖写 failed）
+	if g.intent != nil {
+		if err := g.intent.Launching(os.Getpid(), relayPID); err != nil {
+			g.log(2, "重启现场落盘失败（launching）: "+err.Error())
+		}
+	}
 	// SSE 收尾窗口——让最后一帧视图 / 日志写出（等价 C# FlushAllHosts(800)）
 	time.Sleep(restartFlushWindow)
 	return nil
@@ -372,4 +404,123 @@ func (g *restartGate) log(level int, message string) {
 		return
 	}
 	g.logf(level, message, "RESTART")
+}
+
+// settleRestartIntent 启动期结算重启现场——只改写停在 registered / launching 的现场。
+//
+// 判据：本次启动带接力回执（--majordomopush）= 受控重启走完（done）；
+// 否则现场停在中间态 = 重启链未完成（relay 超时 / 探活失败 / 人工强杀在登记后）→ stale 且出声。
+// 已结算的现场（done / failed / stale）不动——保留第一次结论，供事后审计。
+func settleRestartIntent(store *admin.RestartIntentStore, pushText, version string, newPID int) (admin.RestartIntent, bool) {
+	if store == nil {
+		return admin.RestartIntent{}, false
+	}
+	current, ok := store.Read()
+	if !ok {
+		return admin.RestartIntent{}, false
+	}
+	if current.Phase != admin.RestartPhaseRegistered && current.Phase != admin.RestartPhaseLaunching {
+		return current, false
+	}
+	if strings.TrimSpace(pushText) != "" {
+		return store.Settle(admin.RestartPhaseDone, version, "", newPID)
+	}
+	return store.Settle(admin.RestartPhaseStale, version,
+		"重启链未完成（本次启动无接力回执——relay 可能超时退出 / 探活失败；运行区未替换或状态未知）", newPID)
+}
+
+// restartIntentSummary 现场摘要行（启动日志用——一行说清上一次重启到哪一步）。
+func restartIntentSummary(intent admin.RestartIntent) string {
+	parts := []string{"重启现场: " + intent.Phase, "mode=" + intent.Mode}
+	if intent.Target != "" {
+		parts = append(parts, "target="+intent.Target)
+	}
+	if intent.OldPID > 0 {
+		parts = append(parts, "oldPid="+strconv.Itoa(intent.OldPID))
+	}
+	if intent.RelayPID > 0 {
+		parts = append(parts, "relayPid="+strconv.Itoa(intent.RelayPID))
+	}
+	if intent.NewPID > 0 {
+		parts = append(parts, "newPid="+strconv.Itoa(intent.NewPID))
+	}
+	if intent.Version != "" {
+		parts = append(parts, "version="+intent.Version)
+	}
+	if intent.ElapsedMs > 0 {
+		parts = append(parts, "用时 "+strconv.FormatInt(intent.ElapsedMs/1000, 10)+" s")
+	}
+	if intent.DeployReported {
+		if intent.DeployExit == 0 {
+			parts = append(parts, "部署 OK")
+		} else {
+			parts = append(parts, "部署未替换（deployExit="+strconv.Itoa(intent.DeployExit)+"）")
+		}
+	}
+	if intent.Reason != "" {
+		parts = append(parts, "原因: "+intent.Reason)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// buildResumeText 续跑注入文本——给断点信息 + 「先核对后继续」纪律（不重头复述、不重复写操作）。
+func buildResumeText(info session.PendingRound) string {
+	started := time.UnixMilli(info.StartedAt).Format("2006-01-02 15:04:05")
+	return "[宿主重启后续跑] 上一轮在「" + session.PendingRoundPhaseName(info.Phase) + "」阶段被宿主重启中断" +
+		"（轮次 " + strconv.FormatInt(info.Round, 10) + " · 起于 " + started +
+		" · 轮首前文 " + strconv.Itoa(info.DeclIndex) + " 条）。前文完整保留——先核对已完成的动作" +
+		"（工具回执 / Note / 待办 / 已落盘产物），再从断点继续完成本轮；不要重头复述、不要重复已完成的写操作。" +
+		"完成或判定无需继续时按常规收尾。"
+}
+
+// resumePendingRounds 重启后自动续跑在途轮——仅受控重启（带接力回执的实例），上限 1 次。
+//
+// 三种处置：可续 → 注入「继续」并计 resumed；已续过一次 → 出声 + 注入提示（要求人工判断）计 skipped；
+// 非受控重启（崩溃 / 人工启动）→ 只出声不续（防重试死循环）。
+func resumePendingRounds(cats *catRegistry, controlled bool, logf func(level int, message string)) (resumed, skipped int) {
+	if cats == nil {
+		return 0, 0
+	}
+	for _, sess := range cats.sessions() {
+		if sess == nil {
+			continue
+		}
+		info, ok := session.LoadPendingRound(sess.CatKey)
+		if !ok {
+			continue
+		}
+		phase := session.PendingRoundPhaseName(info.Phase)
+		if !controlled {
+			skipped++
+			logf(2, "存在未完成的轮（cat="+sess.CatKey+" · 相位 "+phase+" · 尝试 "+strconv.Itoa(info.Attempts)+
+				" 次）——本次启动非受控重启，按定案不自动续跑（防重试死循环）")
+			continue
+		}
+		if info.Attempts >= 1 {
+			skipped++
+			logf(2, "存在未完成的轮（cat="+sess.CatKey+" · 相位 "+phase+
+				"）——已自动续跑过一次，按上限 1 次停手，交人工判断")
+			reply := sess.PostSystemMessage(session.SysKindRestart,
+				"[重启续跑] 上一轮已自动续跑过一次仍未完成（相位 "+phase+"）——按上限停手，请人工确认后续动作。", "")
+			if reply != "OK" {
+				logf(2, "续跑上限提示注入未受理: "+reply)
+			}
+			continue
+		}
+		resumeInfo, ok := sess.TakePendingRoundResume()
+		if !ok {
+			skipped++
+			logf(2, "续跑现场写盘失败（attempts）: cat="+sess.CatKey+"——本轮不自动续跑")
+			continue
+		}
+		if !sess.PostUser(buildResumeText(resumeInfo), session.SourceUser, "", "restart-resume") {
+			skipped++
+			logf(2, "续跑注入未受理（队列拒绝）: cat="+sess.CatKey)
+			continue
+		}
+		resumed++
+		logf(1, "重启续跑已注入（cat="+sess.CatKey+" · 相位 "+phase+" · 轮次 "+
+			strconv.FormatInt(resumeInfo.Round, 10)+" · 尝试 "+strconv.Itoa(resumeInfo.Attempts)+"）")
+	}
+	return resumed, skipped
 }

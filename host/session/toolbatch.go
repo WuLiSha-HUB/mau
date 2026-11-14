@@ -374,9 +374,17 @@ func (s *Session) pumpToolBatch() {
 	if !allDone && timeSinceMs(batchStartedAt) < toolBatchWait.Milliseconds() {
 		return
 	}
-	// host-* 延迟直执
+	// host-* 延迟直执——批末执行（等构建类工具先落地产物）
 	for _, dog := range hostDogs {
-		result := s.runHostTool(dog.Name, dog.ArgsJSON)
+		var result string
+		if s.builtinTool(dog.Name) {
+			// 内置 host-*（host-reload / host-flows）走内置执行面——
+			// 判据单点 = 注册表 IsBuiltin（此前一律走 runHostTool，而 toolExec 未接线 ⇒ 执行面不可达：
+			// `ERR|EMPTY_RESULT|宿主直执面未接线`；2026-11-14 17:07 部署后实测暴露）
+			result = s.executeBuiltin(dog.Name, dog.ArgsJSON)
+		} else {
+			result = s.runHostTool(dog.Name, dog.ArgsJSON)
+		}
 		if result == "" {
 			result = "ERR|EMPTY_RESULT|工具执行无结果"
 		}

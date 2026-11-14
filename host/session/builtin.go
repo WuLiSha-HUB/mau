@@ -18,6 +18,17 @@ func (s *Session) SetInfoProvider(fn func() string) {
 	r.mu.Unlock()
 }
 
+// SetFlowRuntime 接线语料级热重载面（host-reload / host-flows 的数据源，nil = 明示不可用）。
+//
+// 会话层不依赖运行时实现（分层纪律）——真正的换图动作在组合根注入的闭包里。
+func (s *Session) SetFlowRuntime(reload func(name, mode string) string, list func() string) {
+	r := s.roundState()
+	r.mu.Lock()
+	r.flowReloader = reload
+	r.flowLister = list
+	r.mu.Unlock()
+}
+
 // ExecuteBuiltin 内置工具统一执行入口——会话内直执（Note / time / random / info / timeback）。
 //
 // 作用域锁定：Note / sleep / timer 在 timeback 作用域存活期一律拒绝（与区间删除语义冲突）。
@@ -52,8 +63,61 @@ func (s *Session) ExecuteBuiltin(name, argsJSON string) string {
 		return s.Timeback.ExecuteStart(argsJSON)
 	case "timeback-back":
 		return s.Timeback.ExecuteBack(argsJSON)
+	case "host-reload":
+		return s.executeHostReload(argsJSON)
+	case "host-flows":
+		return s.executeHostFlows()
 	}
 	return "ERR|UNKNOWN_BUILTIN|未知内置工具: " + name
+}
+
+// executeHostReload host-reload 执行体——参数 {cat|name:"组名", mode:"fresh|carry|drain"}。
+//
+// 回执是热重载的唯一事实面：组 / gen / 语料哈希 / 规模 / 在途 / 耗时（失败带 ERR 码）。
+func (s *Session) executeHostReload(argsJSON string) string {
+	r := s.roundState()
+	r.mu.Lock()
+	reload := r.flowReloader
+	r.mu.Unlock()
+	if reload == nil {
+		return "ERR|FLOW_RELOAD_UNAVAILABLE|语料热重载面未接线"
+	}
+	name := ""
+	mode := ""
+	if strings.HasPrefix(strings.TrimSpace(argsJSON), "{") {
+		var root map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(argsJSON), &root); err != nil {
+			return "ERR|BAD_ARGS|host-reload 参数损坏"
+		}
+		if raw, exists := root["cat"]; exists {
+			_ = json.Unmarshal(raw, &name)
+		}
+		if name == "" {
+			if raw, exists := root["name"]; exists {
+				_ = json.Unmarshal(raw, &name)
+			}
+		}
+		if raw, exists := root["mode"]; exists {
+			_ = json.Unmarshal(raw, &mode)
+		}
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "ERR|BAD_ARGS|host-reload 缺 cat（组名——先用 host-flows 查清单）"
+	}
+	return reload(name, strings.TrimSpace(mode))
+}
+
+// executeHostFlows host-flows 执行体——注册表 + 语料代 + 在途 + pending。
+func (s *Session) executeHostFlows() string {
+	r := s.roundState()
+	r.mu.Lock()
+	list := r.flowLister
+	r.mu.Unlock()
+	if list == nil {
+		return "ERR|FLOW_LIST_UNAVAILABLE|Flow 观测面未接线"
+	}
+	return list()
 }
 
 // executeRandom random 执行体——生成 [min, max) 随机整数。

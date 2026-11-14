@@ -21,6 +21,9 @@ func (s *Server) routes() {
 	if s.llmProbe != nil {
 		s.mux.HandleFunc("POST /api/v1/llm/probe", s.handleLLMProbe)
 	}
+	if s.flowReloader != nil {
+		s.mux.HandleFunc("POST /api/v1/flow/reload", s.handleFlowReload)
+	}
 	if s.catsBuilder != nil {
 		s.mux.HandleFunc("GET /api/v1/cats", s.handleCats)
 	}

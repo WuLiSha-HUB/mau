@@ -460,38 +460,67 @@ func LoadGroups(corpusDir, brickIndexPath string, set graph.BrickSet, logf func(
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		path := findCorpusFile(filepath.Join(corpusDir, name))
-		if path == "" {
-			skipped = append(skipped, name+"（目录内无 .mau 语料）")
-			report(1, "语料组跳过 "+name+"：目录内无 .mau 语料")
+		group, reason := loadOneGroup(corpusDir, name, table, set, report)
+		if reason != "" {
+			skipped = append(skipped, reason)
 			continue
 		}
-		src, readErr := os.ReadFile(path)
-		if readErr != nil {
-			skipped = append(skipped, name+"（语料不可读）")
-			report(2, "语料组跳过 "+name+"：读取失败 "+readErr.Error())
-			continue
-		}
-		tokens, lexDiags := front.Lex(string(src))
-		doc := front.Parse(tokens)
-		doc.Diags = append(lexDiags, doc.Diags...)
-		if table != nil {
-			front.Validate(doc, table)
-		}
-		if len(doc.Diags) > 0 {
-			diag := doc.Diags[0]
-			skipped = append(skipped, name+"（诊断 "+diag.Code+" 行 "+itoa(diag.Line)+"）")
-			report(2, "语料组跳过 "+name+"：诊断 "+diag.Code+" 行 "+itoa(diag.Line)+" "+diag.Msg)
-			continue
-		}
-		if missing := missingBricks(doc, set); len(missing) > 0 {
-			skipped = append(skipped, name+"（缺积木 "+strings.Join(missing, ",")+"）")
-			report(1, "语料组跳过 "+name+"：缺积木 "+strings.Join(missing, ", "))
-			continue
-		}
-		groups = append(groups, Group{Name: name, Path: path, Graph: graph.Build(doc, set)})
+		groups = append(groups, group)
 	}
 	return groups, skipped
+}
+
+// loadOneGroup 装配单个语料组——三条门禁（语料存在 / 语法零诊断 / 引用积木全齐）全过才产图。
+//
+// 返回 (组, 跳过原因)：原因非空即未产图（已出声）；组为零值时不得使用。
+func loadOneGroup(corpusDir, name string, table *front.BrickTable, set graph.BrickSet, report func(level int, message string)) (Group, string) {
+	path := findCorpusFile(filepath.Join(corpusDir, name))
+	if path == "" {
+		report(1, "语料组跳过 "+name+"：目录内无 .mau 语料")
+		return Group{}, name + "（目录内无 .mau 语料）"
+	}
+	src, readErr := os.ReadFile(path)
+	if readErr != nil {
+		report(2, "语料组跳过 "+name+"：读取失败 "+readErr.Error())
+		return Group{}, name + "（语料不可读）"
+	}
+	tokens, lexDiags := front.Lex(string(src))
+	doc := front.Parse(tokens)
+	doc.Diags = append(lexDiags, doc.Diags...)
+	if table != nil {
+		front.Validate(doc, table)
+	}
+	if len(doc.Diags) > 0 {
+		diag := doc.Diags[0]
+		report(2, "语料组跳过 "+name+"：诊断 "+diag.Code+" 行 "+itoa(diag.Line)+" "+diag.Msg)
+		return Group{}, name + "（诊断 " + diag.Code + " 行 " + itoa(diag.Line) + "）"
+	}
+	if missing := missingBricks(doc, set); len(missing) > 0 {
+		report(1, "语料组跳过 "+name+"：缺积木 "+strings.Join(missing, ", "))
+		return Group{}, name + "（缺积木 " + strings.Join(missing, ",") + "）"
+	}
+	return Group{Name: name, Path: path, Graph: graph.Build(doc, set)}, ""
+}
+
+// LoadGroup 装配单个语料组——热重载入口，与 LoadGroups 同一套门禁（失败即不产图，调用方保持现状）。
+//
+// 与 LoadGroups 的差别只有两条：不扫目录（按名精确取）；索引读失败时降级为运行时门禁（与全量加载同口径）。
+func LoadGroup(corpusDir, name, brickIndexPath string, set graph.BrickSet, logf func(level int, message string)) (Group, string) {
+	report := func(level int, message string) {
+		if logf != nil {
+			logf(level, message)
+		}
+	}
+	var table *front.BrickTable
+	if brickIndexPath != "" {
+		loaded, indexErr := front.LoadBrickIndex(brickIndexPath)
+		if indexErr != nil {
+			report(2, "积木索引不可读："+brickIndexPath+"（"+indexErr.Error()+"）——语义校验降级为运行时门禁")
+		} else {
+			table = loaded
+		}
+	}
+	return loadOneGroup(corpusDir, name, table, set, report)
 }
 
 // findCorpusFile 取目录内的语料文件——优先进同名 snake_case，其次目录内唯一 .mau。

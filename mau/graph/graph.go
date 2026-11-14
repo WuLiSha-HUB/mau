@@ -49,6 +49,10 @@ type Graph struct {
 	wires   map[string]*interp.Wire
 	states  map[string]*interp.WireState
 	sensors []*sensorRuntime
+	// gen 本图代际（每次热重载替换 +1——观测面与回投判据）
+	gen int64
+	// stateSet 状态机名 → 合法状态集（carry 迁移的合法性判据）
+	stateSet map[string][]string
 }
 
 // sensorRuntime 是主动传感器运行态。
@@ -61,15 +65,17 @@ type sensorRuntime struct {
 // Build 把四柱 AST 构造成运行时图——状态机取首个状态为初始态。
 func Build(doc *front.Doc, bricks BrickSet) *Graph {
 	g := &Graph{
-		rt:     &Runtime{States: map[string]string{}, Boxes: map[string]string{}},
-		bricks: bricks,
-		wires:  map[string]*interp.Wire{},
-		states: map[string]*interp.WireState{},
+		rt:       &Runtime{States: map[string]string{}, Boxes: map[string]string{}},
+		bricks:   bricks,
+		wires:    map[string]*interp.Wire{},
+		states:   map[string]*interp.WireState{},
+		stateSet: map[string][]string{},
 	}
 	for i := range doc.StateMachines {
 		sm := &doc.StateMachines[i]
 		if len(sm.States) > 0 {
 			g.rt.States[sm.Name] = sm.States[0]
+			g.stateSet[sm.Name] = append([]string{}, sm.States...)
 		}
 	}
 	for i := range doc.Sensors {
@@ -259,6 +265,83 @@ func (g *Graph) probe(s *sensorRuntime) {
 		}
 		_, _ = afn(g.evalArgs(a.BrickArgs))
 	}
+}
+
+// Gen 返回本图代际——替换时由调用方推进（观测面直读）。
+func (g *Graph) Gen() int64 { return g.gen }
+
+// SetGen 设置本图代际。
+func (g *Graph) SetGen(gen int64) { g.gen = gen }
+
+// WireCount 返回导线条数（观测面）。
+func (g *Graph) WireCount() int { return len(g.order) }
+
+// StateCount 返回状态机个数（观测面）。
+func (g *Graph) StateCount() int { return len(g.rt.States) }
+
+// BoxCount 返回私有盒条数（观测面）。
+func (g *Graph) BoxCount() int { return len(g.rt.Boxes) }
+
+// BusyWires 返回在途导线名（后台执行未回投）——drain 迁移判据。
+func (g *Graph) BusyWires() []string {
+	busy := make([]string, 0, 4)
+	for _, name := range g.order {
+		if state, ok := g.states[name]; ok && state.Busy {
+			busy = append(busy, name)
+		}
+	}
+	return busy
+}
+
+// SnapshotStates 拷贝状态机当前态（carry 迁移的源）。
+func (g *Graph) SnapshotStates() map[string]string {
+	out := make(map[string]string, len(g.rt.States))
+	for name, value := range g.rt.States {
+		out[name] = value
+	}
+	return out
+}
+
+// SnapshotBoxes 拷贝私有盒（carry 迁移的源）。
+func (g *Graph) SnapshotBoxes() map[string]string {
+	out := make(map[string]string, len(g.rt.Boxes))
+	for key, value := range g.rt.Boxes {
+		out[key] = value
+	}
+	return out
+}
+
+// RestoreStates 按名恢复状态机当前态——只收「新图存在该状态机且取值在其合法集内」的项。
+//
+// 返回实际恢复条数；被拒项静默跳过（carry 是尽力而为，不是强一致——新图没有的状态无处可放）。
+func (g *Graph) RestoreStates(snapshot map[string]string) int {
+	restored := 0
+	for name, value := range snapshot {
+		if _, exists := g.rt.States[name]; !exists {
+			continue
+		}
+		legal := false
+		for _, state := range g.stateSet[name] {
+			if state == value {
+				legal = true
+				break
+			}
+		}
+		if !legal {
+			continue
+		}
+		g.rt.States[name] = value
+		restored++
+	}
+	return restored
+}
+
+// RestoreBoxes 恢复私有盒（carry）——返回实际写入条数。
+func (g *Graph) RestoreBoxes(snapshot map[string]string) int {
+	for key, value := range snapshot {
+		g.rt.Boxes[key] = value
+	}
+	return len(snapshot)
 }
 
 // State 读状态机当前态。

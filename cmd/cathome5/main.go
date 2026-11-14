@@ -381,6 +381,10 @@ func main() {
 	server.BindCommand(router.Handle)
 	server.BindCats(router.catsJSON)
 	server.BindFrame(frame.Current)
+	// [段12d] 语料热重载 HTTP 入口——与 host-reload 工具同一执行体（toolRuntime.ReloadFlow）
+	if toolRT.Reloader != nil {
+		server.BindFlowReloader(toolRT.ReloadFlow)
+	}
 	// [段12c] 视图推送面——chat 页唯一数据通道（P3-e）：首帧全量（连接建立补发）+ 每帧增量（无变化零字节）。
 	// 同一会话被两个以上实例共享时增量只能有一个取帧者：`--page chat.html` 形态主端口即对话页（取帧）；
 	// 管理面板形态增量归 [段12b-4] 的默认猫对话端口实例，主端口首帧走只读构建器
@@ -399,6 +403,11 @@ func main() {
 	restartState := admin.NewRestartState(func(level int, message string) {
 		logs.Add("CatHome5", level, message, "CONFIG", "", "", 0, frame.Current(), false)
 	})
+	// [段12b-1] 重启盘上现场——登记 / 接力 / 结算三阶段落 data:runtime/restart-intent.json。
+	// 与 --majordomopush 的分工：push = 一次性会话注入（收件人看得见）；现场 = 事后可审计的盘上足迹
+	// （下一次启动据此结算 done/stale，也是「受控重启才续跑」的判据来源）。
+	restartIntent := admin.NewRestartIntentStore(filepath.Join(dataRoot, "runtime", "restart-intent.json"))
+	restartState.SetIntentStore(restartIntent)
 	// [段12b-2] 重启链会话侧钩子——T1 请求载荷（DataBox 全局盒）与登记面（置停机态）
 	session.RestartRequestPayload = func() string {
 		return toolRT.DB.GetString("global", "host_restart_request")
@@ -602,6 +611,8 @@ func main() {
 		})
 	// 多会话 Idle 判据——全局闸门等全部已建会话（多猫面；majordomo 恒在列）
 	gate.setSessionsProvider(cats.sessions)
+	// 重启盘上现场——接力拉起即写 launching（登记面 registered 已在 restartState.Request 写）
+	gate.setIntentStore(restartIntent)
 	// 自启面（外壳件 2）——仅交互模式启用（非交互探针不得改写 HKCU Run）；托盘切换经 channel 回主线程执行
 	var autoStart autoStartPoller
 	var trayToggle chan struct{}
@@ -622,6 +633,12 @@ func main() {
 		// --run 模式不启 ticker——单指令驱动在主 goroutine 串行推进（见 [段12g-1]）
 		close(tickerDone)
 	} else {
+		// [段12h] 开发态语料监听（L4）——CAT5_DEV=1 才启用（生产态静默重载是灾难）。
+		// 变化经 PostToMain 投递到主循环执行（换图必须与 Tick 串行）；进程退出即随宿主结束。
+		if os.Getenv("CAT5_DEV") == "1" && toolRT.Reloader != nil {
+			toolRT.StartCorpusWatcher(500 * time.Millisecond)
+			logs.Add("CatHome5", observe.LevelInfo, "语料监听已启用（CAT5_DEV=1 · 500ms 轮询 · 变化即 fresh 重载）", "TOOL", "", "", 0, frame.Current(), false)
+		}
 		go func() {
 			defer close(tickerDone)
 			ticker := time.NewTicker(100 * time.Millisecond)
@@ -635,6 +652,10 @@ func main() {
 					handleAutoStartToggle(store, schema, logs)
 				case <-ticker.C:
 					toolRT.Runner.Tick()
+					// 语料热重载收尾——drain 的 pending 换图必须与 Tick 串行（换图读旧图内部 map）
+					if toolRT.Reloader != nil {
+						toolRT.Reloader.TickPending()
+					}
 					// 全部会话推进（多猫面——majordomo 与已启动猫逐条 Pump）
 					cats.pumpAll()
 					// 延迟队列泵（c-2）——共享队列到点条目按 catKey 分发（停机态保留；对齐 C# ChatBridge.PumpDelays）
@@ -671,6 +692,25 @@ func main() {
 			logs.Add("CatHome5", observe.LevelInfo, "宿主启动回执已登记（重启链 T6——注入 Majordomo 会话）", "RESTART", "", "", 0, frame.Current(), false)
 		}
 	}
+	// [段12g-2] 重启现场结算 + 轮级续跑（G9 / G10）——只有接力回执拉起的实例才续跑：
+	//   controlled = 本次启动带 --majordomopush（relay 拉起的受控重启实锤），崩溃 / 人工启动不带；
+	//   现场停在 registered / launching：带 push → done；不带 → stale 并出声（重启链未完成）。
+	pushText := strings.TrimSpace(*pushFlag)
+	if settled, changed := settleRestartIntent(restartIntent, pushText, version, os.Getpid()); changed {
+		level := observe.LevelInfo
+		if settled.Phase != admin.RestartPhaseDone || (settled.DeployReported && settled.DeployExit != 0) {
+			level = observe.LevelWarn
+		}
+		logs.Add("CatHome5", level, restartIntentSummary(settled), "RESTART", "", "", 0, frame.Current(), false)
+	}
+	if !nonInteractive {
+		resumed, skipped := resumePendingRounds(cats, pushText != "", func(level int, message string) {
+			logs.Add("CatHome5", level, message, "RESTART", "", "", 0, frame.Current(), false)
+		})
+		if resumed+skipped > 0 {
+			logs.Add("CatHome5", observe.LevelInfo, "轮级续跑结算：续跑 "+strconv.Itoa(resumed)+" / 跳过 "+strconv.Itoa(skipped), "RESTART", "", "", 0, frame.Current(), false)
+		}
+	}
 
 	// [段12g-1] 单指令模式（--run）——非交互：不监听端口 / 不拉前端测试 / 不起托盘；
 	// 投递一条指令 → 单 goroutine 驱动至全局 Idle → 输出 → 收尾退出（对齐 C# RunSingle）
@@ -680,6 +720,9 @@ func main() {
 			gate:   gate,
 			tick: func() {
 				toolRT.Runner.Tick()
+				if toolRT.Reloader != nil {
+					toolRT.Reloader.TickPending()
+				}
 				cats.pumpAll()
 				cats.pumpDelays(delays)
 				router.ConsumePendingNewSession()

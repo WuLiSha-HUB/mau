@@ -110,7 +110,7 @@ func TestBuildInjectListWithMount(t *testing.T) {
 		"ccbp:L2/SOUL.md",
 	}
 	// 专家组：旧挂载条目全剥，新项目四段按序追加
-	next := deps.buildInjectListWithMount(current, "Demo", "Old", true)
+	next := deps.buildInjectListWithMount(current, "Demo", "Old", true, nil)
 	want := []string{
 		"ccbp:AGENTS.md",
 		"ccbp:L2/SOUL.md",
@@ -127,14 +127,28 @@ func TestBuildInjectListWithMount(t *testing.T) {
 		t.Fatalf("专家组清单不符:\n实际 %v\n期望 %v", next, want)
 	}
 	// 关模式：L3 只挂 readme.md 单件
-	next = deps.buildInjectListWithMount(current, "Demo", "Old", false)
+	next = deps.buildInjectListWithMount(current, "Demo", "Old", false, nil)
 	if !contains(next, "ccbp:L3/Demo/readme.md") || contains(next, "ccbp:L3/Demo") {
 		t.Fatalf("关模式 L3 段不符: %v", next)
 	}
 	// 取消挂载（project 空）：只剥旧条目，不追加
-	next = deps.buildInjectListWithMount(current, "", "Old", true)
+	next = deps.buildInjectListWithMount(current, "", "Old", true, nil)
 	if strings.Join(next, " | ") != "ccbp:AGENTS.md | ccbp:L2/SOUL.md" {
 		t.Fatalf("取消挂载清单不符: %v", next)
+	}
+	// 模板勾选关掉的挂载段——off 命中即不追加（摘除照旧）
+	next = deps.buildInjectListWithMount(current, "Demo", "Old", true, map[string]bool{
+		"job": true, "l3": true, "glossary": true,
+	})
+	wantOff := []string{
+		"ccbp:AGENTS.md",
+		"ccbp:L2/SOUL.md",
+		"ccbp:Project/Demo/design-status.md",
+		"ccbp:Project/Demo/project.md",
+		"ccbp:Project/Demo/todo.md",
+	}
+	if strings.Join(next, " | ") != strings.Join(wantOff, " | ") {
+		t.Fatalf("关段清单不符:\n实际 %v\n期望 %v", next, wantOff)
 	}
 }
 
@@ -375,6 +389,50 @@ func TestInjectPreview(t *testing.T) {
 	}
 	if contains(decodeListJSON(t, tplPayload.InjectList), "ccbp:AGENTS.md") {
 		t.Fatalf("模板基底不应含该猫条目: %s", tplPayload.InjectList)
+	}
+	// cat 空 → 模板「启用集」：未打勾（defaultInjectDisabled）的条目不进预览——
+	// 预览清单会拼进派活提示词的「前文已挂载」栏，列出未注入的条目 = 告诉猫「已读」而实际没有。
+	tplWithDisabled := &config.CatDefault{
+		BaseRole:              "基础",
+		DefaultToolNames:      "text-read",
+		DefaultInjectList:     []string{"ccbp:AGENTS.md", "ccbp:L2/Worker/relic", "ccbp:L1"},
+		DefaultInjectDisabled: []string{"ccbp:L2/Worker/relic"},
+	}
+	if err := config.SaveCatDefault(filepath.Join(root, "config", "cat-default.cfg"), tplWithDisabled); err != nil {
+		t.Fatalf("写 cat-default.cfg 失败: %v", err)
+	}
+	rec = do(t, deps, "GET", "/api/v1/inject/preview?project=Demo", "")
+	var enabledPayload injectPreviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &enabledPayload); err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	enabledList := decodeListJSON(t, enabledPayload.InjectList)
+	if !contains(enabledList, "ccbp:AGENTS.md") || !contains(enabledList, "ccbp:L1") {
+		t.Fatalf("预览缺模板启用条目: %v", enabledList)
+	}
+	if contains(enabledList, "ccbp:L2/Worker/relic") {
+		t.Fatalf("预览列了未打勾（disabled）的条目: %v", enabledList)
+	}
+	// @mount:l3@Demo —— 挂载段开关：勾掉后挂 Demo 不追加 L3 段（带项目名只对该项目生效）
+	tplWithDisabled.DefaultInjectList = append(tplWithDisabled.DefaultInjectList, "@mount:l3@Demo")
+	tplWithDisabled.DefaultInjectDisabled = append(tplWithDisabled.DefaultInjectDisabled, "@mount:l3@Demo")
+	if err := config.SaveCatDefault(filepath.Join(root, "config", "cat-default.cfg"), tplWithDisabled); err != nil {
+		t.Fatalf("写 cat-default.cfg 失败: %v", err)
+	}
+	rec = do(t, deps, "GET", "/api/v1/inject/preview?project=Demo&expert=true", "")
+	var offPayload injectPreviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &offPayload); err != nil {
+		t.Fatalf("解析失败: %v", err)
+	}
+	offList := decodeListJSON(t, offPayload.InjectList)
+	if contains(offList, "ccbp:L3/Demo") {
+		t.Fatalf("@mount:l3@Demo 未生效（L3 段仍追加）: %v", offList)
+	}
+	if !contains(offList, "ccbp:Project/Demo/todo.md") {
+		t.Fatalf("关 L3 不应连带关档案四件: %v", offList)
+	}
+	if contains(offList, "@mount:l3@Demo") {
+		t.Fatalf("挂载段开关位混进了前文清单: %v", offList)
 	}
 }
 

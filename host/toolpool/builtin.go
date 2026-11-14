@@ -16,9 +16,9 @@ func BuiltinToolsJSON() string {
 		`,` +
 		`{"name":"info","description":"本会话环境自省——返回分类 JSON 块：version（版本 + 编译时刻）/ time（当前时间）/ llm（本猫生效端点）/ endpoint（本地端点：对话页 + 管理面板）/ roots（可见受控根 id/writable/note/path——绝对路径）/ tokens（前文长度 + 最近前文变动时刻）/ packs（挂载包）/ tools_drift（漂移——added 附用法摘要 name/desc/args（*=必填）· removed 给名字；仅不一致时输出）/ tools_defect（工具组定义缺陷——group/stage/reason；仅非空时输出）/ timeback（上下文作用域——active 活跃作用域 · recent 归档尾部 5 条 · archive 写面可用性；无数据时不出该键）（agent 的眼睛；R1.2）","parameters":{"type":"object","properties":{}}}` +
 		`,` +
-		`{"name":"host-reload","description":"热重载语料 dll（宿主级）——在 mau-proj 编译成功后单独调用（建议下一轮）；事务三段式：加载失败保留旧版本；cat=已加载 Flow 注册名（host-flows 查当前清单）","parameters":{"type":"object","properties":{"cat":{"type":"string","description":"Flow 注册名（host-flows 查当前全部）"}},"required":["cat"]}}` +
+		`{"name":"host-reload","description":"语料级热重载（宿主级）——重建单组语料图并原子换句柄，宿主不重启。mode=fresh（默认：状态回初始 / 私有盒清空 / 旧工单回收）| carry（同名状态机取值合法则沿用 + 私有盒全量迁移）| drain（等本组在途导线与工单归零后换图；未归零回 pending，由主循环下一帧收尾）。门禁与启动期同源：语法诊断 / 缺积木任一不过即拒绝且现状不改。cat=已加载 Flow 注册名（host-flows 查清单）","parameters":{"type":"object","properties":{"cat":{"type":"string","description":"Flow 注册名（组名——host-flows 查当前全部）"},"mode":{"type":"string","description":"迁移模式：fresh（默认）| carry | drain"}},"required":["cat"]}}` +
 		`,` +
-		`{"name":"host-flows","description":"查看当前运行 Flow 现状（宿主级）——Registry 动态面：每个已加载 Flow 的 Id/Name/Kind/句柄状态/dll 路径；新增/重载后查询目标清单用","parameters":{"type":"object","properties":{}}}` +
+		`{"name":"host-flows","description":"查看当前运行 Flow 现状（宿主级）——每组一行：ID / 组名 / gen（重载代际，首次加载为 0）/ hash（语料内容哈希前 8 位）/ wires（导线数）/ states（状态机数）/ inFlight（本组在途工单）/ pending（是否有等待换图）。重载前后用它确认换代是否生效","parameters":{"type":"object","properties":{}}}` +
 		`,` +
 		`{"name":"pack","description":"加载包注入——按 key 注入预设文件包（池 packs.json 定义 + 本猫挂载授权），一次调用完成加载；返回逐件明细（件数/字符数/失败原因）。收工/蒸馏/审查等跨身份动作的前置加载入口。","parameters":{"type":"object","properties":{"key":{"type":"string","description":"包 key（info 可见本猫已挂载包）"}},"required":["key"]}}` +
 		`,` +

@@ -29,7 +29,7 @@ func TestHostRestart(t *testing.T) {
 	if !ok {
 		t.Fatalf("登记应成功，got %q", out)
 	}
-	wantHead := `{"ok":true,"tool":"restart-incr","mode":"incr","target":"D:\\Mau\\MauOut5","push":true}`
+	wantHead := `{"ok":true,"tool":"restart-incr","mode":"incr","target":"D:\\Mau\\MauOut5","push":true,"scope":""}`
 	if !strings.HasPrefix(out, wantHead+"\n") {
 		t.Fatalf("A214 头不符：\n got %q\nwant %q", out, wantHead)
 	}
@@ -37,9 +37,21 @@ func TestHostRestart(t *testing.T) {
 		t.Fatalf("摘要行缺失：%q", out)
 	}
 	payload := db.GetString("global", "host_restart_request")
-	mode, target, push := DecodeRestartRequest(payload)
-	if mode != "incr" || target != `D:\Mau\MauOut5` || push != "说明" {
-		t.Fatalf("载荷落盒不符：mode=%q target=%q push=%q", mode, target, push)
+	mode, target, push, scope := DecodeRestartRequest(payload)
+	if mode != "incr" || target != `D:\Mau\MauOut5` || push != "说明" || scope != "" {
+		t.Fatalf("载荷落盒不符：mode=%q target=%q push=%q scope=%q", mode, target, push, scope)
+	}
+	// scope=self——载荷带 scope + 头部带 scope + 正文给出不等待语义
+	out, ok = HostRestart(db, `{"catId":"majordomo","scope":"self"}`, "incr")
+	if !ok || !strings.Contains(out, `"scope":"self"`) || !strings.Contains(out, "不等待其它猫在途轮") {
+		t.Fatalf("scope=self 回执不符：ok=%v out=%q", ok, out)
+	}
+	if _, _, _, gotScope := DecodeRestartRequest(db.GetString("global", "host_restart_request")); gotScope != "self" {
+		t.Fatalf("scope 应落盒为 self，got %q", gotScope)
+	}
+	// scope 值域——非法拒绝
+	if out, ok := HostRestart(db, `{"scope":"all-cats"}`, "full"); ok || !strings.Contains(out, "scope 非法") {
+		t.Fatalf("非法 scope 应拒绝，got ok=%v out=%q", ok, out)
 	}
 	// 空 target——摘要按受控根兜底文案
 	out, ok = HostRestart(db, `{"catId":"majordomo"}`, "host")
@@ -121,19 +133,19 @@ func TestHostCatInfo(t *testing.T) {
 	}
 }
 
-// TestDecodeRestartRequest 载荷解析——三字段 / 空串 / 非法 JSON / 缺字段。
+// TestDecodeRestartRequest 载荷解析——四字段 / 空串 / 非法 JSON / 缺字段。
 func TestDecodeRestartRequest(t *testing.T) {
-	mode, target, push := DecodeRestartRequest(`{"mode":"incr","target":"D:\\x","push":"p"}`)
-	if mode != "incr" || target != `D:\x` || push != "p" {
-		t.Fatalf("三字段解析不符：%q %q %q", mode, target, push)
+	mode, target, push, scope := DecodeRestartRequest(`{"mode":"incr","target":"D:\\x","push":"p","scope":"self"}`)
+	if mode != "incr" || target != `D:\x` || push != "p" || scope != "self" {
+		t.Fatalf("四字段解析不符：%q %q %q %q", mode, target, push, scope)
 	}
-	if mode, target, push := DecodeRestartRequest(""); mode != "" || target != "" || push != "" {
-		t.Fatalf("空串应按零值：%q %q %q", mode, target, push)
+	if mode, target, push, scope := DecodeRestartRequest(""); mode != "" || target != "" || push != "" || scope != "" {
+		t.Fatalf("空串应按零值：%q %q %q %q", mode, target, push, scope)
 	}
-	if mode, target, push := DecodeRestartRequest("not-json"); mode != "" || target != "" || push != "" {
-		t.Fatalf("非法 JSON 应按零值：%q %q %q", mode, target, push)
+	if mode, target, push, scope := DecodeRestartRequest("not-json"); mode != "" || target != "" || push != "" || scope != "" {
+		t.Fatalf("非法 JSON 应按零值：%q %q %q %q", mode, target, push, scope)
 	}
-	if mode, _, _ := DecodeRestartRequest(`{"target":"x"}`); mode != "" {
-		t.Fatalf("缺 mode 应为空：%q", mode)
+	if mode, _, _, scope := DecodeRestartRequest(`{"target":"x"}`); mode != "" || scope != "" {
+		t.Fatalf("缺 mode/scope 应为空：%q %q", mode, scope)
 	}
 }

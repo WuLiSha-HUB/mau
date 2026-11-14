@@ -248,17 +248,19 @@ func (d *Deps) handleInjectPreviewGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if current == nil {
-		// 无 cat（或该猫无 cat.cfg）→ 按新猫模板算，与 cat.new 的继承口径一致
+		// 无 cat（或该猫无 cat.cfg）→ 按新猫模板「启用集」算，与 cat.new 的继承口径一致。
+		// 🔴 不能直接用 DefaultInjectList：未打勾的条目在 DefaultInjectDisabled 里，cat.new 不继承它们，
+		// 预览也不能列出来——预览清单会拼进派活提示词的「前文已挂载」栏，列了等于告诉猫「已读」，实际没注入。
 		current = []string{}
-		if tpl, err := config.LoadCatDefault(d.catDefaultPath()); err == nil && tpl != nil && tpl.DefaultInjectList != nil {
-			current = tpl.DefaultInjectList
+		if tpl, err := config.LoadCatDefault(d.catDefaultPath()); err == nil && tpl != nil {
+			current = config.ResolveTplEnabledInject(tpl)
 		}
 	}
 	useExpert := curExpert
 	if expertSet {
 		useExpert = expert
 	}
-	next := d.buildInjectListWithMount(current, project, oldMount, useExpert)
+	next := d.buildInjectListWithMount(current, project, oldMount, useExpert, d.mountOffFor(project))
 	writeJSON(w, injectPreviewResponse{OK: true, InjectList: compactListJSON(next), Expert: useExpert, Mount: project})
 }
 
@@ -350,7 +352,7 @@ func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Se
 	if expertSet {
 		cfg.ProjectMountExpert = expert
 	}
-	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, cfg.ProjectMountExpert)
+	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, cfg.ProjectMountExpert, d.mountOffFor(project))
 	cfg.InjectList = next
 	cfg.ProjectMount = project
 	msgCount := sessionMessageCountOf(sess)
@@ -425,7 +427,7 @@ func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet 
 	if expertSet {
 		cfg.ProjectMountExpert = expert
 	}
-	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, cfg.ProjectMountExpert)
+	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, cfg.ProjectMountExpert, d.mountOffFor(project))
 	cfg.InjectList = next
 	cfg.ProjectMount = project
 	msgCount := d.sessionMessageCount()
@@ -558,7 +560,9 @@ func isWorkspaceProjectDoc(spec, project string) bool {
 //
 // 顺序对齐 C#（并发协议侧统一于 2026-11-07）：Job 三件（exp / skill / tools）→ L3 段 → 档案四件
 // （design-status / glossary / project / todo）。保序：未命中移除条件的条目逐字保留原位。
-func (d *Deps) buildInjectListWithMount(current []string, project, mountedProject string, expert bool) []string {
+//
+// 🔴 off = 模板勾选关掉的挂载段（见 mountOffFor）——关掉的段不追加（摘除逻辑不受影响）。
+func (d *Deps) buildInjectListWithMount(current []string, project, mountedProject string, expert bool, off map[string]bool) []string {
 	oldMount := strings.TrimSpace(mountedProject)
 	list := make([]string, 0, len(current)+8)
 	for _, raw := range current {
@@ -589,23 +593,27 @@ func (d *Deps) buildInjectListWithMount(current []string, project, mountedProjec
 		return list
 	}
 	// ① Job 三件
-	if jobDir := d.resolveSpec(jobSpecPrefix + project); jobDir != "" && dirExists(jobDir) {
-		for _, name := range []string{"exp.md", "skill.md", "tools.md"} {
-			if fileExists(filepath.Join(jobDir, name)) {
-				list = append(list, jobSpecPrefix+project+"/"+name)
+	if !off["job"] {
+		if jobDir := d.resolveSpec(jobSpecPrefix + project); jobDir != "" && dirExists(jobDir) {
+			for _, name := range []string{"exp.md", "skill.md", "tools.md"} {
+				if fileExists(filepath.Join(jobDir, name)) {
+					list = append(list, jobSpecPrefix+project+"/"+name)
+				}
 			}
 		}
 	}
 	// ② L3 段——Job 段之下、项目档案之上：专家模式=整目录（一级 *.md 按名展开）；关=只挂 readme.md
-	if expert {
-		spec := l3SpecPrefix + project
-		if dir := d.resolveSpec(spec); dir != "" && dirExists(dir) {
-			list = append(list, spec)
-		}
-	} else {
-		spec := l3SpecPrefix + project + "/readme.md"
-		if path := d.resolveSpec(spec); path != "" && fileExists(path) {
-			list = append(list, spec)
+	if !off["l3"] {
+		if expert {
+			spec := l3SpecPrefix + project
+			if dir := d.resolveSpec(spec); dir != "" && dirExists(dir) {
+				list = append(list, spec)
+			}
+		} else {
+			spec := l3SpecPrefix + project + "/readme.md"
+			if path := d.resolveSpec(spec); path != "" && fileExists(path) {
+				list = append(list, spec)
+			}
 		}
 	}
 	// ③ 项目档案四件
@@ -613,6 +621,9 @@ func (d *Deps) buildInjectListWithMount(current []string, project, mountedProjec
 		projDir := d.resolveSpec(strings.TrimSuffix(projDocSpec, "/"))
 		if projDir != "" && dirExists(projDir) {
 			for _, name := range []string{"design-status.md", "glossary.md", "project.md", "todo.md"} {
+				if off[strings.TrimSuffix(name, ".md")] {
+					continue
+				}
 				if fileExists(filepath.Join(projDir, name)) {
 					list = append(list, projDocSpec+name)
 				}
@@ -620,6 +631,42 @@ func (d *Deps) buildInjectListWithMount(current []string, project, mountedProjec
 		}
 	}
 	return list
+}
+
+// mountOffFor 模板勾选关掉的挂载段——`@mount:<段>[@<项目名>]` 落在 defaultInjectDisabled 里即关闭该段：
+// 不带项目名对所有项目生效，带项目名只对该项目生效（项目名不区分大小写）。
+func (d *Deps) mountOffFor(project string) map[string]bool {
+	off := map[string]bool{}
+	tpl, err := config.LoadCatDefault(d.catDefaultPath())
+	if err != nil || tpl == nil {
+		return off
+	}
+	for _, raw := range tpl.DefaultInjectDisabled {
+		seg, pid := parseMountSwitch(raw)
+		if seg == "" {
+			continue
+		}
+		if pid == "" || strings.EqualFold(pid, strings.TrimSpace(project)) {
+			off[seg] = true
+		}
+	}
+	return off
+}
+
+// parseMountSwitch 解析 `@mount:<段>[@<项目名>]`——非开关条目返回空段。
+func parseMountSwitch(raw string) (seg, project string) {
+	s := strings.TrimSpace(raw)
+	if !strings.HasPrefix(strings.ToLower(s), config.MountSwitchPrefix) {
+		return "", ""
+	}
+	rest := strings.TrimSpace(s[len(config.MountSwitchPrefix):])
+	if rest == "" {
+		return "", ""
+	}
+	if i := strings.Index(rest, "@"); i >= 0 {
+		return strings.ToLower(strings.TrimSpace(rest[:i])), strings.TrimSpace(rest[i+1:])
+	}
+	return strings.ToLower(rest), ""
 }
 
 // BuildJobList 从注入清单提取 Job 清单——条目前缀 ccbp:L2/Job/，取其后第一段目录名，去重保序。

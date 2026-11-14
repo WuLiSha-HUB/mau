@@ -62,6 +62,30 @@ func fieldBoolPtr(fields map[string]json.RawMessage, key string) *bool {
 	return &value
 }
 
+// handleFlowReload 语料热重载（POST /api/v1/flow/reload）——body {"name":"TextCat","mode":"fresh|carry|drain"}。
+//
+// 回执由组合根产（与 host-reload 工具同一执行面）——HTTP 只是第二个入口，不是第二份实现。
+func (s *Server) handleFlowReload(w http.ResponseWriter, r *http.Request) {
+	if s.flowReloader == nil {
+		writeText(w, `{"ok":false,"error":"FLOW_RELOAD_UNAVAILABLE","message":"语料热重载面未接线"}`)
+		return
+	}
+	fields, ok := readBodyFields(r)
+	if !ok {
+		writeText(w, `{"ok":false,"error":"BAD_BODY","message":"请求体不是 JSON"}`)
+		return
+	}
+	name := fieldString(fields, "name")
+	if name == "" {
+		name = fieldString(fields, "cat")
+	}
+	if name == "" {
+		writeText(w, `{"ok":false,"error":"BAD_ARGS","message":"缺 name（组名——GET /api/v1/snapshot 的 cats 段可查）"}`)
+		return
+	}
+	writeText(w, s.flowReloader(name, fieldString(fields, "mode")))
+}
+
 // writeText 写 JSON 文本响应（回执由构建器自产——与 C# Results.Text(json, "application/json") 同形）。
 func writeText(w http.ResponseWriter, text string) {
 	w.Header().Set("Content-Type", "application/json")
