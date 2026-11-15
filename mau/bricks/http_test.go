@@ -94,7 +94,7 @@ func TestHTTPGetTruncate(t *testing.T) {
 	for _, want := range []string{
 		`"chars":5000`,
 		" · 5,000 字符 · ",
-		"\n[截断] 正文 5,000 字符，已列 10 字符（max_body 提额可看全 / 0 = 只取响应头）",
+		"\n[截断] 正文 5,000 字符，已列 10 字符（上限 200,000；要更多请落盘后用 text-* 分段读 / 0 = 只取响应头）",
 		"\n正文:\n" + strings.Repeat("字", 10),
 	} {
 		if !strings.Contains(got, want) {
@@ -103,6 +103,26 @@ func TestHTTPGetTruncate(t *testing.T) {
 	}
 	if strings.Contains(got, strings.Repeat("字", 11)) {
 		t.Fatalf("正文未按 max_body 截断")
+	}
+}
+
+// TestHTTPGetMaxBodyClamp max_body 超硬上限——按上限取并在回执出声（G20）。
+func TestHTTPGetMaxBodyClamp(t *testing.T) {
+	payload := strings.Repeat("a", maxHTTPBodyChars+5)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(payload))
+	}))
+	defer server.Close()
+
+	got, ok := HTTPGet(`{"url":"` + server.URL + `/t","max_body":999999}`)
+	if !ok {
+		t.Fatalf("期望成功，实际: %s", got)
+	}
+	if !strings.Contains(got, "已列 200,000 字符（上限 200,000") {
+		t.Fatalf("clamp 后回执不符: %s", got)
+	}
+	if strings.Contains(got, payload) {
+		t.Fatalf("正文未按上限截断")
 	}
 }
 

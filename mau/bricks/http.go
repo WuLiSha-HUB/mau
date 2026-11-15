@@ -12,6 +12,12 @@ const (
 	toolHTTPProbe = "http-probe"
 )
 
+// maxHTTPBodyChars 正文回执硬上限（字符）——与入前文限幅同口径（G20）。
+//
+// 语义：max_body 是「我要这么多」，上限内照数给；超上限按上限取并在回执出声，
+// 不让一次 http-get 把前文吃掉一大块（需要更多请落盘后用 text-* 分段读）。
+const maxHTTPBodyChars = 200000
+
 // HTTPGet 执行 http-get 工具——取回状态码 / 响应头 / 正文（正文按上限截断，截断事实可见）。
 //
 // 语义对齐 C# HttpGetBrick：HTTP 4xx/5xx 属有效响应仍算成功；连不上算失败。
@@ -49,6 +55,9 @@ func HTTPGet(argsJSON string) (string, bool) {
 			return "ERR|BAD_ARGS|参数 max_body 非整数: " + raw, false
 		}
 		maxBody = parsed
+	}
+	if maxBody > maxHTTPBodyChars {
+		maxBody = maxHTTPBodyChars
 	}
 	facts, err := HTTPSend(HTTPRequestSpec{
 		URL:       target,
@@ -130,6 +139,9 @@ func HTTPPost(argsJSON string) (string, bool) {
 			return "ERR|BAD_ARGS|参数 max_body 非整数: " + raw, false
 		}
 		maxBody = parsed
+	}
+	if maxBody > maxHTTPBodyChars {
+		maxBody = maxHTTPBodyChars
 	}
 	body := Get(argsJSON, "body")
 	contentType := Get(argsJSON, "content_type")
@@ -304,7 +316,9 @@ func appendHTTPFooter(b *strings.Builder, facts HTTPFacts, maxBody int) {
 		b.WriteString(formatN0(int64(facts.BodyChars)))
 		b.WriteString(" 字符，已列 ")
 		b.WriteString(formatN0(int64(maxBody)))
-		b.WriteString(" 字符（max_body 提额可看全 / 0 = 只取响应头）")
+		b.WriteString(" 字符（上限 ")
+		b.WriteString(formatN0(int64(maxHTTPBodyChars)))
+		b.WriteString("；要更多请落盘后用 text-* 分段读 / 0 = 只取响应头）")
 	}
 	if maxBody == 0 {
 		b.WriteString("\n[正文] 未读取（max_body=0——只取响应头）")

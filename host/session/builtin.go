@@ -421,6 +421,14 @@ func (s *Session) executePack(argsJSON string) string {
 		contents = append(contents, text)
 		totalChars += utf16Len(text)
 	}
+	limitedTotal := 0
+	for i := range contents {
+		contents[i] = limitPackContent(contents[i])
+		limitedTotal += utf16Len(contents[i])
+	}
+	if limitedTotal > maxPackTotalChars {
+		return "ERR|PACK_TOO_LARGE|" + packKey + " 总量 " + itoa(limitedTotal) + " 字符超上限 " + itoa(maxPackTotalChars) + "（拆包或减少件数后重试）"
+	}
 	if len(failures) > 0 {
 		var b strings.Builder
 		b.WriteString("ERR|PACK_LOAD_FAILED|")
@@ -454,6 +462,30 @@ func (s *Session) executePack(argsJSON string) string {
 	logAt(LogModuleHost, 1, "pack 注入: cat="+s.CatKey+" | key="+packKey+" | "+itoa(len(targets))+" 件 / "+itoa(totalChars)+" 字符", "INJECT")
 	return metaHead("pack", true, packKey, len(targets), []metaField{{"chars", totalChars}},
 		packKey+" | "+itoa(len(targets))+" 件 · "+itoa(totalChars)+" 字符"+"\n"+body.String())
+}
+
+// maxPackTotalChars 单次 pack 注入总量上限（G20）——一批加载包只走一次注入，超限整包拒绝。
+const maxPackTotalChars = 200000
+
+// maxPackFileChars 单件内容上限（G20）——超限按字符边界截断并明示，整包总量另判。
+const maxPackFileChars = 50000
+
+// limitPackContent 单件内容限幅——按字符边界截断并明示总量。
+func limitPackContent(text string) string {
+	total := utf16Len(text)
+	if total <= maxPackFileChars {
+		return text
+	}
+	count := 0
+	cut := len(text)
+	for i := range text {
+		if count >= maxPackFileChars {
+			cut = i
+			break
+		}
+		count++
+	}
+	return text[:cut] + "\n…[截断: 本件共 " + itoa(total) + " 字符，已注入前 " + itoa(maxPackFileChars) + " 字符]"
 }
 
 // hasMDSuffix 判定 .md 后缀（大小写不敏感，对齐 Windows 通配 *.md）。

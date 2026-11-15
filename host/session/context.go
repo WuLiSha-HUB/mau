@@ -106,7 +106,7 @@ func (c *Context) AddToolResult(toolCallID, toolName, result string) *Message {
 			return nil
 		}
 	}
-	msg := newMessage(RoleTool, result)
+	msg := newMessage(RoleTool, limitToolResult(result))
 	msg.ToolCallID = toolCallID
 	msg.ToolName = toolName
 	c.history = append(c.history, msg)
@@ -114,6 +114,34 @@ func (c *Context) AddToolResult(toolCallID, toolName, result string) *Message {
 	c.mu.Unlock()
 	c.fireAppend()
 	return &msg
+}
+
+// maxToolResultChars 单条工具结果入前文上限（字符）——防一条结果爆前文（G20）。
+//
+// 依据：2026-11-14 扫描 2,189 行历史 jsonl，最大工具回执 25,504 字符；
+// 阈值取 200,000 字符（≈ 600 KB UTF-8 中文）——挡 1 MB 级爆量，不影响正常回执。
+const maxToolResultChars = 200000
+
+// limitToolResult 入前文限幅——超上限按字符边界截断并在尾部明示总量。
+//
+// 完整结果仍在界面工具卡（flushToolCard 走 dog.Result 原文）；
+// 本函数只影响进入前文（LLM 可见）的那一份。
+func limitToolResult(result string) string {
+	total := utf16Len(result)
+	if total <= maxToolResultChars {
+		return result
+	}
+	count := 0
+	cut := len(result)
+	for i := range result {
+		if count >= maxToolResultChars {
+			cut = i
+			break
+		}
+		count++
+	}
+	return result[:cut] + "\n…[截断: 工具结果共 " + itoa(total) + " 字符，入前文保留前 " + itoa(maxToolResultChars) +
+		" 字符；完整内容见界面工具卡，需要更多请分段读取]"
 }
 
 // Messages 获取消息数组副本——直接传给 LLM API。

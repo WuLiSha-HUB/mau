@@ -256,6 +256,13 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 	if omittedImages > 0 {
 		logAt(1, "请求体预算：省略 "+itoa(omittedImages)+" 张图片（安全上限 3 MB——本地网关 4 MB 断连实测）")
 	}
+	if len(body) > maxRequestBodyBytes {
+		// 上下文超限拦截（G20）：图片已按预算处理过仍超限 = 纯文本前文本身过大。
+		// 直发会被网关掐断（WinError 10053），改为显式失败 + 出口。
+		emit(Event{Kind: EventError, Text: "ERR|CONTEXT_TOO_LARGE|请求体 " + itoa(len(body)) + " 字节超安全上限 " + itoa(maxRequestBodyBytes) +
+			"（图片已按预算处理）——请回滚会话或开新会话后重试"})
+		return
+	}
 	sentWithImages := omittedImages == 0 && requestHasImages(messages)
 	imageDowngraded := false
 	retryCount := 0

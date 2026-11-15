@@ -120,6 +120,30 @@ func TestExecutePackAtomicReject(t *testing.T) {
 	}
 }
 
+// TestExecutePackTooLarge 整包超总量上限——拒绝并指名数字（G20）。
+func TestExecutePackTooLarge(t *testing.T) {
+	s := newBuiltinSession(t)
+	dir := t.TempDir()
+	big := strings.Repeat("字", maxPackFileChars)
+	for _, name := range []string{"a.md", "b.md", "c.md", "d.md", "e.md"} {
+		os.WriteFile(filepath.Join(dir, name), []byte(big), 0o644)
+	}
+	s.SetPackProvider(
+		func(catKey, key string) string {
+			return `{"ok":true,"key":"huge","desc":"","paths":[` + jsonStr(dir) + `]}`
+		},
+		func(path string) (string, error) { return path, nil },
+		func(absPath string) (string, error) {
+			data, err := os.ReadFile(absPath)
+			return string(data), err
+		},
+	)
+	result := s.ExecuteBuiltin("pack", `{"key":"huge"}`)
+	if !strings.HasPrefix(result, "ERR|PACK_TOO_LARGE|huge 总量 250000 字符超上限 200000") {
+		t.Fatalf("整包超限文案不符: %s", result)
+	}
+}
+
 // TestExecuteSleepArgs sleep 参数面——未知 / 负值 / 非整数 / 时长区间。
 func TestExecuteSleepArgs(t *testing.T) {
 	s := newBuiltinSession(t)
