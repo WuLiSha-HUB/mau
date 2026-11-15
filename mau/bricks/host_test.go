@@ -11,21 +11,21 @@ import (
 func TestHostRestart(t *testing.T) {
 	db := runtime.NewDataBox()
 	// 未标记运行模式——非常驻交互形态按 RESTART_UNSUPPORTED 明示
-	out, ok := HostRestart(db, `{"catId":"majordomo"}`, "full")
+	out, ok := HostRestart(db, `{"catId":"majordomo"}`, "full", nil, nil)
 	if ok || !strings.HasPrefix(out, "ERR|RESTART_UNSUPPORTED|") {
 		t.Fatalf("未标记运行模式应拒绝，got ok=%v out=%q", ok, out)
 	}
 	SetInteractiveRunMode(db)
 	// 模式值域
-	if out, ok = HostRestart(db, `{"catId":"majordomo"}`, "bogus"); ok || !strings.Contains(out, "重启模式非法") {
+	if out, ok = HostRestart(db, `{"catId":"majordomo"}`, "bogus", nil, nil); ok || !strings.Contains(out, "重启模式非法") {
 		t.Fatalf("非法模式应拒绝，got ok=%v out=%q", ok, out)
 	}
 	// 参数面零容忍
-	if out, ok = HostRestart(db, `{"bogus":1}`, "full"); ok || !strings.Contains(out, "未知参数: bogus") {
+	if out, ok = HostRestart(db, `{"bogus":1}`, "full", nil, nil); ok || !strings.Contains(out, "未知参数: bogus") {
 		t.Fatalf("未知参数应拒绝，got ok=%v out=%q", ok, out)
 	}
 	// 成功——A214 头键序 + 摘要行 + 载荷落盒
-	out, ok = HostRestart(db, `{"target":"D:\\Mau\\MauOut5","push":"说明"}`, "incr")
+	out, ok = HostRestart(db, `{"target":"D:\\Mau\\MauOut5","push":"说明"}`, "incr", nil, nil)
 	if !ok {
 		t.Fatalf("登记应成功，got %q", out)
 	}
@@ -42,7 +42,7 @@ func TestHostRestart(t *testing.T) {
 		t.Fatalf("载荷落盒不符：mode=%q target=%q push=%q scope=%q", mode, target, push, scope)
 	}
 	// scope=self——载荷带 scope + 头部带 scope + 正文给出不等待语义
-	out, ok = HostRestart(db, `{"catId":"majordomo","scope":"self"}`, "incr")
+	out, ok = HostRestart(db, `{"catId":"majordomo","scope":"self"}`, "incr", nil, nil)
 	if !ok || !strings.Contains(out, `"scope":"self"`) || !strings.Contains(out, "不等待其它猫在途轮") {
 		t.Fatalf("scope=self 回执不符：ok=%v out=%q", ok, out)
 	}
@@ -50,19 +50,24 @@ func TestHostRestart(t *testing.T) {
 		t.Fatalf("scope 应落盒为 self，got %q", gotScope)
 	}
 	// scope 值域——非法拒绝
-	if out, ok := HostRestart(db, `{"scope":"all-cats"}`, "full"); ok || !strings.Contains(out, "scope 非法") {
+	if out, ok := HostRestart(db, `{"scope":"all-cats"}`, "full", nil, nil); ok || !strings.Contains(out, "scope 非法") {
 		t.Fatalf("非法 scope 应拒绝，got ok=%v out=%q", ok, out)
 	}
-	// 空 target——摘要按受控根兜底文案
-	out, ok = HostRestart(db, `{"catId":"majordomo"}`, "host")
-	if !ok || !strings.Contains(out, "受控根 mauout5") {
-		t.Fatalf("空 target 兜底文案不符：ok=%v out=%q", ok, out)
+	// 空 target——回执写「实际 target」（解析器结果），不写死受控根名
+	out, ok = HostRestart(db, `{"catId":"majordomo"}`, "host", func() string { return `D:\Mau\MauOut` }, nil)
+	if !ok || !strings.Contains(out, `D:\Mau\MauOut`) || strings.Contains(out, "受控根 mauout5") {
+		t.Fatalf("空 target 应写实际运行区：ok=%v out=%q", ok, out)
+	}
+	// 无解析器——写明「执行时解析」（不冒充具体路径）
+	out, ok = HostRestart(db, `{"catId":"majordomo"}`, "host", nil, nil)
+	if !ok || !strings.Contains(out, "执行时解析") {
+		t.Fatalf("无解析器应写执行时解析：ok=%v out=%q", ok, out)
 	}
 }
 
 // TestHostRestartNilDB 数据中台未注入——具名 ERR。
 func TestHostRestartNilDB(t *testing.T) {
-	out, ok := HostRestart(nil, `{"catId":"majordomo"}`, "full")
+	out, ok := HostRestart(nil, `{"catId":"majordomo"}`, "full", nil, nil)
 	if ok || !strings.HasPrefix(out, "ERR|HOSTCMD_NO_SERVICE|") {
 		t.Fatalf("nil db 应具名拒绝，got ok=%v out=%q", ok, out)
 	}
@@ -147,5 +152,32 @@ func TestDecodeRestartRequest(t *testing.T) {
 	}
 	if mode, _, _, scope := DecodeRestartRequest(`{"target":"x"}`); mode != "" || scope != "" {
 		t.Fatalf("缺 mode/scope 应为空：%q %q", mode, scope)
+	}
+}
+
+// TestHostRestartPreflight 前置检查——cwd 持有者命中即拒绝登记（必失败的重启在登记前反馈）；
+// 扫描失败不阻断但正文出声。
+func TestHostRestartPreflight(t *testing.T) {
+	db := runtime.NewDataBox()
+	SetInteractiveRunMode(db)
+	// 命中——拒绝登记、点名持有者、载荷不落盒
+	out, ok := HostRestart(db, `{"catId":"majordomo"}`, "full", func() string { return `D:\Mau\MauOut` },
+		func(target string) (string, string) {
+			if target != `D:\Mau\MauOut` {
+				t.Fatalf("前置检查应拿解析后的实际 target：%q", target)
+			}
+			return "pid 4242 Unity.exe → D:\\Mau\\MauOut", ""
+		})
+	if ok || !strings.HasPrefix(out, "ERR|RESTART_BLOCKED|") || !strings.Contains(out, "pid 4242 Unity.exe") {
+		t.Fatalf("命中应拒绝登记并点名持有者：ok=%v out=%q", ok, out)
+	}
+	if payload := db.GetString("global", "host_restart_request"); payload != "" {
+		t.Fatalf("拒绝时不应落请求载荷：%q", payload)
+	}
+	// 扫描失败——登记成功，正文带出
+	out, ok = HostRestart(db, `{"catId":"majordomo"}`, "incr", func() string { return `D:\Mau\MauOut` },
+		func(string) (string, string) { return "", "tasklist 失败" })
+	if !ok || !strings.Contains(out, "前置检查：进程扫描失败") {
+		t.Fatalf("扫描失败应登记并出声：ok=%v out=%q", ok, out)
 	}
 }

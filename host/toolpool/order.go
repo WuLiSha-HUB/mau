@@ -38,6 +38,7 @@ var readOnlyNames = []string{
 	"browser-open", "browser-read", "browser-shot",
 	"majordomo-catinfo",
 	"py-list", "proc-list",
+	"go-vet",
 	"db-query", "db-get", "dbAdmin-libs",
 	"host-flows", "info", "time", "random", "pack", "Note",
 	"http-get", "http-probe",
@@ -62,6 +63,7 @@ var writeNames = []string{
 // exclusiveNames 是独占档清单（2）——预检读全项目 / 争抢构建产物 / 同 profile 进程互斥。
 var exclusiveNames = []string{
 	"cs-patch", "cs-member", "cs-comment", "cs-format", "cs-build", "cs-test",
+	"go-build", "go-test", "go-fmt",
 	"browser-headful", "proc-start", "proc-stop",
 }
 

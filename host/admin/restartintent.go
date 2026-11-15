@@ -61,6 +61,8 @@ type RestartIntent struct {
 	DeployExit int `json:"deployExit"`
 	// DeployReported 部署结果已上报（false = 旧 relay 未写 / 未走到结算——零值 0 与「未写」不可区分）
 	DeployReported bool `json:"deployReported,omitempty"`
+	// DeployReport 本次部署报告路径（部署结论的单一来源——relay 段4 登记，收尾按报告 exitCode 回写）
+	DeployReport string `json:"deployReport,omitempty"`
 	// Reason 失败 / stale 原因（出声面——空 = 无）
 	Reason string `json:"reason,omitempty"`
 	// RequestedAt 登记时刻（Unix 毫秒）
@@ -178,26 +180,48 @@ func (s *RestartIntentStore) Launching(oldPID, relayPID int) error {
 	return s.write(intent)
 }
 
-// SetDeployResult 接力部署结算——relay 写（起新实例之前预写一次，收尾时补写终值）。
+// SetDeployReport 登记本次部署报告路径——部署结论的单一来源（relay 段4，起新实例之前）。
 //
-// 为什么要有这一条：deploy 失败后 relay 仍会起新实例（旧宿主已退出，服务不能停），
-// `phase=done` 只表示「重启链走完」，不含「运行区是否被替换」——2026-11-14 17:11 判例：
-// exit=3 未替换 + intent done（`L3/Mau/F-推理现场/20261114_deploy-fail-masked-by-intent-done/`）。
-//
-// 两段写：起新实例之前（新宿主启动即 Settle 判 done，之后写会被旧判据挡掉——18:03 判例 deployExit 缺失）
-// + 收尾补写终值（探活失败回退 2）。phase 本身不改写；done 且未替换时补 reason。
-func (s *RestartIntentStore) SetDeployResult(exitCode int) error {
+// 只记路径、不写 exitCode：写入时点报告还是前置版（complete=false），结论要等收尾。
+// 现场不存在（人工直接跑 deploy / 非重启链）→ 返回 os.ErrNotExist（调用方按「无现场」跳过）。
+func (s *RestartIntentStore) SetDeployReport(path string) error {
 	if s == nil || s.path == "" {
-		return nil
+		return os.ErrNotExist
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	intent, ok := s.readLocked()
 	if !ok {
-		return nil
+		return os.ErrNotExist
+	}
+	intent.DeployReport = path
+	return s.write(intent)
+}
+
+// SetDeployResult 接力部署结算——relay 写（收尾时按终版部署报告的 exitCode 回写）。
+//
+// 为什么要有这一条：deploy 失败后 relay 仍会起新实例（旧宿主已退出，服务不能停），
+// `phase=done` 只表示「重启链走完」，不含「运行区是否被替换」——2026-11-14 17:11 判例：
+// exit=3 未替换 + intent done（`L3/Mau/F-推理现场/20261114_deploy-fail-masked-by-intent-done/`）。
+//
+// 单一来源：exitCode 必须是部署报告里的 exitCode（reportPath 一并登记，审计两处永远一致）；
+// 不再接受「起新实例前按 replaced 猜测的 preResult」——0.36.8 判例：stale 场景 intent 0 / 报告 3。
+// 现场不存在 → 返回 os.ErrNotExist（调用方按「无现场」跳过，不造文件）。
+func (s *RestartIntentStore) SetDeployResult(exitCode int, reportPath string) error {
+	if s == nil || s.path == "" {
+		return os.ErrNotExist
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	intent, ok := s.readLocked()
+	if !ok {
+		return os.ErrNotExist
 	}
 	intent.DeployExit = exitCode
 	intent.DeployReported = true
+	if reportPath != "" {
+		intent.DeployReport = reportPath
+	}
 	// done 之后 relay 仍可能补写（终值 = 探活失败回退 / 人工介入）——原因同步补齐。
 	if intent.Phase == RestartPhaseDone && exitCode != 0 && intent.Reason == "" {
 		intent.Reason = "部署未替换（deployExit=" + strconv.Itoa(exitCode) + "）——运行区仍是旧版本"

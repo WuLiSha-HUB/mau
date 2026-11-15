@@ -353,7 +353,7 @@ func (r *deployRun) deploy() error {
 		}
 		// 重试 20×500 ms = 10 s 窗口（瞬时占用重试即过；常驻占用重试到底再报，附带次数）
 		if err := renameWithRetry(r.o.Target, targetOld, 20, 500*time.Millisecond); err != nil {
-			return fmt.Errorf("切换失败（target→_old，已重试 20×500 ms）: %w", err)
+			return fmt.Errorf("切换失败（target→_old，已重试 20×500 ms）: %w；%s", err, cwdHolderDiagnostics(r.o.Target))
 		}
 		r.add("switch", true, r.o.Target+" → "+targetOld)
 	}
@@ -362,7 +362,7 @@ func (r *deployRun) deploy() error {
 		if _, statErr := os.Stat(targetOld); statErr == nil {
 			_ = os.Rename(targetOld, r.o.Target)
 		}
-		return fmt.Errorf("切换失败（_new→target，已重试 10×500 ms）: %w", err)
+		return fmt.Errorf("切换失败（_new→target，已重试 10×500 ms）: %w；%s", err, cwdHolderDiagnostics(r.o.Target))
 	}
 	r.add("switch", true, targetNew+" → "+r.o.Target+"（版本 "+version+"）")
 	r.artifacts["version"] = version
@@ -376,7 +376,12 @@ func (r *deployRun) deploy() error {
 func (r *deployRun) relaunch() (exitCode int) {
 	// 部署结论写进重启现场（relay 侧最后一步）——重启链走完 ≠ 运行区被替换，
 	// 两者必须分开可查（2026-11-14 17:11 判例：exit=3 未替换 + intent done）。
-	defer func() { r.reportDeployResult(exitCode) }()
+	// 单一来源 = 部署报告 exitCode：先落终版报告，intent 按报告回写（不再拿内存推测值写 intent——
+	// 0.36.8 判例：stale 场景 intent deployExit=0 而部署报告 exitCode=3，两处口径不一致）。
+	defer func() {
+		r.writeReport("relaunch", exitCode, true)
+		r.reportDeployResult()
+	}()
 	mode := r.o.Mode
 	if mode == "" {
 		mode = "incr"
@@ -389,9 +394,7 @@ func (r *deployRun) relaunch() (exitCode int) {
 	if r.o.WaitPID > 0 {
 		if err := waitProcessExit(r.o.WaitPID, 120*time.Second); err != nil {
 			r.add("wait", false, err.Error())
-			// 观测缺口修复（2026-11-14 判例）：此前直接 return，失败只有控制台、无报告文件——
-			// 「多步链的部分成功在报告面与完全成功不可区分」的反面：失败也必须留盘。
-			r.writeReport("relaunch", deployExitNotReplaced, true)
+			// 失败留盘由收尾 defer 统一承担（writeReport complete=true）——报告面必须能区分「部分成功」与「完全成功」。
 			return deployExitNotReplaced
 		}
 		r.add("wait", true, "旧进程 "+strconv.Itoa(r.o.WaitPID)+" 已退出")
@@ -407,6 +410,10 @@ func (r *deployRun) relaunch() (exitCode int) {
 	// host 模式不做清扫：不替换运行区、不需要改名；且该模式下运行区里的实例可能就是用户手动起的那个。
 	if mode != "host" {
 		r.sweepStrayHosts()
+		// 第二面：py / ts / browser 服务进程（cwd 落运行区 = 目录级句柄）——宿主 cwd 已改数据根后，
+		// 仍可能留着旧宿主拉起的子进程（browser 内核 detach / py 服务崩溃残留），rename 必被它们挡住。
+		// 判据两条同时成立才处置：映像名在服务清单（不碰用户进程）+ cwd 落在运行区。
+		r.sweepStrayServices()
 	}
 	// [段2] prepare 全链——仅 full（失败即不替换运行区）
 	prepOK := true
@@ -417,6 +424,13 @@ func (r *deployRun) relaunch() (exitCode int) {
 		}
 	} else {
 		r.add("prepare", true, "跳过（mode="+mode+"）")
+	}
+	// [段2.5] 切换前复扫——段1b 的清扫与 rename 之间隔着整个 prepare（数十秒）：外部监督者
+	// （并发协议面板 auto=true）会在此期间把离线的宿主自动拉起（2026-11-15 判例：12:31 登记重启 →
+	// 12:32:06 面板拉起 pid 37772 持运行区 → rename 必失败）。清扫窗口必须紧邻 rename。
+	if mode != "host" {
+		r.sweepStrayHostsBeforeSwitch()
+		r.sweepStrayServicesBeforeSwitch()
 	}
 	// [段3] 替换运行区——full：prepare 通过才 deploy；incr：纯搬运；host：跳过（原地重启）
 	replaced := false
@@ -449,13 +463,11 @@ func (r *deployRun) relaunch() (exitCode int) {
 	}
 	push := buildRestartPush(mode, prepOK, replaced, version, r.o.Target, r.o.PushIn, r.ensureReportPath(), time.Since(r.startedAt))
 	r.writeReport("relaunch", -1, false)
-	// [段4-intent] 预写部署结论——必须在起新实例之前：新宿主启动即 Settle 判 done，
-	// 那时若还没读到部署结论，done 就只剩「重启链走完」一个语义（18:03 判例：deployExit 缺失）。
-	preResult := deployExitNotReplaced
-	if replaced || mode == "host" {
-		preResult = deployExitOK
-	}
-	r.reportDeployResult(preResult)
+	// [段4-intent] 登记部署报告路径——必须在起新实例之前：新宿主启动即 Settle，
+	// 现场要能指到「本次部署的报告」（部署结论的单一来源 = 报告 exitCode）。
+	// 只登记路径、不写预测值：0.36.8 判例（stale 场景 intent deployExit=0 / 报告 exitCode=3）
+	// 的根因就是拿内存推测值先写结论；未收尾时现场保持 deployReported=false（未上报 ≠ 成功）。
+	r.reportDeployReportPath()
 	// [段4c] 自启前检（CH4 1.8.266 同因）——目标运行区已有宿主实例在跑：跳过自启，不新增第二个实例。
 	//        判例 2026-11-13：deploy 原子切换失败后自启又拉起一个，运行区并存两个宿主（服务假象 + dll 持锁）。
 	runningHosts, scanErr := hostScanFindInDir(r.o.Target)
@@ -486,43 +498,126 @@ func (r *deployRun) relaunch() (exitCode int) {
 	return deployExitNotReplaced
 }
 
-// reportDeployResult 把接力部署结论写进重启现场（relay 侧）——只写停 registered / launching 的现场。
+// reportDeployResult 把接力部署结论写进重启现场（relay 侧）——部署报告是唯一来源。
 //
 // 现场路径 = <data-root>/runtime/restart-intent.json，与宿主侧 NewRestartIntentStore 同源；
-// data-root 为空（人工直接跑 deploy）时跳过——那时也没有重启现场可写。
-func (r *deployRun) reportDeployResult(exitCode int) {
+// data-root 为空（人工直接跑 deploy）/ 无现场（非重启链）时跳过并出声。
+// 值不是内存里的 exitCode，而是「刚落盘的终版报告里的 exitCode」——两处口径永远一致。
+func (r *deployRun) reportDeployResult() {
+	if strings.TrimSpace(r.o.DataRoot) == "" {
+		r.add("intent", false, "跳过（未传 --data-root——无重启现场可写）")
+		return
+	}
+	path := r.ensureReportPath()
+	report, ok := readDeployReport(path)
+	if !ok || !report.Complete {
+		r.add("intent", false, "跳过：部署报告未终版 / 不可读（"+path+"）——deployExit 保持未上报")
+		return
+	}
+	store := admin.NewRestartIntentStore(filepath.Join(r.o.DataRoot, "runtime", "restart-intent.json"))
+	if _, exists := store.Read(); !exists {
+		r.add("intent", true, "跳过（无重启现场——人工部署）")
+		return
+	}
+	if err := store.SetDeployResult(report.ExitCode, path); err != nil {
+		r.add("intent", false, "部署结论落盘失败: "+err.Error())
+		return
+	}
+	r.add("intent", true, "部署结论已写重启现场：deployExit="+strconv.Itoa(report.ExitCode)+"（来源：部署报告 "+filepath.Base(path)+"）")
+}
+
+// reportDeployReportPath 登记本次部署报告路径（relay 段4-intent）——只记路径、不写结论。
+//
+// 写结论时点报告还是前置版（complete=false）——此时写 exitCode 只能靠猜；
+// 现场保持 deployReported=false，等收尾按终版报告回写（未上报 ≠ 成功）。
+func (r *deployRun) reportDeployReportPath() {
 	if strings.TrimSpace(r.o.DataRoot) == "" {
 		r.add("intent", false, "跳过（未传 --data-root——无重启现场可写）")
 		return
 	}
 	store := admin.NewRestartIntentStore(filepath.Join(r.o.DataRoot, "runtime", "restart-intent.json"))
-	if err := store.SetDeployResult(exitCode); err != nil {
-		r.add("intent", false, "部署结论落盘失败: "+err.Error())
+	if _, exists := store.Read(); !exists {
+		r.add("intent", true, "跳过（无重启现场——人工部署）")
 		return
 	}
-	r.add("intent", true, "部署结论已写重启现场：deployExit="+strconv.Itoa(exitCode))
+	path := r.ensureReportPath()
+	if err := store.SetDeployReport(path); err != nil {
+		r.add("intent", false, "重启现场登记部署报告路径失败: "+err.Error())
+		return
+	}
+	r.add("intent", true, "重启现场已登记部署报告路径："+filepath.Base(path)+"（部署结论收尾按报告 exitCode 回写）")
 }
 
-// sweepStrayHosts 同目录残留实例清扫（段1 之后、段2 之前——dll 锁必须先释放，原子切换改名才可能成功）。
-// 只作用于「可执行路径落在 target 下」的宿主实例（不碰其它运行区 / 现役实例）；
-// 无命中 / 扫描失败也记报告 step——报告面必须能区分「清过且干净」与「压根没查」。
-func (r *deployRun) sweepStrayHosts() {
+// readDeployReport 读部署报告（intent 部署结论的单一来源）。
+func readDeployReport(path string) (deployReport, bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return deployReport{}, false
+	}
+	var report deployReport
+	if err := json.Unmarshal(raw, &report); err != nil {
+		return deployReport{}, false
+	}
+	return report, true
+}
+
+// sweepStrayHosts 同目录残留实例清扫（段1b 第一面）——dll 锁必须先释放，准备链才跑得顺。
+func (r *deployRun) sweepStrayHosts() { r.sweepStrayHostsLabeled("清扫残留") }
+
+// sweepStrayHostsBeforeSwitch 切换前复扫（段2.5）——段1b 与 rename 之间隔着整个 prepare（数十秒），
+// 外部监督者（并发协议面板 auto=true）可能在此期间自动拉起宿主；清扫窗口必须紧邻 rename。
+func (r *deployRun) sweepStrayHostsBeforeSwitch() {
+	r.sweepStrayHostsLabeled("清扫残留（切换前）")
+}
+
+// sweepStrayHostsLabeled 清扫实现的标签变体（同一套判据，报告 step 名区分两轮）。
+func (r *deployRun) sweepStrayHostsLabeled(step string) {
 	swept, err := hostKillInDir(r.o.Target)
 	if err != nil {
-		r.add("清扫残留", false, "宿主进程扫描失败（按无实例继续）: "+err.Error())
+		r.add(step, false, "宿主进程扫描失败（按无实例继续）: "+err.Error())
 		return
 	}
 	if len(swept.PIDs) == 0 {
-		r.add("清扫残留", true, "运行区无同目录宿主实例")
+		r.add(step, true, "运行区无同目录宿主实例")
 		return
 	}
 	detail := "另结束 " + strconv.Itoa(swept.Graceful+swept.Killed) + " 个同目录残留宿主实例（pid " +
 		joinHostPIDs(swept.PIDs) + "；优雅关 " + strconv.Itoa(swept.Graceful) + " / 强杀 " + strconv.Itoa(swept.Killed) + "）"
 	if swept.Failed > 0 {
-		r.add("清扫残留", false, detail+"；失败 "+strconv.Itoa(swept.Failed)+" 个（见日志）")
+		r.add(step, false, detail+"；失败 "+strconv.Itoa(swept.Failed)+" 个（见日志）")
 		return
 	}
-	r.add("清扫残留", true, detail)
+	r.add(step, true, detail)
+}
+
+// sweepStrayServices 服务进程清扫（段1b 第二面）——py / ts / browser 子进程以运行区为 cwd 时
+// 持目录级句柄（宿主 cwd 已改数据根，但旧宿主拉起的子进程生命周期可能长于宿主），原子切换改名必失败。
+// 只清「映像名在服务清单 + cwd 落运行区」的进程（不碰用户进程）；
+// 无命中 / 扫描失败也记报告 step——报告面必须能区分「清过且干净」与「压根没查」。
+func (r *deployRun) sweepStrayServices() { r.sweepStrayServicesLabeled("清扫残留（服务）") }
+
+// sweepStrayServicesBeforeSwitch 切换前复扫（段2.5）——理由同 sweepStrayHostsBeforeSwitch。
+func (r *deployRun) sweepStrayServicesBeforeSwitch() {
+	r.sweepStrayServicesLabeled("清扫残留（服务·切换前）")
+}
+
+// sweepStrayServicesLabeled 服务清扫实现的标签变体。
+func (r *deployRun) sweepStrayServicesLabeled(step string) {
+	swept, err := cwdStrayKillInDir(r.o.Target)
+	if err != nil {
+		r.add(step, false, "服务进程扫描失败（按无命中继续）: "+err.Error())
+		return
+	}
+	if len(swept.Procs) == 0 {
+		r.add(step, true, "运行区无 py/ts/browser 服务进程（cwd 命中）")
+		return
+	}
+	detail := "另结束 " + strconv.Itoa(swept.Killed) + " 个服务进程（" + describeProcCWDList(swept.Procs, 10) + "）"
+	if swept.Failed > 0 {
+		r.add(step, false, detail+"；失败 "+strconv.Itoa(swept.Failed)+" 个（见日志）")
+		return
+	}
+	r.add(step, true, detail)
 }
 
 // bootAndProbe 起新实例并探活——成功返回 (true, pid)。
@@ -603,12 +698,27 @@ func (r *deployRun) startInstance(push string) (*exec.Cmd, error) {
 		args = append(args, "--majordomopush", push)
 	}
 	cmd := exec.Command(exe, args...)
-	cmd.Dir = r.o.Target
+	// 工作目录**不落运行区**（2026-11-15 判例）：cwd 在运行区会被子进程继承，
+	// 下一次 target→_old 原子改名撞共享冲突（重试 20×500 ms 不过，部署恒 exit 3）。
+	// 宿主不依赖 cwd——路径面全走受控根与显式参数，故落数据根（不可用则运行区父目录）。
+	cmd.Dir = startInstanceWorkDir(r.o.Target, r.o.DataRoot)
 	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x00000008}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	return cmd, nil
+}
+
+// startInstanceWorkDir 解析新实例的工作目录——不落运行区（避免下一次原子改名自锁）。
+//
+// 优先数据根（不在运行区内、不随部署替换）；数据根不可用退运行区父目录。
+func startInstanceWorkDir(target, dataRoot string) string {
+	if dataRoot != "" {
+		if info, err := os.Stat(dataRoot); err == nil && info.IsDir() {
+			return dataRoot
+		}
+	}
+	return filepath.Dir(target)
 }
 
 // probe 探活——snapshot 200（协议 version=3）+ 首页含目标版本。
@@ -680,6 +790,27 @@ func httpGet(url string) (string, error) {
 		return "", fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return string(raw), nil
+}
+
+// cwdHolderDiagnostics rename 失败归因——列出 cwd 落在 dir 内的进程（最多 10 条，指名 pid / 映像名 / cwd）。
+//
+// 目录级句柄（进程 cwd）是文件句柄诊断的盲区：改名报 being used by another process 时，
+// 报告必须能直接回答「谁锁着它」（判例 2026-11-15：占用者未抓到 → 只能盲试重启）。
+func cwdHolderDiagnostics(dir string) string {
+	list, err := procCWDList()
+	if err != nil {
+		return "cwd 归因扫描失败（" + err.Error() + "）"
+	}
+	holders := make([]procCWDInfo, 0, 4)
+	for _, proc := range list {
+		if pathWithin(proc.CWD, dir) {
+			holders = append(holders, proc)
+		}
+	}
+	if len(holders) == 0 {
+		return "cwd 归因：运行区内无进程工作目录指向（持有者可能是文件句柄——见同目录宿主 / 桥 / 服务清扫面）"
+	}
+	return "cwd 归因：运行区内进程工作目录持有者 " + describeProcCWDList(holders, 10)
 }
 
 // renameWithRetry 同卷改名带重试——Windows 上目录改名要求目录内全部句柄关闭：

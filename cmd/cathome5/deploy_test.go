@@ -171,4 +171,11 @@ func TestSweepStrayHostsReports(t *testing.T) {
 	if len(r.steps) != 1 || r.steps[0].Name != "清扫残留" || r.steps[0].OK || !strings.Contains(r.steps[0].Detail, "tasklist 失败") {
 		t.Fatalf("扫描失败应记一条 ok=false 的清扫残留步骤：%+v", r.steps)
 	}
+	// 切换前复扫——同一套判据，step 名带「切换前」区分两轮（段1b 与 rename 之间的 prepare 窗口）
+	hostKillInDir = func(dir string) (hostSweepResult, error) { return hostSweepResult{}, nil }
+	r = &deployRun{o: deployOptions{Target: target}}
+	r.sweepStrayHostsBeforeSwitch()
+	if len(r.steps) != 1 || r.steps[0].Name != "清扫残留（切换前）" || !r.steps[0].OK {
+		t.Fatalf("切换前复扫应记带标签的步骤：%+v", r.steps)
+	}
 }

@@ -196,7 +196,7 @@ func main() {
 func executeDirect(box *runtime.DataBox, stub *hostCommandStub, groupStub *groupProbeStub, tool, argsJSON string) (string, bool) {
 	switch tool {
 	case "restart-full", "restart-incr", "restart-host":
-		return bricks.HostRestart(box, argsJSON, strings.TrimPrefix(tool, "restart-"))
+		return bricks.HostRestart(box, argsJSON, strings.TrimPrefix(tool, "restart-"), nil, nil)
 	case "majordomo-cmd":
 		return bricks.HostCommand(stub.Execute, argsJSON)
 	case "majordomo-catinfo":

@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -122,9 +123,9 @@ func TestRestartStateScope(t *testing.T) {
 func TestRestartIntentDeployResult(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "restart-intent.json")
 	store := NewRestartIntentStore(path)
-	// 无现场时写部署结论——不报错、不造文件
-	if err := store.SetDeployResult(3); err != nil {
-		t.Fatalf("无现场写入不应报错: %v", err)
+	// 无现场时写部署结论——返回 os.ErrNotExist、不造文件
+	if err := store.SetDeployResult(3, ""); err != os.ErrNotExist {
+		t.Fatalf("无现场写入应返回 os.ErrNotExist: %v", err)
 	}
 	if _, ok := store.Read(); ok {
 		t.Fatal("无现场时不应造文件")
@@ -136,7 +137,13 @@ func TestRestartIntentDeployResult(t *testing.T) {
 	if err := store.Launching(11, 22); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetDeployResult(3); err != nil {
+	if err := store.SetDeployReport(`D:\Mau\MauOut\deploy-report-x.json`); err != nil {
+		t.Fatalf("登记报告路径失败: %v", err)
+	}
+	if intent, _ := store.Read(); intent.DeployReport != `D:\Mau\MauOut\deploy-report-x.json` || intent.DeployReported {
+		t.Fatalf("报告路径应落盘且未上报: %+v", intent)
+	}
+	if err := store.SetDeployResult(3, `D:\Mau\MauOut\deploy-report-x.json`); err != nil {
 		t.Fatal(err)
 	}
 	intent, _ := store.Read()
@@ -151,7 +158,7 @@ func TestRestartIntentDeployResult(t *testing.T) {
 		t.Fatalf("部署未替换的 done 必须带原因（失败可见）: %+v", settled)
 	}
 	// 已结算现场——部署结论允许补写终值（phase 不动），done + 未替换时 reason 必须补齐
-	if err := store.SetDeployResult(2); err != nil {
+	if err := store.SetDeployResult(2, ""); err != nil {
 		t.Fatalf("已结算后写入不应报错: %v", err)
 	}
 	after, _ := store.Read()
@@ -170,7 +177,7 @@ func TestRestartIntentDeployResult(t *testing.T) {
 	if err := okStore.Launching(44, 55); err != nil {
 		t.Fatal(err)
 	}
-	if err := okStore.SetDeployResult(0); err != nil {
+	if err := okStore.SetDeployResult(0, ""); err != nil {
 		t.Fatal(err)
 	}
 	okSettled, changed := okStore.Settle(RestartPhaseDone, "0.36.4", "", 66)

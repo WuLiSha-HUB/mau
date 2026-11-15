@@ -101,15 +101,17 @@ func (s *ProcService) Run(argsJSON string) string {
 	argsRaw := Get(argsJSON, "args")
 	cwd := Get(argsJSON, "cwd")
 	timeoutMs := procParseTimeout(Get(argsJSON, "timeout_ms"), procDefaultRunTimeoutMs, procMaxRunTimeoutMs)
+	resolvedCwd, cwdErr := s.resolveCwd(cwd, base)
+	if cwdErr != "" {
+		return cwdErr
+	}
 
 	cmd := exec.Command(exe)
 	attr := &syscall.SysProcAttr{HideWindow: true}
 	procApplyArgs(cmd, exe, argsRaw, attr, s.report)
 	cmd.SysProcAttr = attr
-	if cwd != "" && cwd != ParseFail {
-		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
-			cmd.Dir = cwd
-		}
+	if resolvedCwd != "" {
+		cmd.Dir = resolvedCwd
 	}
 
 	outW := newProcLineCapper(procMaxOutputChars)
@@ -203,15 +205,17 @@ func (s *ProcService) Start(argsJSON string) string {
 		readyPort = parsed
 	}
 	readyTimeoutMs := procParseTimeout(Get(argsJSON, "ready_timeout_ms"), procDefaultReadyTimeoutMs, procMaxRunTimeoutMs)
+	resolvedCwd, cwdErr := s.resolveCwd(cwd, base)
+	if cwdErr != "" {
+		return cwdErr
+	}
 
 	cmd := exec.Command(exe)
 	attr := &syscall.SysProcAttr{HideWindow: window == "hidden"}
 	procApplyArgs(cmd, exe, argsRaw, attr, s.report)
 	cmd.SysProcAttr = attr
-	if cwd != "" && cwd != ParseFail {
-		if info, err := os.Stat(cwd); err == nil && info.IsDir() {
-			cmd.Dir = cwd
-		}
+	if resolvedCwd != "" {
+		cmd.Dir = resolvedCwd
 	}
 
 	start := time.Now()
@@ -234,7 +238,7 @@ func (s *ProcService) Start(argsJSON string) string {
 		ID:        "p" + strconv.Itoa(pid),
 		Path:      exe,
 		Args:      procRawOrEmpty(argsRaw),
-		Cwd:       procRawOrEmpty(cwd),
+		Cwd:       resolvedCwd,
 		Pid:       pid,
 		StartedAt: time.Now().Format("2006-01-02 15:04:05"),
 		Window:    window,
@@ -527,6 +531,31 @@ func (s *ProcService) resolveExe(path, base string) (string, string) {
 		return "", "ERR|PROC_FORBIDDEN|" + fileName + " 不可经 proc 工具起——宿主重启走 restart-*，部署走 mau-setup"
 	}
 	return full, ""
+}
+
+// resolveCwd 解析进程工作目录——直用（绝对 / 相对存在目录）> 受控根寻址展开 > 拒绝。
+//
+// 判例 2026-11-15：调用方传 `workspace:OfflineNovel/product/angelicar`（受控根寻址），
+// 原实现直接 os.Stat 失败 → cmd.Dir 未设 → 子进程静默继承宿主 cwd（当时 = 运行区），
+// 成为下一次 deploy rename 的目录持有者。显式 cwd 必须落到真目录——失败可见，不静默回落。
+func (s *ProcService) resolveCwd(cwd, base string) (string, string) {
+	if cwd == "" || cwd == ParseFail {
+		return "", ""
+	}
+	if info, err := os.Stat(cwd); err == nil && info.IsDir() {
+		return cwd, ""
+	}
+	full, _, code, msg, ok := fs.ResolveOwnedRoot(cwd, s.roots, base)
+	if ok {
+		if info, err := os.Stat(full); err == nil && info.IsDir() {
+			return full, ""
+		}
+		return "", "ERR|PROC_BAD_CWD|工作目录不存在或不是目录：" + full
+	}
+	if code == fs.ErrOutOfScope {
+		return "", "ERR|PROC_OUT_OF_ROOT|工作目录超出受控根范围：" + full
+	}
+	return "", "ERR|PROC_BAD_CWD|工作目录不可用: " + msg
 }
 
 // procApplyArgs 应用命令行参数——JSON 数组逐项进参数数组（免转义）；纯文本原样进命令行。

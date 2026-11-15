@@ -158,6 +158,8 @@ type toolRuntime struct {
 	LLMSimple *bricks.LLMSimpleService
 	// Py py 执行服务（PyCat 三件——短命脚本 + 常驻服务池；audio.speak 的合成面同源）
 	Py *bricks.PyService
+	// Go go 工具链执行面（GoCat 四件——go build / test / vet / fmt；工具链路径读 go.path）
+	Go *bricks.GoService
 	// Mau Mau 工具链执行面（MauCat 四件——verify 原生 front / gen·proj 经 cs 桥 / setup SetUp.exe）
 	Mau *bricks.MauService
 	// Bricks 运行时积木表（热重载重建图时与启动期同一份）
@@ -309,6 +311,13 @@ func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir,
 		report(level, message)
 	})
 	result.Py = pySvc
+	// go 工具链执行面——GoCat 四件（go.build / go.test / go.vet / go.fmt）：
+	// go.exe 读配置 go.path（不回落 PATH——本机 go 只在 workspace:tools/go/bin）；
+	// 工作目录空 = 首个含 go.mod 的可写根（本支 = 受控根 mau = Go 仓库根）；超时杀树与输出限幅归服务层。
+	goSvc := bricks.NewGoService(pyRoots, cfgGet, func(level int, message string) {
+		report(level, message)
+	})
+	result.Go = goSvc
 	// audio.speak 合成面——py 服务（kokoro）同源注入；未配 py.service.kokoro.script 时按服务层 ERR 明示
 	audioTTS := bricks.AudioTTSConfig{
 		Voice: func() string {
@@ -371,6 +380,21 @@ func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir,
 	} else if reply != `{"started":[],"skipped":[],"errors":[]}` {
 		report(1, "py 服务自启："+reply)
 	}
+	// 宿主运行区解析——host.restart 回执展示「实际 target」：受控根 mauout5 > 当前实例目录
+	// （与重启闸门 resolveMauOut5 / exe 目录回落同口径；文案不再写死「受控根 mauout5」）。
+	hostTarget := func() string {
+		if workspace != nil {
+			for _, root := range workspace.Roots {
+				if strings.EqualFold(root.ID, "mauout5") {
+					return root.Path
+				}
+			}
+		}
+		if exe, err := os.Executable(); err == nil {
+			return filepath.Dir(exe)
+		}
+		return ""
+	}
 	set := toolset.BuildBrickSet(svc, result.OA, db, toolset.BrickOptions{
 		SvcFor: func(argsJSON string) *fs.Service {
 			if catFS == nil {
@@ -399,14 +423,19 @@ func buildToolRuntime(workspace *config.WorkspaceConfig, bricksIndex, corpusDir,
 		AudioTTS:    audioTTS,
 		Config:      configSvc,
 		HostCommand: hostCmd,
-		Log:         logf,
-		Cs:          csSvc,
-		DB:          result.DBSvc,
-		LLM:         llmSvc,
-		LLMStream:   llmStream,
-		Py:          pySvc,
-		Mau:         mauSvc,
-		Group:       groupSvc,
+		HostTarget:  hostTarget,
+		HostPreflight: func(target string) (string, string) {
+			return restartTargetBlockers(target)
+		},
+		Log:       logf,
+		Cs:        csSvc,
+		DB:        result.DBSvc,
+		LLM:       llmSvc,
+		LLMStream: llmStream,
+		Py:        pySvc,
+		Go:        goSvc,
+		Mau:       mauSvc,
+		Group:     groupSvc,
 	})
 
 	if corpusDir == "" {

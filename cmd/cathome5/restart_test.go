@@ -366,3 +366,47 @@ func TestRestartGateScopeSelf(t *testing.T) {
 		t.Fatalf("OA 在途应硬等，got %q", blocker)
 	}
 }
+
+// TestRestartGatePreflightBlocks 闸门前置检查（用户要求：必失败的重启在重启前反馈）——
+// 运行区存在清扫面之外的 cwd 持有者：撤销重启态、不拉起接力、点名持有者；宿主继续服务。
+func TestRestartGatePreflightBlocks(t *testing.T) {
+	prevDetect := hostScanForeignInTarget
+	t.Cleanup(func() { hostScanForeignInTarget = prevDetect })
+	hostScanForeignInTarget = func(target string, logf func(level int, message, category string)) string { return "" }
+	prevList := procCWDList
+	t.Cleanup(func() { procCWDList = prevList })
+	target := filepath.Join(t.TempDir(), "MauOut")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "cathome5.exe"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	procCWDList = func() ([]procCWDInfo, error) {
+		return []procCWDInfo{
+			{PID: 4242, Name: "Unity.exe", CWD: target},
+			{PID: 4243, Name: "python.exe", CWD: target}, // 清扫面内——不拦
+		}, nil
+	}
+	prevRestart := session.HostRestarting
+	t.Cleanup(func() { session.HostRestarting = prevRestart })
+	var logs []string
+	state := admin.NewRestartState(func(level int, message string) { logs = append(logs, message) })
+	gate := newRestartGate(state, nil, nil, runtime.NewOA(nil), &config.WorkspaceConfig{}, t.TempDir(), 8079, "dev", "", func(level int, message, category string) {
+		logs = append(logs, message)
+	})
+	state.Request("host", target, "")
+	if gate.Tick() {
+		t.Fatal("前置检查命中时不应拉起接力")
+	}
+	if _, ok := state.Snapshot(); ok {
+		t.Fatal("重启态应被撤销（宿主继续服务）")
+	}
+	joined := strings.Join(logs, "\n")
+	if !strings.Contains(joined, "pid 4242 Unity.exe") {
+		t.Fatalf("撤销原因应点名 cwd 持有者：\n%s", joined)
+	}
+	if strings.Contains(joined, "pid 4243") {
+		t.Fatalf("清扫面内的进程不应作为阻断理由：\n%s", joined)
+	}
+}

@@ -1,5 +1,5 @@
 // Package toolset 把语料组（corpus/ch4/<组>/<组>.mau）装配成可驱动的运行时图：
-// 工具积木映射（91 件）+ 公共十四积木（oa.* 九件 / self.* 两件 / data.box_* 两件 / log.write）+ 组加载门禁。
+// 工具积木映射（95 件）+ 公共十四积木（oa.* 九件 / self.* 两件 / data.box_* 两件 / log.write）+ 组加载门禁。
 //
 // 分层：bricks（工具执行体）← 本包（积木表 + 组装配）→ graph（图）/ runtime（帧序）。
 // 门禁口径：组内引用的积木全部在本包积木表里才注册；缺件组逐条出声跳过（不静默）。
@@ -59,6 +59,12 @@ type BrickOptions struct {
 	Config bricks.ConfigService
 	// HostCommand 宿主指令服务（catcfg.bridge 的执行底座；nil = 报 HOSTCMD_NO_SERVICE）
 	HostCommand func(string) string
+	// HostTarget 宿主实际运行区解析（host.restart 回执文案——受控根 mauout5 > 当前实例目录；
+	// nil = 回执写「执行时解析」，不写死受控根名）
+	HostTarget func() string
+	// HostPreflight 重启前置检查（host.restart 登记前）——返回（cwd 持有者名单，扫描失败）；
+	// 命中即拒绝登记（必失败的重启在重启前反馈）；nil = 不检查
+	HostPreflight func(target string) (string, string)
 	// SvcFor 按工具载荷解析猫级文件服务——载荷里的 catId 决定根表（nil / 未命中回退 svc）。
 	// 文件类积木（text / file / ts / ps）执行前按本钩子取服务；非文件类积木忽略。
 	SvcFor func(argsJSON string) *fs.Service
@@ -74,13 +80,15 @@ type BrickOptions struct {
 	LLMStream bricks.LLMStreamRuntime
 	// Py py 执行服务（py-* 三件的执行面；nil = 报 PY_NO_SERVICE）
 	Py *bricks.PyService
+	// Go go 工具链执行面（go-* 四件的执行面；nil = 报 GO_NO_SERVICE）
+	Go *bricks.GoService
 	// Mau Mau 工具链执行面（mau-* 四件的执行面；nil = 报 MAU_NO_SERVICE）
 	Mau *bricks.MauService
 	// Group 群组服务面（GroupCat 八件的执行面；nil = 报 GROUP_NO_SERVICE）
 	Group bricks.GroupService
 }
 
-// BuildBrickSet 构造积木表——105 件积木 = 工具 91（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 8 / py 3 / mau 4 / temp 2 / host 3 / probe 3 / group 8）+ 公共十四积木。
+// BuildBrickSet 构造积木表——109 件积木 = 工具 95（text 7 / file 9 / ps 1 / git 6 / http 3 / web 4 / browser 6 / vision 2 / ts 5 / proc 4 / audio 2 / config 2 / cs 1 / db 8 / llm 8 / py 3 / go 4 / mau 4 / temp 2 / host 3 / probe 3 / group 8）+ 公共十四积木。
 //
 // 工具积木名与语料一致（text.read / file.tree / ps.exec …），参数是语料求值后的字符串切片：
 // 单动作积木取 args[0]（整包工具参数 JSON）；公共积木按各自签名取参。
@@ -151,7 +159,7 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		// ── HOST（Majordomo 五条认领线——重启登记 / 管理指令 / 全猫统计）──
 		// 特权面由工具定义积木组级 privileged 声明承担；host.restart 只落盒不执行（进程动作归宿主闸门）
 		"host.restart": func(args []string) (string, bool) {
-			return bricks.HostRestart(db, argAt(args, 0), argAt(args, 1))
+			return bricks.HostRestart(db, argAt(args, 0), argAt(args, 1), opts.HostTarget, opts.HostPreflight)
 		},
 		"host.command": func(args []string) (string, bool) {
 			return bricks.HostCommand(opts.HostCommand, argAt(args, 0))
@@ -376,6 +384,19 @@ func BuildBrickSet(svc *fs.Service, oa *runtime.OA, db *runtime.DataBox, opts Br
 		},
 		"py.service": func(args []string) (string, bool) {
 			return bricks.PyServiceControl(opts.Py, argAt(args, 0))
+		},
+		// ── GO（GoCat 四条认领线——go 工具链：build / test / vet / fmt；进程与限幅归服务层）──
+		"go.build": func(args []string) (string, bool) {
+			return bricks.GoBuild(opts.Go, argAt(args, 0))
+		},
+		"go.test": func(args []string) (string, bool) {
+			return bricks.GoTest(opts.Go, argAt(args, 0))
+		},
+		"go.vet": func(args []string) (string, bool) {
+			return bricks.GoVet(opts.Go, argAt(args, 0))
+		},
+		"go.fmt": func(args []string) (string, bool) {
+			return bricks.GoFmt(opts.Go, argAt(args, 0))
 		},
 		// ── MAU（MauCat 四条认领线——verify 走原生 front / gen·proj 经 cs 桥 / setup 起 SetUp.exe）──
 		"mau.verify": func(args []string) (string, bool) {

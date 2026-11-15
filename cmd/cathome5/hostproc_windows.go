@@ -305,6 +305,13 @@ func sweepHostsInDirectoryImpl(dir string) (hostSweepResult, error) {
 			continue
 		}
 		if err := terminateProcessByPID(pid); err != nil {
+			// 进程可能已自然退出（wait 后仍残留在 tasklist 枚举里）：再判一次活，已消失按处置成功计
+			// （判例 2026-11-15：incr 接力清扫把刚退出的旧宿主报成「失败 1 个」——假红）。
+			if !processAlive(pid) {
+				res.Killed++
+				fmt.Println("[部署] 残留宿主已自行退出：pid " + strconv.Itoa(pid))
+				continue
+			}
 			res.Failed++
 			fmt.Println("[部署] 警告：结束残留宿主失败（pid " + strconv.Itoa(pid) + "）：" + err.Error())
 			continue
@@ -312,6 +319,90 @@ func sweepHostsInDirectoryImpl(dir string) (hostSweepResult, error) {
 		waitProcessGoneMS(pid, killWaitMS)
 		res.Killed++
 		fmt.Println("[部署] 残留宿主已强制结束：pid " + strconv.Itoa(pid))
+	}
+	if res.Killed > 0 {
+		time.Sleep(1 * time.Second)
+	}
+	return res, nil
+}
+
+// ---------- 服务进程清扫（py / ts / browser —— 部署 relaunch 段1b 第二面）----------
+
+// cwdSweepResult 服务进程清扫结果。
+type cwdSweepResult struct {
+	// Procs 命中的服务进程（pid / 映像名 / cwd）
+	Procs []procCWDInfo
+	// Killed 已结束数（含优雅关）
+	Killed int
+	// Failed 处置失败数（进程可能仍存活）
+	Failed int
+}
+
+// cwdStrayKillInDir 服务进程清扫（单测可替换——替换后不触本机进程）。
+var cwdStrayKillInDir = sweepCWDStraysInDirectoryImpl
+
+// listCWDStraysInDir 枚举 cwd 落在运行区内的服务进程（映像名 ∈ cwdServiceImages）。
+//
+// 不碰用户进程：命中条件是「映像名在服务清单」+「cwd 落在运行区」两条同时成立；
+// 用户自己的浏览器 / 解释器工作目录不在运行区，不会被枚举。
+func listCWDStraysInDir(dir string) ([]procCWDInfo, error) {
+	list, err := procCWDList()
+	if err != nil {
+		return nil, err
+	}
+	strays := make([]procCWDInfo, 0, 2)
+	for _, proc := range list {
+		if !isCWDServiceImage(proc.Name) {
+			continue
+		}
+		if !pathWithin(proc.CWD, dir) {
+			continue
+		}
+		strays = append(strays, proc)
+	}
+	return strays, nil
+}
+
+// isCWDServiceImage 判定映像名是否属于服务清扫面（大小写不敏感）。
+func isCWDServiceImage(name string) bool {
+	for _, image := range cwdServiceImages {
+		if strings.EqualFold(name, image) {
+			return true
+		}
+	}
+	return false
+}
+
+// sweepCWDStraysInDirectoryImpl 结束 cwd 落在运行区内的服务进程——先优雅关（≤2 s），再强杀（≤3 s）；
+// 有强杀则 settle 1 s（与宿主清扫同窗口）。逐条出声（失败不静默）。
+func sweepCWDStraysInDirectoryImpl(dir string) (cwdSweepResult, error) {
+	var res cwdSweepResult
+	strays, err := listCWDStraysInDir(dir)
+	if err != nil {
+		return res, err
+	}
+	for _, stray := range strays {
+		res.Procs = append(res.Procs, stray)
+		pid := stray.PID
+		if closeMainWindowGracefully(pid) && waitProcessGoneMS(pid, closeMainWindowWaitMS) {
+			res.Killed++
+			fmt.Println("[部署] 残留服务进程已正常退出：pid " + strconv.Itoa(pid) + " " + stray.Name)
+			continue
+		}
+		if err := terminateProcessByPID(pid); err != nil {
+			// 进程可能已自然退出（枚举与处置之间）——再判活，已消失按成功计（同宿主清扫口径）
+			if !processAlive(pid) {
+				res.Killed++
+				fmt.Println("[部署] 残留服务进程已自行退出：pid " + strconv.Itoa(pid) + " " + stray.Name)
+				continue
+			}
+			res.Failed++
+			fmt.Println("[部署] 警告：结束残留服务进程失败（pid " + strconv.Itoa(pid) + " " + stray.Name + "）：" + err.Error())
+			continue
+		}
+		waitProcessGoneMS(pid, killWaitMS)
+		res.Killed++
+		fmt.Println("[部署] 残留服务进程已结束：pid " + strconv.Itoa(pid) + " " + stray.Name + "（cwd=" + stray.CWD + "）")
 	}
 	if res.Killed > 0 {
 		time.Sleep(1 * time.Second)

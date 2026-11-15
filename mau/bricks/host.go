@@ -23,11 +23,15 @@ const hostRestartRequestKey = "host_restart_request"
 // hostRunModeKey 运行模式标记盒键（"interactive" = 常驻主循环；缺省 / 其它 = 无闸门可等）。
 const hostRunModeKey = "host_run_mode"
 
-// HostRestart 登记宿主重启请求——参数校验 → 模式值域 → 运行模式闸门 → 落 DataBox 全局盒。
+// HostRestart 登记宿主重启请求——参数校验 → 模式值域 → 运行模式闸门 → 前置检查 → 落 DataBox 全局盒。
 //
 // mode 由工具名承载（语料线常量入参：full / incr / host），不进参数面。
+// hostTarget 解析「实际运行区」——回执文案必须写真实目标（不复述受控根名）：请求带 target 时用请求值；
+// 空则取解析器结果（受控根 mauout5 > 当前实例目录，与宿主闸门同口径）；仍为空写明「执行时解析」。
+// preflight 是重启前置检查（运行区里「部署链不会清扫」的 cwd 持有者）——命中即拒绝登记，
+// 让必失败的重启在重启前就反馈（用户要求 2026-11-15）；扫描失败不阻断，回执正文带出。
 // 返回 true = 请求已登记（result 为 A214 头 + 摘要行 + 语义正文）。
-func HostRestart(db *runtime.DataBox, argsJSON, mode string) (string, bool) {
+func HostRestart(db *runtime.DataBox, argsJSON, mode string, hostTarget func() string, preflight func(target string) (string, string)) (string, bool) {
 	if mode != "full" && mode != "incr" && mode != "host" {
 		return "ERR|BAD_ARGS|重启模式非法: " + mode + "（支持 full / incr / host）", false
 	}
@@ -50,14 +54,36 @@ func HostRestart(db *runtime.DataBox, argsJSON, mode string) (string, bool) {
 	if scope != "" && scope != "all" && scope != "self" {
 		return "ERR|BAD_ARGS|scope 非法: " + scope + "（只接受 all / self；空 = all）", false
 	}
+	// 目标运行区展示与前置检查——放在登记之前：必失败的重启直接拒绝（不落请求载荷、宿主未重启）。
+	// 判据：运行区存在部署链不会清扫的 cwd 持有者 → rename 必失败（2026-11-15 用户要求：
+	// 这类必失败的重启要在重启前就反馈，而不是重启时才发现）。
+	targetShow := target
+	resolvedTarget := strings.TrimSpace(target)
+	if targetShow == "" {
+		if hostTarget != nil {
+			targetShow = strings.TrimSpace(hostTarget())
+			resolvedTarget = targetShow
+		}
+		if targetShow == "" {
+			targetShow = "执行时解析（受控根 mauout5 / 当前实例目录）"
+			resolvedTarget = ""
+		}
+	}
+	preflightNote := ""
+	if preflight != nil && resolvedTarget != "" {
+		blockers, scanErr := preflight(resolvedTarget)
+		if blockers != "" {
+			return "ERR|RESTART_BLOCKED|运行区存在部署链不会清理的 cwd 持有者（重启必在改名步失败）：" + blockers +
+				"。先关闭 / 停止这些进程再重试（宿主未重启，请求未登记）。", false
+		}
+		if scanErr != "" {
+			preflightNote = "（前置检查：进程扫描失败——" + scanErr + "；运行区占用未确认）"
+		}
+	}
 	// 归一载荷——只落声明面字段（catId 为宿主注入保留键，不入请求）
 	payload := `{"mode":` + jsonString(mode) + `,"target":` + jsonString(target) +
 		`,"push":` + jsonString(push) + `,"scope":` + jsonString(scope) + `}`
 	db.Set("global", hostRestartRequestKey, payload)
-	targetShow := target
-	if targetShow == "" {
-		targetShow = "受控根 mauout5"
-	}
 	gated := "全局空闲"
 	if scope == "self" {
 		gated = "本会话空闲（scope=self）"
@@ -77,6 +103,7 @@ func HostRestart(db *runtime.DataBox, argsJSON, mode string) (string, bool) {
 	if scope == "self" {
 		body += "（scope=self：不等待其它猫在途轮——被打断的在途轮由新宿主 pendingRound 续跑接回）"
 	}
+	body += preflightNote
 	head := `{"ok":true,"tool":` + jsonString(restartToolName(mode)) +
 		`,"mode":` + jsonString(mode) +
 		`,"target":` + jsonString(targetShow) +

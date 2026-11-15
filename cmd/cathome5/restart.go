@@ -209,6 +209,39 @@ func (g *restartGate) notifyAbort(reason string) {
 	}
 }
 
+// restartTargetBlockers 重启前置检查——列出运行区里「部署链不会清扫」的 cwd 持有者（空 = 可重启）。
+//
+// 判据：cwd 落在运行区 **且** 映像不在部署清扫面（宿主 / cs 桥 / py / ts / browser 由段1b 处置）。
+// 当前宿主自身排除（即将退出，cwd 随之释放）。命中即「重启必在 rename 步失败」——
+// 在登记 / 接力之前就反馈，不让它走到部署失败才发现（用户要求 2026-11-15）。
+func restartTargetBlockers(target string) (string, string) {
+	if strings.TrimSpace(target) == "" {
+		return "", ""
+	}
+	list, err := procCWDList()
+	if err != nil {
+		return "", err.Error()
+	}
+	self := os.Getpid()
+	blockers := make([]procCWDInfo, 0, 4)
+	for _, proc := range list {
+		if proc.PID == self {
+			continue
+		}
+		if isSweepExemptImage(proc.Name) {
+			continue
+		}
+		if !pathWithin(proc.CWD, target) {
+			continue
+		}
+		blockers = append(blockers, proc)
+	}
+	if len(blockers) == 0 {
+		return "", ""
+	}
+	return describeProcCWDList(blockers, 10), ""
+}
+
 // execute 执行接力（T4）——校验运行区 → 准备接力可执行文件 → 起继电器 → 确认存活 → 收尾窗口。
 func (g *restartGate) execute(req admin.RestartRequest) error {
 	mode := req.Mode
@@ -239,6 +272,13 @@ func (g *restartGate) execute(req admin.RestartRequest) error {
 	// 且本宿主会被拉下线。源头拦住：检出即撤销重启态、宿主不下线；不自动杀「可能是另一只正在服务的宿主」。
 	if foreign := hostScanForeignInTarget(target, g.logf); foreign != "" {
 		return fmt.Errorf("检测到另一宿主实例正在使用目标运行区：%s——请先停止该实例再重启（宿主继续服务，已撤销重启态）", foreign)
+	}
+	// 前置检查（用户要求 2026-11-15：必失败的重启要在重启前反馈）——运行区存在「部署链不会清扫」
+	// 的 cwd 持有者时 rename 必失败：在接力前拦下，撤销重启态并点名持有者；宿主继续服务、不打断其它会话。
+	if blockers, scanErr := restartTargetBlockers(target); blockers != "" {
+		return fmt.Errorf("目标运行区存在部署链不会清理的 cwd 持有者（重启必在改名步失败）：%s——先关闭 / 停止这些进程再重启（宿主继续服务，已撤销重启态）", blockers)
+	} else if scanErr != "" {
+		g.log(2, "重启前置检查：进程扫描失败（"+scanErr+"）——继续执行，占用面由部署报告承担")
 	}
 	// 模式前置校验——验证不过即不动运行区（对齐 CH4「验证不过即不动运行区」）
 	switch mode {
@@ -458,6 +498,10 @@ func (g *restartGate) log(level int, message string) {
 // 判据：本次启动带接力回执（--majordomopush）= 受控重启走完（done）；
 // 否则现场停在中间态 = 重启链未完成（relay 超时 / 探活失败 / 人工强杀在登记后）→ stale 且出声。
 // 已结算的现场（done / failed / stale）不动——保留第一次结论，供事后审计。
+//
+// 部署结论单一来源 = 部署报告 exitCode：现场登记过报告路径且尚未上报时，先按终版报告回填
+// （complete=true 才算数——前置版 exitCode=-1 不构成结论）。修复判例：stale 场景 intent 写 0
+// 而部署报告 exitCode=3，两处口径不一致（审计只能信报告）。
 func settleRestartIntent(store *admin.RestartIntentStore, pushText, version string, newPID int) (admin.RestartIntent, bool) {
 	if store == nil {
 		return admin.RestartIntent{}, false
@@ -469,11 +513,23 @@ func settleRestartIntent(store *admin.RestartIntentStore, pushText, version stri
 	if current.Phase != admin.RestartPhaseRegistered && current.Phase != admin.RestartPhaseLaunching {
 		return current, false
 	}
+	if !current.DeployReported && current.DeployReport != "" {
+		if report, ok := readDeployReport(current.DeployReport); ok && report.Complete {
+			if err := store.SetDeployResult(report.ExitCode, current.DeployReport); err == nil {
+				if refreshed, ok := store.Read(); ok {
+					current = refreshed
+				}
+			}
+		}
+	}
 	if strings.TrimSpace(pushText) != "" {
 		return store.Settle(admin.RestartPhaseDone, version, "", newPID)
 	}
-	return store.Settle(admin.RestartPhaseStale, version,
-		"重启链未完成（本次启动无接力回执——relay 可能超时退出 / 探活失败；运行区未替换或状态未知）", newPID)
+	reason := "重启链未完成（本次启动无接力回执——relay 可能超时退出 / 探活失败；运行区未替换或状态未知）"
+	if !current.DeployReported {
+		reason += "；部署结论未上报（部署报告未终版）"
+	}
+	return store.Settle(admin.RestartPhaseStale, version, reason, newPID)
 }
 
 // restartIntentSummary 现场摘要行（启动日志用——一行说清上一次重启到哪一步）。
@@ -503,6 +559,8 @@ func restartIntentSummary(intent admin.RestartIntent) string {
 		} else {
 			parts = append(parts, "部署未替换（deployExit="+strconv.Itoa(intent.DeployExit)+"）")
 		}
+	} else {
+		parts = append(parts, "部署: 未上报（无终版报告）")
 	}
 	if intent.Reason != "" {
 		parts = append(parts, "原因: "+intent.Reason)

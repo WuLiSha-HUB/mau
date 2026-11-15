@@ -284,3 +284,55 @@ func TestProcServicePortProbe(t *testing.T) {
 		t.Fatal("端口 1 不应就绪")
 	}
 }
+
+// TestProcServiceResolveCwd 工作目录解析——受控根寻址可展开；显式 cwd 不可用即拒绝（不静默回落继承宿主 cwd）。
+//
+// 判例 2026-11-15：`cwd=workspace:...` 未解析 → cmd.Dir 未设 → 子进程继承宿主 cwd（= 运行区）→
+// 成为下一次 deploy rename 的目录持有者；显式 cwd 必须落到真目录。
+func TestProcServiceResolveCwd(t *testing.T) {
+	root := t.TempDir()
+	sub := filepath.Join(root, "sub")
+	if err := os.MkdirAll(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewProcService([]fs.Root{{ID: "wrk", Path: root, Writable: true}}, t.TempDir(), nil)
+	// 空 = 不设
+	if got, errText := svc.resolveCwd("", root); got != "" || errText != "" {
+		t.Fatalf("空 cwd 应为空：%q / %q", got, errText)
+	}
+	// 绝对存在目录直用
+	if got, errText := svc.resolveCwd(sub, root); got != sub || errText != "" {
+		t.Fatalf("绝对目录直用：%q / %q", got, errText)
+	}
+	// 受控根寻址展开（判例形态）
+	if got, errText := svc.resolveCwd("wrk:sub", root); got != sub || errText != "" {
+		t.Fatalf("受控根寻址应展开：%q / %q", got, errText)
+	}
+	// 显式 cwd 不可用——具名拒绝，不静默回落
+	if _, errText := svc.resolveCwd("wrk:nope", root); !strings.HasPrefix(errText, "ERR|PROC_BAD_CWD|") {
+		t.Fatalf("不存在目录应拒绝：%q", errText)
+	}
+	if _, errText := svc.resolveCwd("nope:x", root); !strings.HasPrefix(errText, "ERR|PROC_BAD_CWD|") {
+		t.Fatalf("未知受控根应拒绝：%q", errText)
+	}
+	// 实机面：坏 cwd 不启动进程；好 cwd 真正生效（cmd /c cd 打印工作目录）
+	sysDir := procTestSystemRoot()
+	if sysDir == "" {
+		t.Log("系统目录不可用——跳过实机 cwd 用例")
+		return
+	}
+	sysSvc := NewProcService([]fs.Root{{ID: "system", Path: sysDir, Writable: true}}, t.TempDir(), nil)
+	if out := sysSvc.Run(`{"path":"system:cmd.exe","args":["/c","cd"],"cwd":"nope:x"}`); !strings.HasPrefix(out, "ERR|PROC_BAD_CWD|") {
+		t.Fatalf("坏 cwd 应拒绝启动：%q", out)
+	}
+	out := sysSvc.Run(`{"path":"system:cmd.exe","args":["/c","cd"],"cwd":` + strconv.Quote(sub) + `}`)
+	var payload struct {
+		Stdout string `json:"stdout"`
+	}
+	if err := json.Unmarshal([]byte(out), &payload); err != nil {
+		t.Fatalf("回执应可解析：%v / %q", err, out)
+	}
+	if !strings.Contains(strings.ToLower(payload.Stdout), strings.ToLower(sub)) {
+		t.Fatalf("好 cwd 应生效（cd 应打印 %q）：%q", sub, payload.Stdout)
+	}
+}
