@@ -67,15 +67,26 @@ func (c *Context) AddUserMessageWithImages(text, imagesJSON string) *Message {
 	return &msg
 }
 
-// AddAssistantMessage 追加助手文本回复。
+// AddAssistantMessage 追加助手文本回复（无思考内容）。
 func (c *Context) AddAssistantMessage(text string) *Message {
+	return c.AddAssistantMessageWithReasoning(text, "")
+}
+
+// AddAssistantMessageWithReasoning 追加助手文本回复——携带思考内容。
+//
+// 纯文本回复与工具声明轮同口径：reasoning 落前文（视图 reason 块由此派生；
+// 请求侧 buildAssistantMessage 按「思考非空即带 reasoning_content」回传）。
+// 早期实现只给工具声明轮带 reasoning，纯文本轮的思考只活在流式临时区，轮末即丢。
+func (c *Context) AddAssistantMessageWithReasoning(text, reasoning string) *Message {
 	c.mu.Lock()
-	c.history = append(c.history, newMessage(RoleAssistant, text))
+	msg := newMessage(RoleAssistant, text)
+	msg.ReasoningContent = reasoning
+	c.history = append(c.history, msg)
 	c.markChangedLocked()
-	msg := &c.history[len(c.history)-1]
+	appended := &c.history[len(c.history)-1]
 	c.mu.Unlock()
 	c.fireAppend()
-	return msg
+	return appended
 }
 
 // AddAssistantToolCalls 追加助手工具调用声明——tool_calls JSON 原样 + 思考内容（回传铁律）。

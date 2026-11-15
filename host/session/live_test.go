@@ -7,32 +7,60 @@ import (
 	"time"
 )
 
-// TestSealReasonStreamClearsLive 思考段终结写空态（A196：写 empty 即清面板）。
-func TestSealReasonStreamClearsLive(t *testing.T) {
+// countReasonBlocks 视图层 reason 块计数（测试用）。
+func countReasonBlocks(sess *Session) int {
+	count := 0
+	for _, block := range sess.Views.Blocks() {
+		if block.RenderType == TypeReason {
+			count++
+		}
+	}
+	return count
+}
+
+// TestSealReasonStreamPersistsLive 思考段收口——落持久块，不把临时区写成 empty（用户口径）。
+func TestSealReasonStreamPersistsLive(t *testing.T) {
 	sess, _ := newRoundTestSession(t)
 	sess.AttachView()
+	r := sess.roundState()
+	r.mu.Lock()
+	r.reasonAccum.WriteString("想一半")
+	r.mu.Unlock()
 	sess.ViewBus.SetLive(TypeThinksse, "想一半")
 	if frame := sess.TakeViewFrameJSON(); !strings.Contains(frame, `"type":"thinksse"`) {
 		t.Fatalf("前置：live 应为 thinksse: %s", frame)
 	}
 	sess.sealReasonStream()
-	frame := sess.TakeViewFrameJSON()
-	if !strings.Contains(frame, `"live":{"type":"empty","context":""}`) {
-		t.Fatalf("seal 后 live 应为空态: %s", frame)
+	if count := countReasonBlocks(sess); count != 1 {
+		t.Fatalf("思考未落持久块: %d", count)
+	}
+	if frame := sess.TakeViewFrameJSON(); strings.Contains(frame, `"live":{"type":"empty"`) {
+		t.Fatalf("不写 empty 口径被破坏: %s", frame)
+	}
+	// 幂等——再调一次不重复落块
+	sess.sealReasonStream()
+	if count := countReasonBlocks(sess); count != 1 {
+		t.Fatalf("重复落块: %d", count)
 	}
 }
 
-// TestEnterPhaseLeaveThinkSealsLive 离开 think 态即收口（唯一态转移出口）。
-func TestEnterPhaseLeaveThinkSealsLive(t *testing.T) {
+// TestEnterPhaseLeaveThinkPersists 离开 think 态即收口——思考进持久区，临时区不写空态。
+func TestEnterPhaseLeaveThinkPersists(t *testing.T) {
 	sess, _ := newRoundTestSession(t)
 	sess.AttachView()
+	r := sess.roundState()
+	r.mu.Lock()
+	r.reasonAccum.WriteString("思考中")
+	r.mu.Unlock()
 	sess.enterPhase(PhaseThink)
 	sess.ViewBus.SetLive(TypeThinksse, "思考中")
 	sess.TakeViewFrameJSON()
 	sess.enterPhase(PhaseReply)
-	frame := sess.TakeViewFrameJSON()
-	if !strings.Contains(frame, `"live":{"type":"empty","context":""}`) {
-		t.Fatalf("离开 think 态应写空态: %s", frame)
+	if count := countReasonBlocks(sess); count != 1 {
+		t.Fatalf("离开 think 态未落思考块: %d", count)
+	}
+	if frame := sess.TakeViewFrameJSON(); strings.Contains(frame, `"live":{"type":"empty"`) {
+		t.Fatalf("离开 think 态不应写空态: %s", frame)
 	}
 	// 同态重复进入不产生副作用（同态提前返回）
 	sess.ViewBus.SetLive(TypeReplysse, "回复")

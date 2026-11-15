@@ -183,7 +183,15 @@ func (v *ViewStore) OnSystemMessage(msg Message, msgIndex int, source, origin st
 
 // OnAssistantText 真实前文 append 钩子——assistant 纯文本回复 → reason 条目（有思考时）+ text 条目。
 func (v *ViewStore) OnAssistantText(msg Message, msgIndex int, reasonDurMs int64) {
-	if msg.ReasoningContent != "" {
+	v.OnAssistantTextWith(msg, msgIndex, reasonDurMs, false)
+}
+
+// OnAssistantTextWith 文本回复派生（可控 reason 派生）。
+//
+// skipReason = 思考已提前落成独立块（sealReasonStream 在离开 think 态时落过）——跳过 reason 派生，
+// 避免同一段思考出现两条。载入重建路径（AppendTailMissing）不传 skip（无实时落点）。
+func (v *ViewStore) OnAssistantTextWith(msg Message, msgIndex int, reasonDurMs int64, skipReason bool) {
+	if msg.ReasoningContent != "" && !skipReason {
 		v.appendDerived(msg, TypeReason, BuildReason(msg.ReasoningContent, reasonDurMs), msgIndex, 0)
 	}
 	v.appendDerived(msg, TypeText, `{"text":`+jsonStr(msg.Content)+`}`, msgIndex, 0)
@@ -191,7 +199,12 @@ func (v *ViewStore) OnAssistantText(msg Message, msgIndex int, reasonDurMs int64
 
 // OnAssistantToolCalls 真实前文 append 钩子——assistant 工具调用声明 → reason 条目（有思考时）+ 登记待配对工具。
 func (v *ViewStore) OnAssistantToolCalls(msg Message, msgIndex int, reasonDurMs int64) {
-	if msg.ReasoningContent != "" {
+	v.OnAssistantToolCallsWith(msg, msgIndex, reasonDurMs, false)
+}
+
+// OnAssistantToolCallsWith 工具声明派生（可控 reason 派生）——skipReason 口径同 OnAssistantTextWith。
+func (v *ViewStore) OnAssistantToolCallsWith(msg Message, msgIndex int, reasonDurMs int64, skipReason bool) {
+	if msg.ReasoningContent != "" && !skipReason {
 		v.appendDerived(msg, TypeReason, BuildReason(msg.ReasoningContent, reasonDurMs), msgIndex, 0)
 	}
 	v.registerPendingTools(msg.ToolCallsJSON, msg.CreatedAt)
@@ -278,6 +291,22 @@ func (v *ViewStore) AppendGapText(content string, timestamp int64) {
 	block := v.newBlock(TypeGapText, `{"text":`+jsonStr(content)+`}`, timestamp, -1)
 	v.mu.Lock()
 	v.gapTexts = append(v.gapTexts, block)
+	v.mu.Unlock()
+	v.appendLine(viewBlockLine(block))
+	v.emit(block)
+}
+
+// AppendReason 追加思考条目——独立块（MsgIndex = -1）。
+//
+// 用于无 assistant 消息承载的思考保留（暂停收尾：只想到一半、没有正文可落前文的场合）。
+// 有前文承载的思考不走这里——OnAssistantText / OnAssistantToolCalls 派生时随消息同批落盘。
+func (v *ViewStore) AppendReason(text string, durMs int64, timestamp int64) {
+	if text == "" {
+		return
+	}
+	block := v.newBlock(TypeReason, BuildReason(text, durMs), timestamp, -1)
+	v.mu.Lock()
+	v.blocks = append(v.blocks, block)
 	v.mu.Unlock()
 	v.appendLine(viewBlockLine(block))
 	v.emit(block)

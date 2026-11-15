@@ -89,13 +89,20 @@ func TestRound_TextReply(t *testing.T) {
 	if last.Role != RoleAssistant || last.Content != "你好" {
 		t.Fatalf("末条消息不符: %+v", last)
 	}
-	// 视图落盘——roundsum 块在
+	// 思考随纯文本回复落前文（早期只活在流式临时区，轮末即丢——think 只显示在流式区的根因）
+	if last.ReasoningContent != "想" {
+		t.Fatalf("纯文本回复未携带思考内容: %+v", last)
+	}
+	// 视图落盘——roundsum 块在 + reason 块在
 	raw, err := os.ReadFile(filepath.Join(dir, "cat.view.jsonl"))
 	if err != nil {
 		t.Fatalf("视图文件缺失: %v", err)
 	}
 	if !strings.Contains(string(raw), `"RenderType":"roundsum"`) {
 		t.Fatalf("roundsum 块未落盘: %s", string(raw))
+	}
+	if !strings.Contains(string(raw), `"RenderType":"reason"`) {
+		t.Fatalf("reason 块未落盘: %s", string(raw))
 	}
 	// session.json 结算字段
 	metaRaw, err := os.ReadFile(filepath.Join(dir, "cat.session.json"))
@@ -117,6 +124,99 @@ func TestRound_TextReply(t *testing.T) {
 	}
 	if meta.RoundPhases.Link < 0 || meta.RoundPhases.Reply < 0 {
 		t.Fatalf("RoundPhases 非法: %+v", meta.RoundPhases)
+	}
+}
+
+// TestPause_PreservesPartialReply 暂停保留——已生成的思考与部分回复落前文与视图（停在哪里是哪里）。
+func TestPause_PreservesPartialReply(t *testing.T) {
+	sess, dir := newRoundTestSession(t)
+	r := sess.roundState()
+	r.mu.Lock()
+	r.reasonAccum.WriteString("想到一半")
+	r.reasonDurMs = 1200
+	r.llmResultText = "说到一半"
+	r.mu.Unlock()
+	sess.RequestPause()
+	sess.Pump()
+
+	msgs := sess.Context.Messages()
+	last := msgs[len(msgs)-1]
+	if last.Role != RoleAssistant || last.Content != "说到一半" || last.ReasoningContent != "想到一半" {
+		t.Fatalf("暂停未保留已生成内容: %+v", last)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "cat.view.jsonl"))
+	if err != nil {
+		t.Fatalf("视图文件缺失: %v", err)
+	}
+	if !strings.Contains(string(raw), `"RenderType":"reason"`) || !strings.Contains(string(raw), "想到一半") {
+		t.Fatalf("思考块未落视图: %s", string(raw))
+	}
+	if !strings.Contains(string(raw), `"RenderType":"text"`) {
+		t.Fatalf("回复块未落视图: %s", string(raw))
+	}
+}
+
+// TestPause_ReasoningOnly 暂停保留——只有思考没有正文：视图落 reason 块，前文不落空回复。
+func TestPause_ReasoningOnly(t *testing.T) {
+	sess, dir := newRoundTestSession(t)
+	r := sess.roundState()
+	r.mu.Lock()
+	r.reasonAccum.WriteString("只想没说")
+	r.mu.Unlock()
+	sess.RequestPause()
+	sess.Pump()
+
+	if count := sess.Context.Count(); count != 1 {
+		t.Fatalf("仅思考的暂停不应写前文，现有 %d 条", count)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "cat.view.jsonl"))
+	if err != nil {
+		t.Fatalf("视图文件缺失: %v", err)
+	}
+	if !strings.Contains(string(raw), `"RenderType":"reason"`) || !strings.Contains(string(raw), "只想没说") {
+		t.Fatalf("思考块未落视图: %s", string(raw))
+	}
+}
+
+// TestRound_ReasoningOnly 纯思考轮——只产 reasoning 无正文：思考落视图、不重试、本轮正常收尾。
+func TestRound_ReasoningOnly(t *testing.T) {
+	sess, dir := newRoundTestSession(t)
+	sess.SetStreamer(&fakeStreamer{scripts: [][]StreamEvent{{
+		{Kind: StreamReasoning, Text: "只想没说"},
+		{Kind: StreamFinish, Text: "stop"},
+		{Kind: StreamDone},
+	}}})
+	if !sess.PostUser("hi", "user", "", "") {
+		t.Fatal("用户消息未受理")
+	}
+	pumpUntilIdle(t, sess)
+
+	// 前文只有 system + user——空 content 的 assistant 不落前文
+	if count := sess.Context.Count(); count != 2 {
+		t.Fatalf("纯思考轮不应写 assistant 前文，现有 %d 条", count)
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "cat.view.jsonl"))
+	if err != nil {
+		t.Fatalf("视图文件缺失: %v", err)
+	}
+	if !strings.Contains(string(raw), `"RenderType":"reason"`) || !strings.Contains(string(raw), "只想没说") {
+		t.Fatalf("思考块未落视图: %s", string(raw))
+	}
+}
+
+// TestPause_SealedContentNotDuplicated 收尾后暂停——已落盘内容不重复写（sealed 闸门）。
+func TestPause_SealedContentNotDuplicated(t *testing.T) {
+	sess, _ := newRoundTestSession(t)
+	r := sess.roundState()
+	r.mu.Lock()
+	r.reasonAccum.WriteString("想")
+	r.llmResultText = "答"
+	r.contentSealed = true
+	r.mu.Unlock()
+	sess.RequestPause()
+	sess.Pump()
+	if count := sess.Context.Count(); count != 1 {
+		t.Fatalf("已落盘内容被重复写入，现有 %d 条", count)
 	}
 }
 

@@ -211,6 +211,10 @@ type roundState struct {
 
 	// paused 中止请求（HTTP 线程置位，主线程消费）
 	paused bool
+	// contentSealed 本次请求的已生成内容已落盘（暂停保留不得重复落）
+	contentSealed bool
+	// reasonPersisted 本次请求的思考已落成独立 reason 块（轮末派生跳过，避免重复）
+	reasonPersisted bool
 	// continueRequested 继续请求（HTTP 线程置位）
 	continueRequested bool
 
@@ -476,6 +480,8 @@ func (s *Session) launchLlm() {
 	r.reasonAccum.Reset()
 	r.reasonDurMs = 0
 	r.llmToolCallsJSON = ""
+	r.contentSealed = false
+	r.reasonPersisted = false
 	r.llmError = false
 	r.llmErrorText = ""
 	r.finishReason = ""
@@ -767,6 +773,7 @@ func (s *Session) pumpLlm() {
 	resultText := r.llmResultText
 	reasoning := r.reasonAccum.String()
 	toolCalls := r.llmToolCallsJSON
+	reasonPersisted := r.reasonPersisted
 	r.mu.Unlock()
 
 	if paused {
@@ -788,15 +795,22 @@ func (s *Session) pumpLlm() {
 	}
 	if toolCalls == "" {
 		if strings.TrimSpace(resultText) == "" {
+			if reasoning != "" {
+				s.finishReasoningOnlyRound(reasoning)
+				return
+			}
 			s.retryEmptyReply("模型未生成回复文本")
 			return
 		}
-		msg := s.Context.AddAssistantMessage(resultText)
+		msg := s.Context.AddAssistantMessageWithReasoning(resultText, reasoning)
 		if msg != nil {
 			s.appendStoredMessage(*msg)
 			if s.Views != nil {
-				s.Views.OnAssistantText(*msg, s.Context.Count()-1, s.takeReasonDuration())
+				s.Views.OnAssistantTextWith(*msg, s.Context.Count()-1, s.takeReasonDuration(), reasonPersisted)
 			}
+			r.mu.Lock()
+			r.contentSealed = true
+			r.mu.Unlock()
 		}
 		s.Timeback.NoteEvent()
 		// A196 临时区——本轮收尾写空态（内容已由持久区承载）
@@ -819,8 +833,11 @@ func (s *Session) pumpLlm() {
 	if msg != nil {
 		s.appendStoredMessage(*msg)
 		if s.Views != nil {
-			s.Views.OnAssistantToolCalls(*msg, s.Context.Count()-1, s.takeReasonDuration())
+			s.Views.OnAssistantToolCallsWith(*msg, s.Context.Count()-1, s.takeReasonDuration(), reasonPersisted)
 		}
+		r.mu.Lock()
+		r.contentSealed = true
+		r.mu.Unlock()
 	}
 	s.Timeback.NoteEvent()
 	// 工具轮 seal——视图层补 gap text 块（全量外观真源：前端历史 / QQBot 转发消费）；空文本不写
@@ -828,9 +845,8 @@ func (s *Session) pumpLlm() {
 	if s.Views != nil && resultText != "" {
 		s.Views.AppendGapText(resultText, s.ViewTimestamp())
 	}
-	// 思考段整块——工具轮 seal：离开 think 态（内容由持久区 reason 块承载）+ 临时区复位
+	// 思考段整块——工具轮 seal：离开 think 态（内容由持久区 reason 块承载）；临时区留给 toolrun 覆盖
 	s.sealReasonStream()
-	s.ViewBus.SetLive(TypeEmpty, "")
 	s.enterPhase(PhaseRun)
 	s.enterToolBatch(toolCalls)
 	// A196 临时区——工具运行态：未完成工具卡数组入 context（派发即写；完成即减）
@@ -843,6 +859,31 @@ func (s *Session) llmReasoningValue() string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.reasonAccum.String()
+}
+
+// finishReasoningOnlyRound 纯思考轮收尾——只产出 reasoning 无正文（reasoning-only 模型形态）。
+//
+// 不重试：空回复续传在同上下文重发，只会把同一段思考再烧一遍（无上限重试 + 每次都产 thinking = 无限烧 token）。
+// 思考落视图 reason 块（前文不落空 content 的 assistant——上游对空回复的容忍度不一致），本轮按正常终态收尾。
+func (s *Session) finishReasoningOnlyRound(reasoning string) {
+	// 思考落持久块（幂等：离开 think 态已落过则跳过）；临时区保留到被后续 live 覆盖——不写 empty
+	s.sealReasonStream()
+	s.Timeback.NoteEvent()
+	r := s.roundState()
+	r.mu.Lock()
+	r.contentSealed = true
+	r.mu.Unlock()
+	if s.DrainPendingIntoRound(true) {
+		r.mu.Lock()
+		r.round = 0
+		r.mu.Unlock()
+		s.launchLlm()
+		return
+	}
+	s.enterPhase(PhaseIdle)
+	r.mu.Lock()
+	r.phase = chatPhaseDone
+	r.mu.Unlock()
 }
 
 // retryEmptyReply 空回复续传——同上下文重发（无上限）。
@@ -1002,7 +1043,7 @@ func noteActive(note *NoteTracker) bool {
 	return len(tasks) > 0
 }
 
-// pauseFinalize 中止收尾——取消流 / 工具批放弃 / 已完成保留。
+// pauseFinalize 中止收尾——取消流 / 工具批放弃 / 已完成与已生成内容保留。
 func (s *Session) pauseFinalize() {
 	r := s.roundState()
 	r.mu.Lock()
@@ -1013,24 +1054,96 @@ func (s *Session) pauseFinalize() {
 	r.phaseFrames = 0
 	r.llmBusy = false
 	r.toolBatchActive = false
+	reasoning := r.reasonAccum.String()
+	text := r.llmResultText
+	toolCalls := r.llmToolCallsJSON
+	sealed := r.contentSealed
 	r.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
 	s.phaseSettle()
-	// A196 临时区——中断收尾写空态（未落持久块的内容随覆盖消失，不进前文 / 存档）
+	// 停在哪里是哪里——已生成内容落盘（取消只丢未到达的部分）
+	s.preservePausedContent(reasoning, text, toolCalls, sealed)
+	// A196 临时区——中断收尾写空态（内容已由持久区承载）
 	s.sealReasonStream()
 	s.resetRetryView()
 	// 用户中止不是重启——现场清掉，下次启动不自动续跑被打断的轮
 	s.ClearPendingRound()
 }
 
-// sealReasonStream 思考段终结——临时区写空态（A196 状态投影：写 empty 即清面板）。
+// preservePausedContent 暂停保留——把已生成的思考与回复落成持久内容。
 //
-// 思考内容由持久区 reason 整块承载。调用面：enterPhase 离开 think 态（唯一态转移出口）
-// + 工具轮 seal + 错误中止 / 暂停收尾。重复调用幂等（同值零动作）。
+// 语义（「停在哪里是哪里」）：流取消只丢未到达的部分；已到达的 reasoning / text 必须留在界面上。
+// sealed = 本次请求的生成内容已由正常收尾落盘（暂停落在收尾之后）——直接跳过，避免重复落。
+// 三条分支：
+//   - 纯文本路径且正文非空 → 前文与视图同批落（assistant 消息带 reasoning；后续请求随 reasoning_content 回传）
+//   - 纯文本路径且只有思考 → 只落视图 reason 块（前文不落空 content 的 assistant——上游对空回复的容忍度不一致）
+//   - 工具声明窗口（tool_calls 已到但工具批未开跑）→ 只落视图（reason 块 + 间隙文本）——声明落前文会留下无回执的 tool_calls
+func (s *Session) preservePausedContent(reasoning, text, toolCalls string, sealed bool) {
+	if sealed {
+		return
+	}
+	hasReason := reasoning != ""
+	hasText := strings.TrimSpace(text) != ""
+	if !hasReason && !hasText {
+		return
+	}
+	r := s.roundState()
+	r.mu.Lock()
+	reasonPersisted := r.reasonPersisted
+	r.mu.Unlock()
+	durMs := s.takeReasonDuration()
+	if toolCalls == "" && hasText {
+		msg := s.Context.AddAssistantMessageWithReasoning(text, reasoning)
+		if msg != nil {
+			s.appendStoredMessage(*msg)
+			if s.Views != nil {
+				s.Views.OnAssistantTextWith(*msg, s.Context.Count()-1, durMs, reasonPersisted)
+			}
+			r.mu.Lock()
+			r.contentSealed = true
+			r.mu.Unlock()
+		}
+		return
+	}
+	if s.Views != nil {
+		ts := s.ViewTimestamp()
+		if hasReason && !reasonPersisted {
+			s.Views.AppendReason(reasoning, durMs, ts)
+		}
+		if hasText {
+			s.Views.AppendGapText(text, ts+1)
+		}
+	}
+	r.mu.Lock()
+	if hasReason {
+		r.reasonPersisted = true
+	}
+	r.mu.Unlock()
+}
+
+// sealReasonStream 思考段收口——把已生成的思考落成持久块（不再写 live empty）。
+//
+// 用户口径（2026-11-15）：「think 直接显示、不要写成 empty」——思考离开流式态时必须已经在上方；
+// 临时区内容保留，由后续 live 内容（replysse / toolrun）自然覆盖，不主动清空。
+// 已由前文消息承载（contentSealed）或已提前落块（reasonPersisted）时不重复落。
+// 调用面：enterPhase 离开 think 态 + 工具轮 seal + 错误中止 / 暂停收尾。重复调用幂等。
 func (s *Session) sealReasonStream() {
-	s.ViewBus.SetLive(TypeEmpty, "")
+	r := s.roundState()
+	r.mu.Lock()
+	text := r.reasonAccum.String()
+	skip := r.reasonPersisted || r.contentSealed
+	r.mu.Unlock()
+	if text == "" || skip {
+		return
+	}
+	if s.Views != nil {
+		s.Views.AppendReason(text, s.takeReasonDuration(), s.ViewTimestamp())
+	}
+	r.mu.Lock()
+	r.reasonPersisted = true
+	r.mu.Unlock()
 }
 
 // takeReasonDuration 取走本块思考用时。
