@@ -608,6 +608,7 @@ var CONFIG_ITEMS = [
     { k: 'llm.cache_isolation', d: 'LLM 缓存隔离粒度（cat=按猫 key / off=不隔离）', e: '空=运行时回落 cat', c: 'sel', o: [{ v: 'cat', t: 'cat' }, { v: 'off', t: 'off' }] },
     { k: 'ui.font_scale', d: '界面字号缩放（百分比）——本地适配不同桌面缩放倍率；100=基准', e: '空=100' },
     { k: 'ui.user_name', d: '使用者显示名——群聊页人消息的署名（改后刷新页面即生效）', e: '空=回落「默认用户」' },
+    { k: 'ui.host', d: '前端端点 host 段——打开对话 / 群聊页时拼为 http://<host>:<端口>/（远程访问填机器地址；改后刷新页面即生效）', e: '空=回落当前页面地址的 host' },
     { k: 'app.autostart', d: '开机自启（注册 HKCU Run）', e: '空=false', c: 'sel', o: [{ v: 'true', t: 'true' }, { v: 'false', t: 'false' }] },
     { k: 'app.round_notify', d: '本轮结束系统通知（托盘 BalloonTip）', e: '空=true', c: 'sel', o: [{ v: 'true', t: 'true' }, { v: 'false', t: 'false' }] },
     { k: 'search.api_config_id', d: '搜索 API 池配置 ID', e: '空=未配置 → 搜索工具明示不可用' },

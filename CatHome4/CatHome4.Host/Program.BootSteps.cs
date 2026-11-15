@@ -295,6 +295,12 @@ namespace CH4
                 Path.Combine(dataRoot, "Data", "config"));
             DataBox.Bind<CH_AppearanceConfigStore>(appearanceStore);
             ReportStorageDegrade(appearanceStore.StorageWritable, appearanceStore.StorageError, "外观配置池");
+            // A379 QQ 机器人配置池——qqbot.json 明文（零 secret）+ Data/secrets/qqbot.cfg 独立秘密文件
+            CH_QqBotConfigStore qqBotStore = new CH_QqBotConfigStore(
+                Path.Combine(dataRoot, "Data", "config"),
+                Path.Combine(dataRoot, "Data", "secrets"));
+            DataBox.Bind<CH_QqBotConfigStore>(qqBotStore);
+            ReportStorageDegrade(qqBotStore.StorageWritable, qqBotStore.StorageError, "QQ 机器人配置池");
             // M1 语料面 Runtime——默认端点语义（QuickCat 工单 llm.stream 消费面；Guid.Empty=每次调用实时解析默认配置）
             _llmRuntime = new DeepSeekLlmRuntime(apiConfigStore, Guid.Empty, llmConfig);
             DataBox.Bind<ILlmRuntime>(_llmRuntime);
@@ -335,6 +341,13 @@ namespace CH4
             Mau.Providers.TtsService ttsSvc = new Mau.Providers.TtsService();
             ttsSvc.Configure(dataRoot);
             DataBox.Bind<Mau.Contracts.ITtsService>(ttsSvc);
+            // A379 QQ 机器人渠道服务——收信面（每条池配置一条常驻 WS 连接；事件落 Data/qqbot/inbox.jsonl）
+            // 这里只装配与注入；实际连接由 S7 按池默认配置 + secrets 拉起（非交互模式不启）
+            Mau.Providers.QqBotService qqBotSvc = new Mau.Providers.QqBotService();
+            qqBotSvc.Configure(dataRoot);
+            DataBox.Bind<Mau.Contracts.IQQBotService>(qqBotSvc);
+            // A380 业务面——同一实例挂 IQQBotOps（工具组发言 / 通道自述 / 群目录维护）
+            DataBox.Bind<Mau.Contracts.IQQBotOps>(qqBotSvc);
             AuditStore audit = new AuditStore();
             AuditStore.Default = audit;
             _runner.Audit = audit;
@@ -899,6 +912,43 @@ namespace CH4
             CatHostService.LoadCatsOnBoot();
             // [段6b-2] 群聊宿主——每组一端口（9000 起向上寻路）+ group.html + 本组运行时端点（A301）
             CatHostService.StartEnabledGroupHosts();
+            // [段6b-3] QQ 机器人收信拉起——按池默认配置 + secrets（A379）
+            // 无默认 / 无 secret / 服务未注入一律出声不拉起——静默不可用等于把故障伪装成正常
+            {
+                CH_QqBotConfigStore qqStore = null;
+                DataBox.TryResolve<CH_QqBotConfigStore>(out qqStore);
+                Mau.Contracts.IQQBotService qqSvc = null;
+                DataBox.TryResolve<Mau.Contracts.IQQBotService>(out qqSvc);
+                if (qqStore == null || qqSvc == null)
+                {
+                    LogStore.Add("QQBot", 2, "QQBot | 收信拉起跳过——配置池或渠道服务未注入", "QQBOT");
+                }
+                else
+                {
+                    CH_QqBotConfig qqCfg = qqStore.ResolveDefault();
+                    if (qqCfg == null)
+                    {
+                        LogStore.Add("QQBot", 1, "QQBot | 池内无默认机器人——收信未拉起（配置页设默认后重启生效）", "QQBOT");
+                    }
+                    else
+                    {
+                        string qqSecret = qqStore.GetSecret(qqCfg.QqBotId);
+                        if (qqSecret.Length == 0)
+                        {
+                            LogStore.Add("QQBot", 2, "QQBot | 「" + qqCfg.DisplayName + "」未配置 AppSecret——收信未拉起", "QQBOT");
+                        }
+                        else
+                        {
+                            bool qqSandbox = string.Equals(qqCfg.ApiEnv, "sandbox", StringComparison.OrdinalIgnoreCase);
+                            string qqErr = qqSvc.Start(qqCfg.QqBotId.ToString("D"), qqCfg.DisplayName, qqCfg.AppId, qqSecret, qqSandbox);
+                            if (qqErr.Length > 0)
+                            {
+                                LogStore.Add("QQBot", 3, "QQBot | 收信拉起失败: " + qqErr, "QQBOT");
+                            }
+                        }
+                    }
+                }
+            }
             // [段6c] 前端测试服务拉起——开发流程（改前端 → 跑测试 → 刷新生效）；未监听则启动 node server.js
             EnsureFrontendTestService();
             // A260 启动健康面收口——报告落盘 + 独立提示窗（有降级才弹；关窗不改运行态）

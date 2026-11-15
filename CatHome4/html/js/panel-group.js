@@ -411,7 +411,7 @@ function openGroupChat(name) {
             for (var i = 0; i < list.length; i = i + 1) {
                 if (list[i].name === name) {
                     if (list[i].running && list[i].port > 0) {
-                        window.open('http://127.0.0.1:' + list[i].port + '/', '_blank');
+                        window.open(uiEndpoint(list[i].port), '_blank');
                         return;
                     }
                     break;

@@ -23,6 +23,19 @@ namespace CatHome4.Admin
             sink.MapPost("/api/v1/llm-apis/delete", (Delegate)AdminService.HandleLlmApisDelete);
             sink.MapPost("/api/v1/llm-apis/default", (Delegate)AdminService.HandleLlmApisDefault);
 
+            // [段1b] QQ 机器人池 CRUD——A379（收信服务与 qqbot 工具组的配置面；AppSecret 落 secrets）
+            sink.MapGet("/api/v1/qqbot-apis", (Delegate)AdminService.HandleQqBotApisGet);
+            sink.MapPost("/api/v1/qqbot-apis", (Delegate)AdminService.HandleQqBotApisPost);
+            sink.MapPost("/api/v1/qqbot-apis/edit", (Delegate)AdminService.HandleQqBotApisEdit);
+            sink.MapPost("/api/v1/qqbot-apis/delete", (Delegate)AdminService.HandleQqBotApisDelete);
+            sink.MapPost("/api/v1/qqbot-apis/default", (Delegate)AdminService.HandleQqBotApisDefault);
+
+            // [段1c] QQ 群目录面——A380（收信自动登记的群 + 别名 + 官方权限刷新）
+            sink.MapGet("/api/v1/qqbot-groups", (Delegate)AdminService.HandleQqBotGroupsGet);
+            sink.MapPost("/api/v1/qqbot-groups/alias", (Delegate)AdminService.HandleQqBotGroupsAlias);
+            sink.MapPost("/api/v1/qqbot-groups/add", (Delegate)AdminService.HandleQqBotGroupsAdd);
+            sink.MapPost("/api/v1/qqbot-groups/refresh", (Delegate)AdminService.HandleQqBotGroupsRefresh);
+
             // [段2] 每猫配置读写——M3
             sink.MapGet("/api/v1/cat-config", (Delegate)AdminService.HandleCatConfigGet);
             sink.MapPost("/api/v1/cat-config", (Delegate)AdminService.HandleCatConfigPost);

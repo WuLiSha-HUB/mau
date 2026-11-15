@@ -2,6 +2,7 @@
 // 加载顺序：本文件先于 app.js / chat-core.js（index.html 由 app.js 段12 复用 applyUiConfig；chat.html 用 loadUiConfig 独立接线）
 // 职责：①loadUiVersion——data-version 组件填充（frontend-version.json）②applyUiConfig——ui.* 配置 → CSS 变量
 //       ③loadUiConfig——拉 /api/v1/config 并接线（无配置表的页面用；index.html 由 app.js loadConfig 复用同一响应）
+//       ④uiHost / uiEndpoint——端点 host 段（全局配置 ui.host，空 = 回落当前页面 host）+ 端口拼接（A377）
 
 function loadUiVersion() {
     // 前端版本自动化——data-version 组件统一填充（js/frontend-version.json——Vitest 每次运行自动递增；两外观层同函数同文件）
@@ -17,16 +18,43 @@ function loadUiVersion() {
         .catch(function () { /* 兜底——宿主未运行/文件缺失：保持占位 UI v? 静默降级 */ });
 }
 
+// A377——端点 host 段：全局配置 ui.host 的内存投影（applyUiConfig 每次拉配置即刷新；空 = 回落当前页面 host）
+var UI_HOST = '';
+
 /**
  * ui.* 字号缩放配置 → CSS 变量（读配置覆盖 tokens.css 默认；读不到或越界一律按默认 100）
+ * 同时刷新端点 host 段（ui.host → UI_HOST，见 uiHost）——两处消费同一个 /api/v1/config 响应
  * @param {Array} items 配置项列表（/api/v1/config 的 items 段；缺失按默认 100 处理）
  */
 function applyUiConfig(items) {
     var scale = 100;
+    // A377——先清投影再扫：配置项被清除（A364 清空即删除落盘值）时同样回到「回落当前页面 host」
+    UI_HOST = '';
     for (var i = 0; i < (items || []).length; i++) {
         if (items[i].key === 'ui.font_scale') { var v = parseInt(items[i].value, 10); if (v >= 50 && v <= 300) { scale = v; } }
+        if (items[i].key === 'ui.host') { UI_HOST = String(items[i].value == null ? '' : items[i].value).trim(); }
     }
     document.documentElement.style.setProperty('--ch-fs-scale', String(scale / 100));
+}
+
+/**
+ * 端点 host 段（A377）——全局配置 ui.host 优先；空 / 配置尚未加载时回落当前页面地址的 host
+ * （同源回落让本地与远程（tailscale 等）各自成立，不依赖配置）
+ * @returns {string} host 段（不含端口）
+ */
+function uiHost() {
+    if (UI_HOST.length > 0) { return UI_HOST; }
+    if (typeof window !== 'undefined' && window.location && window.location.hostname) { return window.location.hostname; }
+    return '127.0.0.1';
+}
+
+/**
+ * 端点 URL（A377）——host 段（uiHost）+ 端口，以斜杠结尾；打开对话页 / 群聊页共用
+ * @param {number} port 端口号（猫会话端口 / 组宿主端口）
+ * @returns {string} 形如 http://<host>:<port>/
+ */
+function uiEndpoint(port) {
+    return 'http://' + uiHost() + ':' + String(port) + '/';
 }
 
 function loadUiConfig() {

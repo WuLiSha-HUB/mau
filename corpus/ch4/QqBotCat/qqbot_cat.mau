@@ -1,0 +1,91 @@
+﻿// qqbot_cat.mau —— QqBotCat 语料（CH4 QQ 机器人工具组——A380）
+// 角色：工具组 Flow——认领 TOOL 域 4 工具（qqbot-send 主动发言 / qqbot-info 通道自述 / qqbot-botinfo 机器人详情 / qqbot-groups 群目录）
+// 出口铁律：工具发言一律主动消息（无 msg_id）；群内命令回复走被动通道（服务侧实现），两条路径不混用
+// 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 3 线认领执行 → complete_str 回执
+// 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（text/group/bot · 零参数 · bot/refresh）
+// 数据面：@qsOffice/@qsArgs/@qsRes + @qiOffice/@qiArgs/@qiRes + @qbOffice/@qbArgs/@qbRes 私有盒（FlowId 隔离）
+// 线程模型：全部主线程同步——积木内 HTTP 发送为同步等待（单条消息，秒级）；群目录读写为同步小文件
+// 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）
+
+// ── 状态机（3 线——qqbot-send / qqbot-info / qqbot-botinfo）──
+§ 'S_QbSend' = { 'Init', 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_QbInfo' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_QbBotInfo' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_QbGroups' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+
+// T_Init：启动初始化自述——Init → Idle 首帧写"空闲待命"
+§ 'T_Init' : 'S_QbSend' = 'Init' → 'self.desc'["QQBot 通道空闲待命", "", ""] | 'S_QbSend' = 'Idle' | 'S_QbSend' = 'Idle'
+
+// ── 主动传感器壳——3 线探测（纯只读判断积木 → bool 落盒）──
+§ 'P_SendOpen' ↻ [1]: 'oa.is_open'["TOOL", "qqbot-send"] > @qsOpen
+§ 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "qqbot-info"] > @qiOpen
+§ 'P_BotInfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "qqbot-botinfo"] > @qbOpen
+§ 'P_GroupsOpen' ↻ [1]: 'oa.is_open'["TOOL", "qqbot-groups"] > @qgOpen
+
+// ══════════════ qqbot-send 线（主动发言——唯一外发出口）══════════════
+
+// T_SendClaim：探测真 + Idle → 原子接单（竞态失败回 Idle 重试）
+§ 'T_SendClaim' : @qsOpen & 'S_QbSend' = 'Idle' → 'oa.claim_next_simple'["TOOL", "qqbot-send"] > @qsOffice | 'S_QbSend' = 'Claimed' | 'S_QbSend' = 'Idle'
+
+// T_SendArgs：读载荷 args（text / group / bot）
+§ 'T_SendArgs' : 'S_QbSend' = 'Claimed' → 'oa.get_str'[@qsOffice, "args"] > @qsArgs | 'S_QbSend' = 'Ready' | 'S_QbSend' = 'Failed'
+
+// T_SendRun：发送（失败侧 ERR 文本也在 @qsRes——别名未命中附候选、白名单拒绝、平台错误码）
+§ 'T_SendRun' : 'S_QbSend' = 'Ready' → 'qqbot.send'[@qsArgs] > @qsRes | 'self.desc'["QQBot 发言中", "", ""] | 'S_QbSend' = 'Done' | 'S_QbSend' = 'Failed'
+
+// T_SendReply：成功回执（含实际投递目标）
+§ 'T_SendReply' : 'S_QbSend' = 'Done' → 'oa.complete_str'[@qsOffice, @qsRes] | 'self.desc'["QQBot 通道空闲待命", "", ""] | 'S_QbSend' = 'Idle' | 'S_QbSend' = 'Idle'
+
+// T_SendAbort：失败回执（@qsRes 含 ERR| 文本——失败可见）
+§ 'T_SendAbort' : 'S_QbSend' = 'Failed' → 'oa.complete_str'[@qsOffice, @qsRes] | 'S_QbSend' = 'Idle' | 'S_QbSend' = 'Idle'
+
+// ══════════════ qqbot-info 线（通道自述）══════════════
+
+// T_InfoClaim：探测真 + Idle → 原子接单
+§ 'T_InfoClaim' : @qiOpen & 'S_QbInfo' = 'Idle' → 'oa.claim_next_simple'["TOOL", "qqbot-info"] > @qiOffice | 'S_QbInfo' = 'Claimed' | 'S_QbInfo' = 'Idle'
+
+// T_InfoArgs：读载荷 args（零业务参数——catId 由宿主注入）
+§ 'T_InfoArgs' : 'S_QbInfo' = 'Claimed' → 'oa.get_str'[@qiOffice, "args"] > @qiArgs | 'S_QbInfo' = 'Ready' | 'S_QbInfo' = 'Failed'
+
+// T_InfoRun：取自述（池内机器人 / 连接态 / 群摘要）
+§ 'T_InfoRun' : 'S_QbInfo' = 'Ready' → 'qqbot.info'[@qiArgs] > @qiRes | 'S_QbInfo' = 'Done' | 'S_QbInfo' = 'Failed'
+
+// T_InfoReply：成功回执
+§ 'T_InfoReply' : 'S_QbInfo' = 'Done' → 'oa.complete_str'[@qiOffice, @qiRes] | 'S_QbInfo' = 'Idle' | 'S_QbInfo' = 'Idle'
+
+// T_InfoAbort：失败回执
+§ 'T_InfoAbort' : 'S_QbInfo' = 'Failed' → 'oa.complete_str'[@qiOffice, @qiRes] | 'S_QbInfo' = 'Idle' | 'S_QbInfo' = 'Idle'
+
+// ══════════════ qqbot-botinfo 线（机器人详情）══════════════
+
+// T_BotInfoClaim：探测真 + Idle → 原子接单
+§ 'T_BotInfoClaim' : @qbOpen & 'S_QbBotInfo' = 'Idle' → 'oa.claim_next_simple'["TOOL", "qqbot-botinfo"] > @qbOffice | 'S_QbBotInfo' = 'Claimed' | 'S_QbBotInfo' = 'Idle'
+
+// T_BotInfoArgs：读载荷 args（bot / refresh）
+§ 'T_BotInfoArgs' : 'S_QbBotInfo' = 'Claimed' → 'oa.get_str'[@qbOffice, "args"] > @qbArgs | 'S_QbBotInfo' = 'Ready' | 'S_QbBotInfo' = 'Failed'
+
+// T_BotInfoRun：取详情（refresh=true 时同步等官方接口，秒级）
+§ 'T_BotInfoRun' : 'S_QbBotInfo' = 'Ready' → 'qqbot.botinfo'[@qbArgs] > @qbRes | 'self.desc'["QQBot 查询机器人详情", "", ""] | 'S_QbBotInfo' = 'Done' | 'S_QbBotInfo' = 'Failed'
+
+// T_BotInfoReply：成功回执
+§ 'T_BotInfoReply' : 'S_QbBotInfo' = 'Done' → 'oa.complete_str'[@qbOffice, @qbRes] | 'self.desc'["QQBot 通道空闲待命", "", ""] | 'S_QbBotInfo' = 'Idle' | 'S_QbBotInfo' = 'Idle'
+
+// T_BotInfoAbort：失败回执
+§ 'T_BotInfoAbort' : 'S_QbBotInfo' = 'Failed' → 'oa.complete_str'[@qbOffice, @qbRes] | 'S_QbBotInfo' = 'Idle' | 'S_QbBotInfo' = 'Idle'
+
+// ══════════════ qqbot-groups 线（群目录：列群 / 别名 / 登记 / 刷新）══════════════
+
+// T_GroupsClaim：探测真 + Idle → 原子接单
+§ 'T_GroupsClaim' : @qgOpen & 'S_QbGroups' = 'Idle' → 'oa.claim_next_simple'["TOOL", "qqbot-groups"] > @qgOffice | 'S_QbGroups' = 'Claimed' | 'S_QbGroups' = 'Idle'
+
+// T_GroupsArgs：读载荷 args（action / group / alias / bot）
+§ 'T_GroupsArgs' : 'S_QbGroups' = 'Claimed' → 'oa.get_str'[@qgOffice, "args"] > @qgArgs | 'S_QbGroups' = 'Ready' | 'S_QbGroups' = 'Failed'
+
+// T_GroupsRun：目录操作（refresh 动作会逐群调官方接口，秒级）
+§ 'T_GroupsRun' : 'S_QbGroups' = 'Ready' → 'qqbot.groups'[@qgArgs] > @qgRes | 'self.desc'["QQBot 群目录操作", "", ""] | 'S_QbGroups' = 'Done' | 'S_QbGroups' = 'Failed'
+
+// T_GroupsReply：成功回执
+§ 'T_GroupsReply' : 'S_QbGroups' = 'Done' → 'oa.complete_str'[@qgOffice, @qgRes] | 'self.desc'["QQBot 通道空闲待命", "", ""] | 'S_QbGroups' = 'Idle' | 'S_QbGroups' = 'Idle'
+
+// T_GroupsAbort：失败回执（@qgRes 含 ERR| 文本——失败可见）
+§ 'T_GroupsAbort' : 'S_QbGroups' = 'Failed' → 'oa.complete_str'[@qgOffice, @qgRes] | 'S_QbGroups' = 'Idle' | 'S_QbGroups' = 'Idle'

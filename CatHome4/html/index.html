@@ -216,6 +216,45 @@
                             <button id="apcCancelEdit" style="display:none;background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消编辑</button>
                         </div>
                     </div>
+                    <!-- A379 QQ 机器人配置池——入口 / 出口渠道的凭据面（AppID + 环境在 config，AppSecret 落 secrets） -->
+                    <div style="margin-top:16px;border-top:1px solid var(--ch-line);padding-top:10px">
+                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+                            <h2 style="margin:0">QQ 机器人池</h2>
+                            <span id="qbcMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag)"></span>
+                            <span style="flex:1"></span>
+                            <button id="qbcRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
+                        </div>
+                        <div style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-bottom:6px">一条配置 = 名称 + AppID + 接入环境；AppSecret 单独落 secrets 目录，读面只回掩码。沙箱与正式环境数据不互通——群里收信测试请按实际环境选择</div>
+                        <table class="box-table" id="qbcTable"><thead><tr><th style="width:20%">名称</th><th style="width:24%">AppID</th><th style="width:12%">环境</th><th style="width:20%">AppSecret</th><th style="width:24%">操作</th></tr></thead><tbody></tbody></table>
+                        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                            <input id="qbcNewName" placeholder="名称" style="width:110px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                            <input id="qbcNewAppId" placeholder="AppID" style="width:150px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                            <select id="qbcNewEnv" title="接入环境（沙箱与正式数据不互通）" style="width:100px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                                <option value="production">正式</option>
+                                <option value="sandbox">沙箱</option>
+                            </select>
+                            <input id="qbcNewSecret" type="password" placeholder="AppSecret" style="width:190px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                            <button id="qbcAddBtn" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">新建</button>
+                            <button id="qbcCancelEdit" style="display:none;background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消编辑</button>
+                        </div>
+                    </div>
+                    <!-- A380 QQ 群目录——机器人收到群消息即自动登记；别名供工具寻址（qqbot-send 的 group 参数），群名来自官方接口 -->
+                    <div style="margin-top:16px;border-top:1px solid var(--ch-line);padding-top:10px">
+                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+                            <h2 style="margin:0">QQ 群目录</h2>
+                            <span id="qgcMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag)"></span>
+                            <span style="flex:1"></span>
+                            <select id="qgcBot" title="选择机器人（按池内配置）" style="max-width:220px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:4px 8px;font-family:inherit;font-size:var(--ch-fs-tag)"></select>
+                            <button id="qgcRefreshList" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
+                            <button id="qgcRefreshOff" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷官方权限</button>
+                        </div>
+                        <div style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-bottom:6px">群在机器人在群里收到第一条消息时自动入目录；群名与「收信范围 / 主动发言」由官方接口刷新（受平台白名单限制，取不到时保留本地观测）。别名用于工具寻址，例如 <code>qqbot-send group=运维</code></div>
+                        <table class="box-table" id="qgcTable"><thead><tr><th style="width:22%">群名</th><th style="width:14%">别名</th><th style="width:20%">群 OpenID</th><th style="width:10%">角色</th><th style="width:10%">收信范围</th><th style="width:10%">主动发言</th><th style="width:14%">最近活跃</th><th style="width:10%">操作</th></tr></thead><tbody></tbody></table>
+                        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                            <input id="qgcAddOpenId" placeholder="群 OpenID（手动登记没说过话的群）" style="width:330px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                            <button id="qgcAddBtn" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">登记群</button>
+                        </div>
+                    </div>
                     <!-- 新猫默认模板——baseRole + 三字段默认值（M3d 体验轮新增） -->
                     <div style="margin-top:16px;border-top:1px solid var(--ch-line);padding-top:10px">
                         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">

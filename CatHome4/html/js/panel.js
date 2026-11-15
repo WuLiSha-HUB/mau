@@ -247,7 +247,7 @@ function createCatCard(cat) {
     var openBtn = document.createElement('button');
     openBtn.textContent = '打开对话';
     openBtn.className = 'btn-mini primary';
-    openBtn.onclick = function () { window.open('http://127.0.0.1:' + entry.data.port + '/', '_blank'); };
+    openBtn.onclick = function () { window.open(uiEndpoint(entry.data.port), '_blank'); };
     ops.appendChild(openBtn);
     var stopBtn = document.createElement('button');
     stopBtn.textContent = '停止';

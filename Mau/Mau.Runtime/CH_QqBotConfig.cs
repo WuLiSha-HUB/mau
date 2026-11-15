@@ -2,23 +2,29 @@
 
 namespace Mau.Runtime
 {
-    /// <summary>一份不包含 Secret 明文的 QQ Bot 连接配置。</summary>
+    /// <summary>一份不包含 AppSecret 明文的 QQ 机器人配置。</summary>
     public sealed class CH_QqBotConfig
     {
         /// <summary>当前配置结构版本。</summary>
         public int SchemaVersion;
 
-        /// <summary>稳定 QQ Bot 配置身份。</summary>
+        /// <summary>稳定机器人配置身份。</summary>
         public Guid QqBotId;
 
         /// <summary>用户可见名称。</summary>
         public string DisplayName;
 
-        /// <summary>QQ 开放平台 Bot 应用 ID。</summary>
+        /// <summary>QQ 开放平台 AppID（非 URL——不入端点校验）。</summary>
         public string AppId;
 
-        /// <summary>沙箱标志——true=沙箱端点（sandbox.api.sgroup.qq.com）/ false=正式端点（api.sgroup.qq.com）。</summary>
-        public bool Sandbox;
+        /// <summary>接入环境——sandbox / production（两环境数据不互通）。</summary>
+        public string ApiEnv;
+
+        /// <summary>默认机器人标记——true 时未显式指定配置的消费面走此配置。</summary>
+        public bool IsDefault;
+
+        /// <summary>允许主动发言的群（别名或 group_openid；空数组=不限制，全部目录内群可发）。</summary>
+        public string[] AllowedGroups;
 
         /// <summary>创建字段完整的空配置。</summary>
         public CH_QqBotConfig()
@@ -27,7 +33,8 @@ namespace Mau.Runtime
             QqBotId = Guid.Empty;
             DisplayName = "";
             AppId = "";
-            Sandbox = true;
+            ApiEnv = "";
+            AllowedGroups = new string[0];
         }
     }
 }

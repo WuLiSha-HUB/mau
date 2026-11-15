@@ -245,6 +245,13 @@ namespace CH4
                 {
                     webFetchLifecycle.Shutdown();
                 }
+                // A379 QQ 机器人收信收尾——停全部 WS 连接（不抛异常；连接线程为后台线程）
+                Mau.Contracts.IQQBotService qqBotLifecycle;
+                DataBox.TryResolve<Mau.Contracts.IQQBotService>(out qqBotLifecycle);
+                if (qqBotLifecycle != null)
+                {
+                    qqBotLifecycle.Shutdown();
+                }
             }
         }
         /// <summary>

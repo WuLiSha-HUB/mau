@@ -1,6 +1,6 @@
 ﻿# Mau 积木索引 — INDEX
 
-> 版本：v3.3 | 更新：2026-11-15（mau bricks index --update 源码驱动重建）
+> 版本：v3.3 | 更新：2026-11-16（mau bricks index --update 源码驱动重建）
 > 全量积木登记——一行一条。ID 永不重用。
 
 ## 全部积木
@@ -69,6 +69,10 @@
 | BRIK-PY-001 | py.run | PY | PY/BRIK-PY-001_py.run.cs | 无 | active |  |
 | BRIK-PY-002 | py.list | PY | PY/BRIK-PY-002_py.list.cs | 无 | active |  |
 | BRIK-PY-003 | py.service | PY | PY/BRIK-PY-003_py.service.cs | 无 | active |  |
+| BRIK-QQ-001 | qqbot.send | QQ | QQ/BRIK-QQ-001_qqbot.send.cs | 无 | active |  |
+| BRIK-QQ-002 | qqbot.info | QQ | QQ/BRIK-QQ-002_qqbot.info.cs | 无 | active |  |
+| BRIK-QQ-003 | qqbot.botinfo | QQ | QQ/BRIK-QQ-003_qqbot.botinfo.cs | 无 | active |  |
+| BRIK-QQ-004 | qqbot.groups | QQ | QQ/BRIK-QQ-004_qqbot.groups.cs | 无 | active |  |
 | BRIK-SELF-001 | self.desc | SELF | SELF/BRIK-SELF-001_self.desc.cs | 无 | active |  |
 | BRIK-SELF-002 | self.desc.add | SELF | SELF/BRIK-SELF-002_self.desc.add.cs | 无 | active |  |
 | BRIK-SH-001 | sh.exec | SH | SH/BRIK-SH-001_sh.exec.cs | 无 | active |  |
@@ -102,6 +106,7 @@
 | BRIK-TOOLS-019 | tools.tscat | TOOLS | TOOLS/BRIK-TOOLS-019_tools.tscat.cs | 无 | active |  |
 | BRIK-TOOLS-020 | tools.groupcat | TOOLS | TOOLS/BRIK-TOOLS-020_tools.groupcat.cs | 无 | active |  |
 | BRIK-TOOLS-021 | tools.shcat | TOOLS | TOOLS/BRIK-TOOLS-021_tools.shcat.cs | 无 | active |  |
+| BRIK-TOOLS-022 | tools.qqbotcat | TOOLS | TOOLS/BRIK-TOOLS-022_tools.qqbotcat.cs | 无 | active |  |
 | BRIK-TS-001 | ts.check | TS | TS/BRIK-TS-001_ts.check.cs | 无 | active |  |
 | BRIK-TS-002 | ts.list | TS | TS/BRIK-TS-002_ts.list.cs | 无 | active |  |
 | BRIK-TS-003 | ts.read | TS | TS/BRIK-TS-003_ts.read.cs | 无 | active |  |
@@ -120,4 +125,4 @@
 
 ---
 
-_版本：v3.3 | 2026-11-15 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_
+_版本：v3.3 | 2026-11-16 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_
