@@ -173,6 +173,15 @@ func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsRes
 			return store.Resolve(schema, key).Value
 		},
 	}
+	// G23：请求体预算摘图 → 会话面可见提示（工具回执「已登记」不等于图到了）
+	client.OnImagesDropped = func(dropped int) {
+		if sess.Pending == nil {
+			return
+		}
+		sess.Pending.PostSystem(session.SysKindSystemAuto,
+			"（系统自动 · 图片预算）本轮请求体超 3 MB 安全上限，已省略 "+strconv.Itoa(dropped)+
+				" 张图片（同一消息保留最新）——被摘的图本轮模型看不到；需要看图请减少同轮图片数或缩小图片后重试", "")
+	}
 	llm.Logf = func(level int, message string) {
 		session.Logf("LLM", level, message, "LLM")
 	}

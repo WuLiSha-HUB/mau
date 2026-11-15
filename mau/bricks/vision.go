@@ -20,6 +20,13 @@ const (
 	toolImageInject  = "image-inject"
 )
 
+// imageInjectBudgetNotice 登记回执的预算提示（G23）——「已登记」不等于图到了。
+//
+// 被摘的图只在请求体里留「图片已省略」占位，工具面原本无声；这段提示与宿主
+// 摘图时的 systemauto 一起，把「回执 OK ≠ 图送达」变成可见事实。
+const imageInjectBudgetNotice = "\n[预算] 回执 OK ≠ 图一定送达——同批 5 张以上或单张 >1 MB 时，请求体预算会摘掉最早的图（同一消息保留最新）；" +
+	"被摘时宿主另发一条可见提示，请求体内留「图片已省略」占位"
+
 // VisionService 是视觉识别执行面——由宿主装配注入（nil = 未注入，工具诚实报错）。
 type VisionService interface {
 	// Analyze 执行一次图像识别——返回分析文本或 ERR| 错误文本
@@ -80,7 +87,7 @@ func ImageInject(gate ImageGate, argsJSON string) (string, bool) {
 		}
 	}
 	head := MetaHeadFields(toolImageInject, true, path, -1, nil)
-	return head + "\n" + path + " | 已登记（宿主批后段注入）", true
+	return head + "\n" + path + " | 已登记（宿主批后段注入）" + imageInjectBudgetNotice, true
 }
 
 // truncateVisionReason 错误原因截断——按 rune 截 120 字（守卫回执不因长错误膨胀）。

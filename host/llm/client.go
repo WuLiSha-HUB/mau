@@ -53,6 +53,13 @@ type Client struct {
 	Failover func(errorText string) bool
 	// SelfTag 入站自报身份提供器（nil = 不发自报头；仅自家 apis——回环 + 18100——生效）
 	SelfTag func() session.SelfTag
+	// OnImagesDropped 请求体预算摘图回调（nil = 不通知）——入参本轮被摘的图片张数。
+	//
+	// 用途：向会话推一条可见 systemauto（G23）——工具回执说「已登记」，被摘的图只在请求体里留占位，
+	// 工具面不可见；不通知就会出现「回执 OK 但模型看不到图」的假绿。
+	OnImagesDropped func(dropped int)
+	// lastImageDropNotice 上次已通知的摘图张数（去重——前文持续带图时不逐轮刷提示）
+	lastImageDropNotice int
 	// HTTP 客户端（nil = 默认 60 秒超时）
 	HTTP *http.Client
 	// mu 绑定面读写锁——APIConfigID / ReasoningEffort 的跨线程读写
@@ -255,6 +262,13 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 	body, omittedImages := BuildChatRequestBodyBudget(messages, tools, params, userID)
 	if omittedImages > 0 {
 		logAt(1, "请求体预算：省略 "+itoa(omittedImages)+" 张图片（安全上限 3 MB——本地网关 4 MB 断连实测）")
+		// G23：工具回执「已登记」不等于图到了——摘图事实必须回到会话面（去重：张数不变不重复刷）。
+		if c.OnImagesDropped != nil && omittedImages != c.lastImageDropNotice {
+			c.lastImageDropNotice = omittedImages
+			c.OnImagesDropped(omittedImages)
+		}
+	} else {
+		c.lastImageDropNotice = 0
 	}
 	if len(body) > maxRequestBodyBytes {
 		// 上下文超限拦截（G20）：图片已按预算处理过仍超限 = 纯文本前文本身过大。

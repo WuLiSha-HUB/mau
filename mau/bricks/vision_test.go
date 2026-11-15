@@ -81,7 +81,7 @@ func TestImageInject(t *testing.T) {
 	if !ok {
 		t.Fatalf("成功路径应返回 ok: %s", got)
 	}
-	want := `{"ok":true,"tool":"image-inject","target":"D:/a.png"}` + "\n" + "D:/a.png | 已登记（宿主批后段注入）"
+	want := `{"ok":true,"tool":"image-inject","target":"D:/a.png"}` + "\n" + "D:/a.png | 已登记（宿主批后段注入）" + imageInjectBudgetNotice
 	if got != want {
 		t.Fatalf("回执不符:\n%s\nwant:\n%s", got, want)
 	}
