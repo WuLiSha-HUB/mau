@@ -152,7 +152,7 @@ func TestCommandRouterCatTexts(t *testing.T) {
 	usage := router.Execute("cat.bogus")
 	for _, want := range []string{
 		"cat.* 指令未识别: cat.bogus",
-		"cat.new <显示名> | 新建猫（静默态，待 cat.start）",
+		"cat.new <显示名> [id] | 新建猫（静默态，待 cat.start；指定 id 复用——复活猫场景）",
 		"cat.start <key> | 分配端口 + 拉起 HttpHost",
 		"catcfg.apply <key> | 每猫配置运行时生效",
 	} {

@@ -266,7 +266,7 @@ func TestGroupHostManagerAllocate(t *testing.T) {
 // TestCatRegistryStartHostWiring 端口面钩子——cat.start 回真端口 / 运行态落盘 / cat.stop 停实例。
 func TestCatRegistryStartHostWiring(t *testing.T) {
 	reg, dir := newTestCatRegistry(t)
-	inst, errText := reg.createCat("带端口")
+	inst, errText := reg.createCat("带端口", "")
 	if errText != "" {
 		t.Fatalf("建猫失败：%q", errText)
 	}

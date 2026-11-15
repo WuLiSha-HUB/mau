@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"cathome5/host/config"
 	"cathome5/host/session"
 )
 
@@ -55,5 +56,21 @@ func TestReconcileViewOnLoadEmpty(t *testing.T) {
 	}
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("空前文不应产生视图文件: %v", err)
+	}
+}
+
+// TestResolveCacheIsolationKey 缓存隔离键——cacheKey 优先 / 空回落猫 id / off 恒空（复活猫 B）。
+func TestResolveCacheIsolationKey(t *testing.T) {
+	schema := &config.Schema{}
+	if got := resolveCacheIsolationKey(nil, schema, "cat-1", "proj-Mau"); got != "proj-Mau" {
+		t.Fatalf("cacheKey 应优先：%q", got)
+	}
+	if got := resolveCacheIsolationKey(nil, schema, "cat-1", ""); got != "cat-1" {
+		t.Fatalf("空 cacheKey 应回落猫 id：%q", got)
+	}
+	store := &config.Store{}
+	store.Set("llm.cache_isolation", "off")
+	if got := resolveCacheIsolationKey(store, schema, "cat-1", "proj-Mau"); got != "" {
+		t.Fatalf("cache_isolation=off 应恒空：%q", got)
 	}
 }

@@ -893,7 +893,7 @@ func catCommandUsage() string {
 		"cat.* / catcfg.* 可用指令:",
 		"  cat.list | 全部猫（id/显示名/运行态:端口）",
 		"  cat.info | 全猫状态统计（运行态/端口/流式态/前文长度/最近活跃——整块 JSON）",
-		"  cat.new <显示名> | 新建猫（静默态，待 cat.start）",
+		"  cat.new <显示名> [id] | 新建猫（静默态，待 cat.start；指定 id 复用——复活猫场景）",
 		"  cat.start <key> | 分配端口 + 拉起 HttpHost",
 		"  cat.stop <key> | 停止（majordomo 禁停）",
 		"  cat.delete <key> | 销毁（majordomo 禁删）",
@@ -910,11 +910,22 @@ func catCommandUsage() string {
 }
 
 // catNewCommand cat.new——建猫（ticks id + 默认命名 + 模板继承 + 会话装配；静默态待 cat.start）。
-func (r *commandRouter) catNewCommand(name string) string {
+// 形态 cat.new <显示名> [id]——id 可选；指定即复用该会话 id（复活猫场景，须未被占用）。
+func (r *commandRouter) catNewCommand(rest string) string {
 	if r.Cats == nil {
 		return "ERR|NOT_IMPLEMENTED|多猫面未接线（cat.new）"
 	}
-	inst, errText := r.Cats.createCat(name)
+	name, id := "", ""
+	if fields := strings.Fields(rest); len(fields) > 0 {
+		name = fields[0]
+		if len(fields) > 1 {
+			id = fields[1]
+		}
+		if len(fields) > 2 {
+			return "cat.new | 用法: cat.new <显示名> [id]"
+		}
+	}
+	inst, errText := r.Cats.createCat(name, id)
 	if errText != "" {
 		return errText
 	}
@@ -1349,6 +1360,7 @@ func formatCatCfg(id string, cfg *config.CatCfg) string {
 	sb.WriteString("  userInjectIdleOnly=" + idleText + "\r\n")
 	sb.WriteString("  appearanceId=" + cfg.AppearanceID + "\r\n")
 	sb.WriteString("  reasoningEffort=" + effortText + "\r\n")
+	sb.WriteString("  cacheKey=" + cfg.CacheKey + "\r\n")
 	sb.WriteString("  themeColor=" + strconv.Itoa(cfg.ThemeColor))
 	return sb.String()
 }
@@ -1624,6 +1636,17 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 		}
 		cfg.AppearanceID = parsed
 		return "appearanceId=" + parsed, false, ""
+	case "cacheKey":
+		trimmed := strings.TrimSpace(value)
+		if trimmed != "" && !config.IsSafeCatKey(trimmed) {
+			return "", false, "cacheKey 非法: " + trimmed + "（空 = 用猫 id）"
+		}
+		cfg.CacheKey = trimmed
+		applied := "cacheKey=（空——用猫 id）"
+		if trimmed != "" {
+			applied = "cacheKey=" + trimmed
+		}
+		return applied, false, ""
 	case "themeColor":
 		parsed, err := strconv.Atoi(strings.TrimSpace(value))
 		if err != nil || parsed < 0 {
@@ -1632,7 +1655,7 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 		cfg.ThemeColor = parsed
 		return "themeColor=" + strconv.Itoa(parsed), false, ""
 	}
-	return "", false, "非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/followDefaultTools/followDefaultInject/followDefaultRoots/reasoningEffort/appearanceId/themeColor）"
+	return "", false, "非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/followDefaultTools/followDefaultInject/followDefaultRoots/reasoningEffort/appearanceId/cacheKey/themeColor）"
 }
 
 // splitCfgList 逗号 / 空白分隔清单解析——去空项（对齐 C# SplitList：',', ' ', '\t'）。

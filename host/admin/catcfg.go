@@ -52,6 +52,8 @@ type catConfigResponse struct {
 	AppearanceID string `json:"appearanceId"`
 	// ThemeColor 主题色索引
 	ThemeColor int `json:"themeColor"`
+	// CacheKey 缓存隔离键（空 = 用猫 id；复活猫 B：同项目共享缓存域）
+	CacheKey string `json:"cacheKey"`
 	// RoundSummary 轮末总结生效值
 	RoundSummary bool `json:"roundSummary"`
 	// DefaultReasoningEffort 全局思考强度
@@ -90,6 +92,8 @@ type catConfigWriteResponse struct {
 	DBLibs []string `json:"dbLibs"`
 	// EnabledRoots 落盘后的启用根
 	EnabledRoots []string `json:"enabledRoots"`
+	// CacheKey 落盘后的缓存隔离键（空 = 用猫 id）
+	CacheKey string `json:"cacheKey"`
 	// RemovedEnabledRoots 被剔除的池外根 id
 	RemovedEnabledRoots []string `json:"removedEnabledRoots"`
 	// RootsPoolUnavailable 根池不可用
@@ -161,6 +165,7 @@ func (d *Deps) handleCatConfigGet(w http.ResponseWriter, r *http.Request) {
 		ReasoningEffort:        cfg.ReasoningEffort,
 		AppearanceID:           cfg.AppearanceID,
 		ThemeColor:             cfg.ThemeColor,
+		CacheKey:               cfg.CacheKey,
 		RoundSummary:           config.ResolveRoundSummary(appearancePool, cfg.AppearanceID),
 		DefaultReasoningEffort: d.defaultReasoningEffort(),
 		EnabledRoots:           cfg.EnabledRoots,
@@ -298,6 +303,15 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 	if _, present := fields["themeColor"]; present {
 		cfg.ThemeColor = themeColorValue
 	}
+	if _, present := fields["cacheKey"]; present {
+		// 缓存隔离键（复活猫 B）——空白 / 空串 = 用猫 id；非法字符拒绝（与 cat.cfg.set 同判据）
+		trimmed := strings.TrimSpace(fieldString(fields, "cacheKey"))
+		if trimmed != "" && !config.IsSafeCatKey(trimmed) {
+			writeErr(w, "cacheKey 非法")
+			return
+		}
+		cfg.CacheKey = trimmed
+	}
 	if _, present := fields["persona"]; present {
 		cfg.Persona = fieldString(fields, "persona")
 	}
@@ -378,6 +392,7 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 		RemovedToolNames:     removedToolNames,
 		DBLibs:               cfg.DBLibs,
 		EnabledRoots:         cfg.EnabledRoots,
+		CacheKey:             cfg.CacheKey,
 		RemovedEnabledRoots:  removedEnabledRoots,
 		RootsPoolUnavailable: rootsPoolUnavailable,
 	})

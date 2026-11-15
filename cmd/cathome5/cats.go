@@ -402,19 +402,33 @@ func (r *catRegistry) removeRuntime(id string) {
 }
 
 // createCat 建猫（cat.new 存储面 + 会话装配）——对齐 C# HandleCatNew：
-// id = ticks / 空名自动命名 / cat-default.cfg 模板继承 / 会话立即构造（静默态：不监听端口）。
+// id 缺省 = ticks / 指定 id = 按期复用（复活猫场景；须未被占用）/ 空名自动命名 /
+// cat-default.cfg 模板继承 / 会话立即构造（静默态：不监听端口）。
 //
 // 返回 (实例, 失败文本)——失败时回执文本以 "cat.new | " 开头（对齐 C# 文案）。
-func (r *catRegistry) createCat(name string) (*catInstance, string) {
+func (r *catRegistry) createCat(name, id string) (*catInstance, string) {
+	requestedID := strings.TrimSpace(id)
+	if requestedID != "" && !config.IsSafeCatKey(requestedID) {
+		return nil, "cat.new | id 非法: " + requestedID
+	}
 	r.mu.Lock()
-	id := newSessionID()
+	catID := requestedID
+	if catID == "" {
+		catID = newSessionID()
+	}
 	displayName := strings.TrimSpace(name)
 	if displayName == "" {
 		displayName = r.nextDefaultNameLocked()
 	}
 	r.mu.Unlock()
+	// 占用判据以盘上目录为准（cat.delete 删整棵后同 id 可再建——复活猫主路径）
+	if requestedID != "" {
+		if _, statErr := os.Stat(filepath.Join(r.dataRoot, "sessions", requestedID)); statErr == nil {
+			return nil, "cat.new | id 已存在: " + requestedID
+		}
+	}
 
-	cfg := &config.CatCfg{ID: id, DisplayName: displayName, MountAuto: true, ProjectMountExpert: true}
+	cfg := &config.CatCfg{ID: catID, DisplayName: displayName, MountAuto: true, ProjectMountExpert: true}
 	// 新猫初始即「跟随默认模板」——工具清单 / 前文注入 / 受控根随模板改动同步（生效仍为新会话）。
 	cfg.FollowDefaultTools = true
 	cfg.FollowDefaultInject = true
@@ -436,25 +450,25 @@ func (r *catRegistry) createCat(name string) (*catInstance, string) {
 			}
 		}
 	}
-	cfgPath := filepath.Join(r.dataRoot, "sessions", id, "cat.cfg")
+	cfgPath := filepath.Join(r.dataRoot, "sessions", catID, "cat.cfg")
 	if err := config.SaveCatCfg(cfgPath, cfg); err != nil {
 		return nil, "cat.new | 写入 cat.cfg 失败: " + err.Error()
 	}
 	// 会话装配（静默态：running=false；会话就绪后 cat.chat 即可投递）
 	var wiring *sessionWiring
 	if r.assemble != nil {
-		wiring = r.assemble(id)
+		wiring = r.assemble(catID)
 	}
 	if wiring == nil || wiring.Session == nil {
 		// 装配失败不留半个猫——清理刚写的 cat.cfg 与目录（对齐 C#：构造失败不落档）
-		_ = os.RemoveAll(filepath.Join(r.dataRoot, "sessions", id))
+		_ = os.RemoveAll(filepath.Join(r.dataRoot, "sessions", catID))
 		return nil, "cat.new | 会话构造失败"
 	}
-	inst := &catInstance{id: id, displayName: displayName, cfg: cfg, session: wiring.Session, wiring: wiring}
+	inst := &catInstance{id: catID, displayName: displayName, cfg: cfg, session: wiring.Session, wiring: wiring}
 	r.mu.Lock()
 	r.cats = append(r.cats, inst)
 	r.mu.Unlock()
-	r.log(1, "已创建猫「"+displayName+"」（id "+id+"），静默待启动", "CHAT")
+	r.log(1, "已创建猫「"+displayName+"」（id "+catID+"），静默待启动", "CHAT")
 	return inst, ""
 }
 

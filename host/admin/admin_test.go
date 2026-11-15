@@ -112,7 +112,7 @@ func TestCatConfigGetKeyOrder(t *testing.T) {
 		"ok", "cat", "displayName", "type", "apiConfigId", "persona", "toolNames", "injectList",
 		"projectMount", "projectMountExpert", "packs", "dbLibs", "allLibs", "dbLibsAvailable",
 		"allPacks", "userInjectIdleOnly", "reasoningEffort", "appearanceId", "themeColor",
-		"roundSummary", "defaultReasoningEffort", "enabledRoots", "rootsEffective", "allRoots", "allToolNames",
+		"cacheKey", "roundSummary", "defaultReasoningEffort", "enabledRoots", "rootsEffective", "allRoots", "allToolNames",
 		"allTools", "defectGroups", "staleToolNames", "apiOptions", "appearanceOptions",
 	}
 	keys := objectKeyOrder(t, rec.Body.Bytes())
@@ -194,7 +194,7 @@ func TestCatConfigPostRejects(t *testing.T) {
 	}
 }
 
-// TestCatConfigMultiCat 多猫寻址（d-1c）——GET 回该猫 29 字段 / POST 落盘该猫并回调 Apply / 未命中拒绝。
+// TestCatConfigMultiCat 多猫寻址（d-1c）——GET 回该猫 31 字段 / POST 落盘该猫并回调 Apply / 未命中拒绝。
 func TestCatConfigMultiCat(t *testing.T) {
 	deps, root := newTestDeps(t)
 	multiID := "1750000000000000101"
@@ -214,13 +214,13 @@ func TestCatConfigMultiCat(t *testing.T) {
 	applied := ""
 	deps.Apply = func(catKey string, cfg *config.CatCfg) { applied = catKey }
 
-	// GET——30 字段 + 该猫取值
+	// GET——31 字段 + 该猫取值
 	rec := do(t, deps, http.MethodGet, "/api/v1/cat-config?cat="+multiID, "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET 状态码 %d", rec.Code)
 	}
-	if keys := objectKeyOrder(t, rec.Body.Bytes()); len(keys) != 30 {
-		t.Fatalf("GET 字段数 %d（期望 30）: %v", len(keys), keys)
+	if keys := objectKeyOrder(t, rec.Body.Bytes()); len(keys) != 31 {
+		t.Fatalf("GET 字段数 %d（期望 31）: %v", len(keys), keys)
 	}
 	var got struct {
 		OK          bool   `json:"ok"`
@@ -484,5 +484,40 @@ func TestCatDefaultPostTemplateFields(t *testing.T) {
 	}
 	if dispatched != "catcfg.tplbroadcast" {
 		t.Fatalf("保存后应入队模板广播，实得 %q", dispatched)
+	}
+}
+
+// TestCatConfigPostCacheKey 缓存隔离键（复活猫 B）——落盘 + 回执实况；非法字符拒绝。
+func TestCatConfigPostCacheKey(t *testing.T) {
+	deps, root := newTestDeps(t)
+	rec := do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"majordomo","cacheKey":"proj-Mau"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
+	}
+	var payload struct {
+		OK       bool   `json:"ok"`
+		CacheKey string `json:"cacheKey"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("解析回执失败: %v", err)
+	}
+	if !payload.OK || payload.CacheKey != "proj-Mau" {
+		t.Fatalf("回执 cacheKey 不符: %+v", payload)
+	}
+	cfg, err := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if err != nil || cfg.CacheKey != "proj-Mau" {
+		t.Fatalf("落盘 cacheKey 不符: %v / %+v", err, cfg)
+	}
+	// 非法字符拒绝（与 cat.cfg.set 同判据——单层目录名）
+	rec = do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"majordomo","cacheKey":"../x"}`)
+	var rejected struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &rejected); err != nil {
+		t.Fatalf("解析拒绝回执失败: %v", err)
+	}
+	if rejected.OK || !strings.Contains(rejected.Error, "cacheKey 非法") {
+		t.Fatalf("非法 cacheKey 应拒绝: %+v", rejected)
 	}
 }

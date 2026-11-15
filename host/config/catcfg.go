@@ -49,6 +49,9 @@ type CatCfg struct {
 	ReasoningEffort string `json:"reasoningEffort"`
 	// ThemeColor 主题色索引（0 = 默认白）
 	ThemeColor int `json:"themeColor"`
+	// CacheKey 缓存隔离键（空 = 用猫 id）——复活猫 B 方案：同项目猫写同一项目级键，
+	// 删猫重建 / 新 catID 仍落回同一上游缓存域（出站 x-opencode-session 的来源）
+	CacheKey string `json:"cacheKey,omitempty"`
 	// FollowDefaultTools 跟随新猫默认模板的工具清单（true=模板改动广播到本猫）
 	FollowDefaultTools bool `json:"followDefaultTools"`
 	// FollowDefaultInject 跟随新猫默认模板的前文注入（true=模板改动广播到本猫）

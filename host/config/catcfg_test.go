@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 // TestResolveTplEnabledInject 模板启用集——禁用条目剔除 + 挂载段开关位（@mount:）不进继承。
 func TestResolveTplEnabledInject(t *testing.T) {
@@ -28,5 +33,37 @@ func TestResolveTplEnabledInject(t *testing.T) {
 	}
 	if got := ResolveTplEnabledInject(&CatDefault{}); len(got) != 0 {
 		t.Fatalf("空清单应返回空: %v", got)
+	}
+}
+
+// TestCatCfgCacheKey 缓存隔离键字段——落盘含 cacheKey（非空）/ 空值 omitempty 不写（复活猫 B）。
+func TestCatCfgCacheKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cat.cfg")
+	cfg := &CatCfg{ID: "cat-1", DisplayName: "猫一", MountAuto: true, ProjectMountExpert: true, CacheKey: "proj-Mau"}
+	if err := SaveCatCfg(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"cacheKey":"proj-Mau"`) {
+		t.Fatalf("落盘应含 cacheKey：%s", raw)
+	}
+	loaded, err := LoadCatCfg(path)
+	if err != nil || loaded.CacheKey != "proj-Mau" {
+		t.Fatalf("读回 cacheKey 不符：%v / %+v", err, loaded)
+	}
+	// 空值 omitempty——不落盘（旧文件不因新增字段改变字节形态）
+	loaded.CacheKey = ""
+	if err := SaveCatCfg(path, loaded); err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "cacheKey") {
+		t.Fatalf("空 cacheKey 不应落盘：%s", raw)
 	}
 }

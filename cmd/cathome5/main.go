@@ -449,6 +449,9 @@ func main() {
 			if inst.wiring.Client != nil {
 				inst.wiring.Client.SetBinding(cfg.APIConfigID, cfg.ReasoningEffort)
 			}
+			// 缓存隔离键实时——cacheKey 落盘即改本猫出站 x-opencode-session（复活猫 B：
+			// 面板建猫后补写项目级键，不必等下一次会话装配才生效）
+			inst.session.SetCacheUserID(resolveCacheIsolationKey(store, schema, inst.id, cfg.CacheKey))
 			// 库白名单实时——dbLibs 落盘即改本猫可访问库集合
 			db.RegisterCat(inst.id, strings.EqualFold(inst.id, "majordomo"), cfg.DBLibs)
 			cats.refreshCfg(inst.id, cfg)

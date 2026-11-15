@@ -140,7 +140,7 @@ func TestCatCreateWritesCfg(t *testing.T) {
 	if err := config.SaveCatDefault(filepath.Join(dir, "config", "cat-default.cfg"), tpl); err != nil {
 		t.Fatal(err)
 	}
-	inst, errText := reg.createCat("")
+	inst, errText := reg.createCat("", "")
 	if errText != "" || inst == nil {
 		t.Fatalf("建猫失败：%q", errText)
 	}
@@ -168,7 +168,7 @@ func TestCatCreateWritesCfg(t *testing.T) {
 		t.Fatalf("packs 继承不符：%+v", cfg.Packs)
 	}
 	// 第二只猫——默认命名顺延
-	second, errText := reg.createCat("")
+	second, errText := reg.createCat("", "")
 	if errText != "" || second.displayName != "默认小猫(1)" {
 		t.Fatalf("第二只猫命名不符：%q / %q", second.displayName, errText)
 	}
@@ -207,7 +207,7 @@ func TestCatLoadOnBoot(t *testing.T) {
 // TestCatStartStopDelete 生命周期——start 置运行态 / 重复 start 文案 / stop 释放 / delete 删目录。
 func TestCatStartStopDelete(t *testing.T) {
 	reg, dir := newTestCatRegistry(t)
-	inst, errText := reg.createCat("小测")
+	inst, errText := reg.createCat("小测", "")
 	if errText != "" {
 		t.Fatalf("建猫失败：%q", errText)
 	}
@@ -272,5 +272,32 @@ func TestCatListWithRegistry(t *testing.T) {
 	}
 	if !strings.Contains(text, "  200 | 小黑 | 静默") {
 		t.Fatalf("静默猫行不符：%q", text)
+	}
+}
+
+// TestCatCreateWithID 指定 id 建猫——复用 id / 占用拒绝 / 删后可重建 / 非法字符拒绝（复活猫 B）。
+func TestCatCreateWithID(t *testing.T) {
+	reg, dir := newTestCatRegistry(t)
+	inst, errText := reg.createCat("复活猫", "proj-revive-1")
+	if errText != "" || inst == nil || inst.id != "proj-revive-1" {
+		t.Fatalf("指定 id 建猫失败：%q / %+v", errText, inst)
+	}
+	cfg, err := config.LoadCatCfg(filepath.Join(dir, "sessions", "proj-revive-1", "cat.cfg"))
+	if err != nil || cfg == nil || cfg.ID != "proj-revive-1" || cfg.DisplayName != "复活猫" {
+		t.Fatalf("cat.cfg 落盘不符：%v / %+v", err, cfg)
+	}
+	if _, dupText := reg.createCat("占用", "proj-revive-1"); !strings.Contains(dupText, "id 已存在: proj-revive-1") {
+		t.Fatalf("占用 id 应拒绝：%q", dupText)
+	}
+	if _, badText := reg.createCat("非法", "../evil"); !strings.Contains(badText, "id 非法") {
+		t.Fatalf("非法 id 应拒绝：%q", badText)
+	}
+	// 删后同 id 可重建——复活猫主路径
+	if got := reg.deleteCat("proj-revive-1"); !strings.Contains(got, "已销毁") {
+		t.Fatalf("delete 回执不符：%q", got)
+	}
+	again, errText := reg.createCat("复活猫二", "proj-revive-1")
+	if errText != "" || again == nil || again.id != "proj-revive-1" {
+		t.Fatalf("删后重建应成功：%q / %+v", errText, again)
 	}
 }

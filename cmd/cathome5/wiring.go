@@ -187,7 +187,7 @@ func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsRes
 	}
 	sess.SetStreamer(&llm.SessionStreamer{Client: client})
 	wiring.Client = client
-	sess.SetCacheUserID(resolveCacheIsolationKey(store, schema, catID))
+	sess.SetCacheUserID(resolveCacheIsolationKey(store, schema, catID, cfg.CacheKey))
 	// 入站自报身份——自家 apis（回环 + 18100）请求附加头数据源；挂载项按 cat.cfg 初值
 	client.SelfTag = sess.SelfTag
 	sess.SetClientID("cat-home5/" + version)
@@ -279,11 +279,15 @@ func resolveRoundSummaryLlm(store *config.LlmAPIStore, apiConfigID string) []str
 	return []string{cfg.Endpoint, store.Secret(cfg.APIConfigID), cfg.DefaultModel}
 }
 
-// resolveCacheIsolationKey 缓存隔离键——llm.cache_isolation：cat=猫键 / off=空；其余按猫键。
-func resolveCacheIsolationKey(store *config.Store, schema *config.Schema, catID string) string {
+// resolveCacheIsolationKey 缓存隔离键——llm.cache_isolation：off=空；cat.cfg cacheKey 非空=该键
+// （复活猫 B：同项目猫共享同一缓存域）；否则=猫键（catID）。
+func resolveCacheIsolationKey(store *config.Store, schema *config.Schema, catID, cacheKey string) string {
 	mode := strings.TrimSpace(store.Resolve(schema, "llm.cache_isolation").Value)
 	if mode == "off" {
 		return ""
+	}
+	if key := strings.TrimSpace(cacheKey); key != "" {
+		return key
 	}
 	return catID
 }
