@@ -190,11 +190,14 @@ func (v *ViewStore) OnAssistantText(msg Message, msgIndex int, reasonDurMs int64
 //
 // skipReason = 思考已提前落成独立块（sealReasonStream 在离开 think 态时落过）——跳过 reason 派生，
 // 避免同一段思考出现两条。载入重建路径（AppendTailMissing）不传 skip（无实时落点）。
+// 空 content（纯思考暂停落的 assistant）不派生 text 块——不产空气泡，思考仍走 reason 块。
 func (v *ViewStore) OnAssistantTextWith(msg Message, msgIndex int, reasonDurMs int64, skipReason bool) {
 	if msg.ReasoningContent != "" && !skipReason {
 		v.appendDerived(msg, TypeReason, BuildReason(msg.ReasoningContent, reasonDurMs), msgIndex, 0)
 	}
-	v.appendDerived(msg, TypeText, `{"text":`+jsonStr(msg.Content)+`}`, msgIndex, 0)
+	if msg.Content != "" {
+		v.appendDerived(msg, TypeText, `{"text":`+jsonStr(msg.Content)+`}`, msgIndex, 0)
+	}
 }
 
 // OnAssistantToolCalls 真实前文 append 钩子——assistant 工具调用声明 → reason 条目（有思考时）+ 登记待配对工具。

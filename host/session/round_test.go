@@ -156,7 +156,8 @@ func TestPause_PreservesPartialReply(t *testing.T) {
 	}
 }
 
-// TestPause_ReasoningOnly 暂停保留——只有思考没有正文：视图落 reason 块，前文不落空回复。
+// TestPause_ReasoningOnly 暂停保留——只有思考没有正文：前文落 assistant(content="" + reasoning)，视图落 reason 块。
+// 2026-11-15 用户拍板：思考落前文，继续时模型能看到上一段思考（否则前文末尾是 user，等于从头再想）。
 func TestPause_ReasoningOnly(t *testing.T) {
 	sess, dir := newRoundTestSession(t)
 	r := sess.roundState()
@@ -166,8 +167,13 @@ func TestPause_ReasoningOnly(t *testing.T) {
 	sess.RequestPause()
 	sess.Pump()
 
-	if count := sess.Context.Count(); count != 1 {
-		t.Fatalf("仅思考的暂停不应写前文，现有 %d 条", count)
+	msgs := sess.Context.Messages()
+	if len(msgs) != 2 {
+		t.Fatalf("仅思考的暂停应落 assistant 前文，现有 %d 条", len(msgs))
+	}
+	last := msgs[len(msgs)-1]
+	if last.Role != RoleAssistant || last.Content != "" || last.ReasoningContent != "只想没说" {
+		t.Fatalf("暂停落前文形态不符: %+v", last)
 	}
 	raw, err := os.ReadFile(filepath.Join(dir, "cat.view.jsonl"))
 	if err != nil {
@@ -175,6 +181,10 @@ func TestPause_ReasoningOnly(t *testing.T) {
 	}
 	if !strings.Contains(string(raw), `"RenderType":"reason"`) || !strings.Contains(string(raw), "只想没说") {
 		t.Fatalf("思考块未落视图: %s", string(raw))
+	}
+	// 空 content 不派生 text 块——不产空气泡
+	if strings.Contains(string(raw), `"RenderType":"text"`) {
+		t.Fatalf("纯思考暂停不应产生 text 块: %s", string(raw))
 	}
 }
 

@@ -1107,6 +1107,22 @@ func (s *Session) preservePausedContent(reasoning, text, toolCalls string, seale
 		}
 		return
 	}
+	if toolCalls == "" && hasReason {
+		// 纯思考暂停（2026-11-15 用户拍板）——思考同批落前文 assistant（content="" + reasoning）：
+		// 「继续」时模型能看到上一段思考（否则前文末尾仍是 user = 从头再想一遍）；
+		// 视图侧派生 reason 块（已提前落过则跳过，避免同段两条）；空 content 不派生 text 块。
+		msg := s.Context.AddAssistantMessageWithReasoning("", reasoning)
+		if msg != nil {
+			s.appendStoredMessage(*msg)
+			if s.Views != nil {
+				s.Views.OnAssistantTextWith(*msg, s.Context.Count()-1, durMs, reasonPersisted)
+			}
+			r.mu.Lock()
+			r.contentSealed = true
+			r.mu.Unlock()
+		}
+		return
+	}
 	if s.Views != nil {
 		ts := s.ViewTimestamp()
 		if hasReason && !reasonPersisted {
@@ -1123,11 +1139,11 @@ func (s *Session) preservePausedContent(reasoning, text, toolCalls string, seale
 	r.mu.Unlock()
 }
 
-// sealReasonStream 思考段收口——把已生成的思考落成持久块（不再写 live empty）。
+// sealReasonStream 思考段收口——把已生成的思考落成持久块，并把临时区归空。
 //
-// 用户口径（2026-11-15）：「think 直接显示、不要写成 empty」——思考离开流式态时必须已经在上方；
-// 临时区内容保留，由后续 live 内容（replysse / toolrun）自然覆盖，不主动清空。
-// 已由前文消息承载（contentSealed）或已提前落块（reasonPersisted）时不重复落。
+// 用户口径（2026-11-15）：「think 直接显示、不要写成 empty」+「流式区直接映射到上面、不要双份」——
+// 思考离开流式态时必须已经在上方（落持久块），且临时区不再保留同一段（否则持久块与临时块同屏两份）。
+// 已由前文消息承载（contentSealed）或已提前落块（reasonPersisted）时不重复落，但临时区同样归空。
 // 调用面：enterPhase 离开 think 态 + 工具轮 seal + 错误中止 / 暂停收尾。重复调用幂等。
 func (s *Session) sealReasonStream() {
 	r := s.roundState()
@@ -1135,7 +1151,12 @@ func (s *Session) sealReasonStream() {
 	text := r.reasonAccum.String()
 	skip := r.reasonPersisted || r.contentSealed
 	r.mu.Unlock()
-	if text == "" || skip {
+	if text == "" {
+		return
+	}
+	if skip {
+		// 已落块 / 已由前文承载——临时区归空（前端据此摘掉消息流内的临时思考块）
+		s.ViewBus.SetLive(TypeEmpty, "")
 		return
 	}
 	if s.Views != nil {
@@ -1144,6 +1165,9 @@ func (s *Session) sealReasonStream() {
 	r.mu.Lock()
 	r.reasonPersisted = true
 	r.mu.Unlock()
+	// 落块后临时区归空——判例（2026-11-15 真链路）：落块后 live 仍留整段思考，
+	// 迟到 / 同批回放的 live.thinksse 帧会让前端把同一段再渲染一份（同一段思考双份）。
+	s.ViewBus.SetLive(TypeEmpty, "")
 }
 
 // takeReasonDuration 取走本块思考用时。

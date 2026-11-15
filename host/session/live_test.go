@@ -18,7 +18,7 @@ func countReasonBlocks(sess *Session) int {
 	return count
 }
 
-// TestSealReasonStreamPersistsLive 思考段收口——落持久块，不把临时区写成 empty（用户口径）。
+// TestSealReasonStreamPersistsLive 思考段收口——落持久块并把临时区归空（同一段思考不留两份）。
 func TestSealReasonStreamPersistsLive(t *testing.T) {
 	sess, _ := newRoundTestSession(t)
 	sess.AttachView()
@@ -34,8 +34,8 @@ func TestSealReasonStreamPersistsLive(t *testing.T) {
 	if count := countReasonBlocks(sess); count != 1 {
 		t.Fatalf("思考未落持久块: %d", count)
 	}
-	if frame := sess.TakeViewFrameJSON(); strings.Contains(frame, `"live":{"type":"empty"`) {
-		t.Fatalf("不写 empty 口径被破坏: %s", frame)
+	if frame := sess.TakeViewFrameJSON(); !strings.Contains(frame, `"live":{"type":"empty"`) {
+		t.Fatalf("落块后临时区应归空（同一段思考不留两份）: %s", frame)
 	}
 	// 幂等——再调一次不重复落块
 	sess.sealReasonStream()
@@ -44,7 +44,7 @@ func TestSealReasonStreamPersistsLive(t *testing.T) {
 	}
 }
 
-// TestEnterPhaseLeaveThinkPersists 离开 think 态即收口——思考进持久区，临时区不写空态。
+// TestEnterPhaseLeaveThinkPersists 离开 think 态即收口——思考进持久区，临时区同批归空。
 func TestEnterPhaseLeaveThinkPersists(t *testing.T) {
 	sess, _ := newRoundTestSession(t)
 	sess.AttachView()
@@ -59,8 +59,8 @@ func TestEnterPhaseLeaveThinkPersists(t *testing.T) {
 	if count := countReasonBlocks(sess); count != 1 {
 		t.Fatalf("离开 think 态未落思考块: %d", count)
 	}
-	if frame := sess.TakeViewFrameJSON(); strings.Contains(frame, `"live":{"type":"empty"`) {
-		t.Fatalf("离开 think 态不应写空态: %s", frame)
+	if frame := sess.TakeViewFrameJSON(); !strings.Contains(frame, `"live":{"type":"empty"`) {
+		t.Fatalf("离开 think 态临时区应归空（同一段思考不留两份）: %s", frame)
 	}
 	// 同态重复进入不产生副作用（同态提前返回）
 	sess.ViewBus.SetLive(TypeReplysse, "回复")
