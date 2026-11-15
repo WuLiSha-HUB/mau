@@ -450,3 +450,48 @@ func TestViewStoreAuditEntries(t *testing.T) {
 		t.Fatalf("对账不得修改条目，实得 %d 块", got)
 	}
 }
+
+// TestViewStoreTruncateDropsOrphanBlocks 回滚到最后一条消息——独立思考 / 轮结算 / 间隙文本随切点丢弃。
+func TestViewStoreTruncateDropsOrphanBlocks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v-trunc-orphan.view.jsonl")
+	vs := NewViewStore(path)
+	vs.OnUserMessage(Message{Role: RoleUser, Content: "一", CreatedAt: 100}, 0, "")
+	vs.SetInjectReport(`{"status":"ok"}`)
+	vs.AppendReason("暂停留下的独立思考", 0, 150)
+	vs.AppendRoundSummary(`{"data":{"prompt":1}}`, 160)
+	vs.AppendGapText("间隙文本", 170)
+	// 回滚到索引 0（user 块保留）——没有更后的前文派生块可丢，界限取保留面最大时间戳 + 1
+	vs.TruncateFrom(0)
+	blocks := vs.Blocks()
+	if len(blocks) != 2 || blocks[0].RenderType != viewInjectReportType || blocks[1].RenderType != TypeUser {
+		t.Fatalf("回滚后应「注入报告 + user」两块且注入报告在首（时间戳升序）: %+v", blocks)
+	}
+	reloaded := NewViewStore(path)
+	reloaded.Load()
+	if got := reloaded.Blocks(); len(got) != 2 {
+		t.Fatalf("截断后落盘应「注入报告 + user」两块: %d", len(got))
+	}
+}
+
+// TestViewStoreTruncateRollbackAt 按块时间戳回滚——前文派生按消息边界、独立块按时间界限。
+func TestViewStoreTruncateRollbackAt(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "v-trunc-at.view.jsonl")
+	vs := NewViewStore(path)
+	vs.OnUserMessage(Message{Role: RoleUser, Content: "一", CreatedAt: 100}, 0, "")
+	vs.AppendGapText("间隙", 200)
+	// 消息 CreatedAt 早于切点，但推块时间戳被单调化到 200 之后——按纯时间戳判会误丢
+	vs.OnAssistantText(Message{Role: RoleAssistant, Content: "答", CreatedAt: 100}, 1, 0)
+	blocks := vs.Blocks()
+	if len(blocks) != 3 || blocks[2].RenderType != TypeText || blocks[2].Timestamp <= 200 {
+		t.Fatalf("前置：assistant 块应被单调化到 200 之后: %+v", blocks)
+	}
+	// 回滚到「间隙」块之前——前文两条全保留（消息边界），视图两块按索引保留、间隙块按时刻丢弃
+	vs.TruncateRollbackAt(2, 200)
+	got := vs.Blocks()
+	if len(got) != 2 || got[0].RenderType != TypeUser || got[1].RenderType != TypeText {
+		t.Fatalf("前文派生块应按消息边界保留，实得 %+v", got)
+	}
+	if got[1].Timestamp <= 200 {
+		t.Fatalf("前置：assistant 块时间戳应晚于切点（%d）", got[1].Timestamp)
+	}
+}

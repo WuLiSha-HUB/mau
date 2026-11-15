@@ -78,7 +78,7 @@ func (s *Session) truncateTo(keep, cutIndex int, cutTs int64, tag, note string) 
 	// [段3] 视图层截断——与真实前文同批（未截断即把已回滚的消息原样重发）
 	if s.Views != nil {
 		if cutTs > 0 {
-			s.Views.TruncateAt(cutTs)
+			s.Views.TruncateRollbackAt(keep, cutTs)
 		} else {
 			s.Views.TruncateFrom(cutIndex)
 		}

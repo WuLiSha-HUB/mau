@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -397,10 +398,15 @@ func (v *ViewStore) Clear() {
 // TruncateFrom 视图层截断——回滚：丢弃前文索引大于切点的条目，与真实前文截断同批物化。
 //
 // 判定：前文派生条目（MsgIndex ≥ 0）按索引；非前文派生条目（-1）按时间戳界限。
+// 界限 = 被丢弃前文派生块的最小时间戳；没有可丢弃的前文派生块时取保留面最大时间戳 + 1
+// （独立思考 / 间隙文本 / 轮结算 / 错误 / 重试块都在界限之后的一并丢弃，否则「回滚到最后一条消息」
+// 时这些块会留在视图里，与前文对不上）。
 func (v *ViewStore) TruncateFrom(msgIndex int) {
 	v.mu.Lock()
 	dropMinTs := int64(-1)
+	maxKeptTs := int64(-1)
 	kept := make([]*ViewBlock, 0, len(v.blocks))
+	orphans := make([]*ViewBlock, 0, 4)
 	for _, block := range v.blocks {
 		if block.MsgIndex > msgIndex {
 			if dropMinTs < 0 || block.Timestamp < dropMinTs {
@@ -408,18 +414,47 @@ func (v *ViewStore) TruncateFrom(msgIndex int) {
 			}
 			continue
 		}
+		if block.MsgIndex < 0 {
+			orphans = append(orphans, block) // 独立块（注入报告 / 暂停保留的思考）——按时间界限判
+			continue
+		}
+		kept = append(kept, block)
+		if block.Timestamp > maxKeptTs {
+			maxKeptTs = block.Timestamp
+		}
+	}
+	cutoff := truncateCutoff(dropMinTs, maxKeptTs)
+	for _, block := range orphans {
+		if cutoff >= 0 && block.Timestamp >= cutoff {
+			continue
+		}
 		kept = append(kept, block)
 	}
+	// 独立块（ts=0 的注入报告等）是追加进 kept 的——恢复时间戳升序（v.blocks 内部有序是
+	// mergeLocked 多路归并/落盘行序的前提；2026-11-15 真链路：回滚后 inject_report 落到了末行）
+	sort.SliceStable(kept, func(i, j int) bool { return kept[i].Timestamp < kept[j].Timestamp })
 	v.blocks = kept
-	if dropMinTs >= 0 {
-		v.gapTexts = dropBlocksFrom(v.gapTexts, dropMinTs)
-		v.roundSums = dropBlocksFrom(v.roundSums, dropMinTs)
-		v.errors = dropBlocksFrom(v.errors, dropMinTs)
-		v.retries = dropBlocksFrom(v.retries, dropMinTs)
+	if cutoff >= 0 {
+		v.gapTexts = dropBlocksFrom(v.gapTexts, cutoff)
+		v.roundSums = dropBlocksFrom(v.roundSums, cutoff)
+		v.errors = dropBlocksFrom(v.errors, cutoff)
+		v.retries = dropBlocksFrom(v.retries, cutoff)
 	}
 	v.pendingTools = nil
 	v.mu.Unlock()
 	v.Rewrite()
+}
+
+// truncateCutoff 截断时间界限——被丢弃前文派生块的最小时间戳优先；
+// 无丢弃块时取保留面最大时间戳 + 1（只丢更晚的独立块）；无保留面返回 -1（不设界限）。
+func truncateCutoff(dropMinTs, maxKeptTs int64) int64 {
+	if dropMinTs >= 0 {
+		return dropMinTs
+	}
+	if maxKeptTs >= 0 {
+		return maxKeptTs + 1
+	}
+	return -1
 }
 
 // UpdateMessageContent 按消息索引改写派生块载荷——编辑前文后视图与真实前文对齐（返回改写块数）。
@@ -471,12 +506,26 @@ func viewBlockMatchesKind(renderType, kind string) bool {
 	return false
 }
 
-// TruncateAt 视图层按时间戳截断——非前文派生块（轮结算 / 错误 / 重试 / 间隙文本）作切点。
+// TruncateRollbackAt 按块时间戳回滚的视图截断——前文派生条目按消息边界（MsgIndex < keep），
+// 非前文派生条目按时间界限（Timestamp < cutoff）。
 //
-// 保留面：Timestamp 严格早于 cutoff 的全部块（五类块源同口径）；重写落盘。
-func (v *ViewStore) TruncateAt(cutoff int64) {
+// 两条判据各用各的：前文派生块的 ts 走 newBlock 单调化，可能晚于消息 CreatedAt；
+// 统一按时间戳判会在同毫秒相邻块上把「前文已保留」的消息块丢掉（前文与视图对不上）。
+func (v *ViewStore) TruncateRollbackAt(keep int, cutoff int64) {
 	v.mu.Lock()
-	v.blocks = dropBlocksFrom(v.blocks, cutoff)
+	kept := make([]*ViewBlock, 0, len(v.blocks))
+	for _, block := range v.blocks {
+		if block.MsgIndex >= 0 {
+			if block.MsgIndex < keep {
+				kept = append(kept, block)
+			}
+			continue
+		}
+		if block.Timestamp < cutoff {
+			kept = append(kept, block)
+		}
+	}
+	v.blocks = kept
 	v.gapTexts = dropBlocksFrom(v.gapTexts, cutoff)
 	v.roundSums = dropBlocksFrom(v.roundSums, cutoff)
 	v.errors = dropBlocksFrom(v.errors, cutoff)

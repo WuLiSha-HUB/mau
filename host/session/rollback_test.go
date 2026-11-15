@@ -196,3 +196,31 @@ func TestRollbackAtTimestamp(t *testing.T) {
 		t.Fatalf("时间戳 0 应拒绝: %q", got)
 	}
 }
+
+// TestRollbackDropsViewOrphanBlocks 回滚到最后一条消息——视图里的独立思考与轮结算一并丢弃。
+func TestRollbackDropsViewOrphanBlocks(t *testing.T) {
+	dir := withSessionDirs(t)
+	s := newTestSessionInSessions(t, dir, "cat-rollback-orphan")
+	s.Context.SetSystemPrompt("系统词")
+	s.Context.AddUserMessage("问题一")
+	s.Context.AddAssistantMessage("回答一")
+	msgs := s.Context.Messages()
+	for i, msg := range msgs {
+		switch msg.Role {
+		case RoleUser:
+			s.Views.OnUserMessage(msg, i, "")
+		case RoleAssistant:
+			s.Views.OnAssistantText(msg, i, 0)
+		}
+	}
+	lastTs := msgs[len(msgs)-1].CreatedAt
+	s.Views.AppendReason("暂停留下的思考", 0, lastTs+10)
+	s.Views.AppendRoundSummary(`{"data":{"prompt":1}}`, lastTs+20)
+	// 回滚到最后一条消息（assistant）——保留该条，其后的独立块随切点丢弃
+	if got := s.Rollback(len(msgs) - 1); !strings.HasPrefix(got, "rollback | ") {
+		t.Fatalf("回滚应成功: %q", got)
+	}
+	if blocks := s.Views.Blocks(); len(blocks) != 2 {
+		t.Fatalf("视图应只剩两条前文派生块: %d: %+v", len(blocks), blocks)
+	}
+}
