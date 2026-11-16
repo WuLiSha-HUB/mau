@@ -77,6 +77,7 @@ namespace CatHome4.Admin
             string label = GroupLabel(groupAlias, groupTitle, groupOpenId);
             string content = "[来自QQ:" + label + "]\n" + (senderName == null || senderName.Length == 0 ? "（未知发送人）" : senderName) + "：" + text;
             StringBuilder failed = new StringBuilder();
+            int delivered = 0;
             for (int i = 0; i < targets.Count; i = i + 1)
             {
                 string key = targets[i];
@@ -93,13 +94,24 @@ namespace CatHome4.Admin
                     failed.Append(key + "（未受理）");
                     continue;
                 }
+                delivered = delivered + 1;
                 LogStore.Add("QQBot", 1, "QQBot | 群 @" + Truncate(label, 16) + " → 猫 " + key, "QQBOT");
             }
-            if (failed.Length == 0)
+            // 部分目标未受理只进日志——判「谁来接」的口径是「有一只受理即算接手」：
+            // 群面不该因为另一只猫没启动就被判成「没人接」（A381 修正：多目标不得互相否决）
+            if (failed.Length > 0)
+            {
+                LogStore.Add("QQBot", 2, "QQBot | 群 @" + Truncate(label, 16) + " | 部分目标未受理: " + failed.ToString(), "QQBOT");
+            }
+            if (delivered > 0)
             {
                 return "";
             }
-            return "推送未全部受理: " + failed.ToString();
+            if (failed.Length > 0)
+            {
+                return "推送未受理: " + failed.ToString();
+            }
+            return "NO_TARGET";
         }
 
         /// <summary>
