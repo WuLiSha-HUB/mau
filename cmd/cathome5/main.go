@@ -378,7 +378,7 @@ func main() {
 			logs.Add("CatHome5", level, message, category, "", "", 0, frame.Current(), false)
 		},
 	}
-	server.BindCommand(router.Handle)
+	server.BindCommand(router.HandleResult)
 	server.BindCats(router.catsJSON)
 	server.BindFrame(frame.Current)
 	// [段12d] 语料热重载 HTTP 入口——与 host-reload 工具同一执行体（toolRuntime.ReloadFlow）

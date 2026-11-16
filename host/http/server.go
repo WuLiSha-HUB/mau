@@ -108,8 +108,8 @@ type Server struct {
 	logIncrementFn func(from int) (string, int)
 	// logCursor 日志增量游标（Pump 单 goroutine 独占）
 	logCursor int
-	// commandFn 是会话指令投递面（返回 false = 未受理）
-	commandFn func(text string) bool
+	// commandFn 是会话指令投递面（返回 false = 未受理；第二个返回值为执行结果文本，空 = 无结果）
+	commandFn func(text string) (bool, string)
 	// frameFn 当前全局帧号（回执携带；nil = 0）
 	frameFn func() int64
 	// cmdSeq 指令序号计数器（原子）
@@ -222,7 +222,10 @@ func (s *Server) BindPatch(fn func() string) { s.patchFn = fn }
 func (s *Server) BindLogIncrement(fn func(from int) (string, int)) { s.logIncrementFn = fn }
 
 // BindCommand 绑定会话指令投递面；nil = 指令入口返回未实现。
-func (s *Server) BindCommand(fn func(text string) bool) { s.commandFn = fn }
+//
+// 结果文本随回执回传（result 字段）——调用方据它拿 cat.new 的会话 id / cat.start 的端口，
+// 不必再用全量快照轮询反查（面板建猫链的两个 500ms 轮询即因此存在）。
+func (s *Server) BindCommand(fn func(text string) (bool, string)) { s.commandFn = fn }
 
 // BindFrame 绑定全局帧号读取（指令回执携带）；nil = 0。
 func (s *Server) BindFrame(fn func() int64) { s.frameFn = fn }

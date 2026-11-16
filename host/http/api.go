@@ -68,7 +68,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"ok": false, "error": "command not implemented"})
 		return
 	}
-	ok := s.commandFn(text)
+	ok, result := s.commandFn(text)
 	seq := atomic.AddInt64(&s.cmdSeq, 1)
 	frame := int64(0)
 	if s.frameFn != nil {
@@ -76,13 +76,13 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 	}
 	cmdID := "cmd-" + strconv.FormatInt(seq, 10)
 	if ok {
-		payload := `{"ok":true,"cmdId":` + jsonStr(cmdID) + `,"frame":` + strconv.FormatInt(frame, 10) + `}`
+		payload := `{"ok":true,"cmdId":` + jsonStr(cmdID) + `,"frame":` + strconv.FormatInt(frame, 10) + `,"result":` + jsonStr(result) + `}`
 		s.Broadcast("cmd", payload)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(payload))
 		return
 	}
-	payload := `{"ok":false,"cmdId":` + jsonStr(cmdID) + `,"frame":` + strconv.FormatInt(frame, 10) + `,"error":` + jsonStr("指令未识别: "+text) + `}`
+	payload := `{"ok":false,"cmdId":` + jsonStr(cmdID) + `,"frame":` + strconv.FormatInt(frame, 10) + `,"error":` + jsonStr("指令未识别: "+text) + `,"result":` + jsonStr(result) + `}`
 	s.Broadcast("cmd", payload)
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write([]byte(payload))

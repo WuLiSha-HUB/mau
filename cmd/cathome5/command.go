@@ -114,11 +114,29 @@ func (r *commandRouter) log(level int, message, category string) {
 }
 
 // Handle 处理一条指令——true = 已受理；false = 未识别（调用方回「指令未识别」）。
+// Handle 处理一条指令——返回是否受理（执行结果文本见 HandleResult）。
+//
+// 停机态一律拒收（自动挂载也一并挡住：重建会冲掉在途收尾）。
 func (r *commandRouter) Handle(text string) bool {
+	ok, _ := r.handleResult(text)
+	return ok
+}
+
+// HandleResult 处理一条指令并返回执行结果文本——HTTP 指令回执用（result 字段）。
+//
+// 结果文本只有管理指令族（cat.* / catcfg.*）产出——cat.new 的会话 id、cat.start 的端口都在里面，
+// 调用方据此免掉「全量快照轮询反查」。其余指令族返回空串。
+// 与 Handle 同源同序：Handle 是它的丢弃结果包装，不存在第二套判定。
+func (r *commandRouter) HandleResult(text string) (bool, string) {
+	return r.handleResult(text)
+}
+
+// handleResult 指令分派的唯一实现——分派顺序对齐 C# InputRoutes。
+func (r *commandRouter) handleResult(text string) (bool, string) {
 	// 停机态——一切新输入 / 重建请求拒收（自动挂载也一并挡住：重建会冲掉在途收尾）
 	if session.HostRestarting() {
 		r.log(2, "宿主重启中——本条输入未受理", "RESTART")
-		return false
+		return false, ""
 	}
 	switch {
 	case strings.HasPrefix(text, "Chat "):
@@ -127,38 +145,38 @@ func (r *commandRouter) Handle(text string) bool {
 		// 否则只落盘挂载、消息按普通输入投递（对齐 C# RouteChat / TryAutoMountOnMessage）
 		content := strings.TrimSpace(strings.TrimPrefix(text, "Chat "))
 		if content == "" {
-			return false
+			return false, ""
 		}
 		if r.AutoMount != nil && r.AutoMount(content) {
-			return true
+			return true, ""
 		}
-		return r.Session.PostUser(content, "user", "", "")
+		return r.Session.PostUser(content, "user", "", ""), ""
 	case text == "cat.list":
-		return r.catList()
+		return r.catList(), ""
 	case text == "cat.info":
-		return r.catInfo()
+		return r.catInfo(), ""
 	case text == "session.new":
-		return r.sessionNew("")
+		return r.sessionNew(""), ""
 	case strings.HasPrefix(text, sessionNewPrefix):
-		return r.sessionNew(strings.TrimSpace(strings.TrimPrefix(text, sessionNewPrefix)))
+		return r.sessionNew(strings.TrimSpace(strings.TrimPrefix(text, sessionNewPrefix))), ""
 	case strings.HasPrefix(text, sessionRollbackPrefix):
-		return r.sessionRollbackOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackPrefix)))
+		return r.sessionRollbackOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackPrefix))), ""
 	case strings.HasPrefix(text, sessionRollbackAtPrefix):
-		return r.sessionRollbackAtOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackAtPrefix)))
+		return r.sessionRollbackAtOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionRollbackAtPrefix))), ""
 	case strings.HasPrefix(text, sessionEditPrefix):
-		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditPrefix)), "edit")
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditPrefix)), "edit"), ""
 	case strings.HasPrefix(text, sessionEditReasonPrefix):
-		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonPrefix)), "reason")
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonPrefix)), "reason"), ""
 	case strings.HasPrefix(text, sessionResendPrefix):
-		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionResendPrefix)), "resend")
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionResendPrefix)), "resend"), ""
 	case strings.HasPrefix(text, sessionEditRewindPrefix):
-		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditRewindPrefix)), "editrewind")
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditRewindPrefix)), "editrewind"), ""
 	case strings.HasPrefix(text, sessionEditReasonRewindPrefix):
-		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonRewindPrefix)), "reasonrewind")
+		return r.sessionEditOn(r.Session, strings.TrimSpace(strings.TrimPrefix(text, sessionEditReasonRewindPrefix)), "reasonrewind"), ""
 	case strings.HasPrefix(text, catCfgGetPrefix):
-		return r.catCfgGetCommand(strings.TrimSpace(strings.TrimPrefix(text, catCfgGetPrefix)))
+		return r.catCfgGetCommand(strings.TrimSpace(strings.TrimPrefix(text, catCfgGetPrefix))), ""
 	case strings.HasPrefix(text, catCfgSetPrefix):
-		return r.catCfgSetCommand(strings.TrimSpace(strings.TrimPrefix(text, catCfgSetPrefix)))
+		return r.catCfgSetCommand(strings.TrimSpace(strings.TrimPrefix(text, catCfgSetPrefix))), ""
 	case strings.HasPrefix(text, "cat.") || strings.HasPrefix(text, "catcfg."):
 		// 管理指令族（cat.* / catcfg.*）——与工具桥同一执行体（C# InputRoutes 段6 RouteAdminLine）
 		result := r.Execute(text)
@@ -167,12 +185,12 @@ func (r *commandRouter) Handle(text string) bool {
 			level = 2
 		}
 		r.log(level, "cat 指令: "+result, "CMD")
-		return true
+		return true, result
 	case strings.HasPrefix(text, "delay."):
 		// 延迟指令族——任意线程直执（C# InputRoutes 段7 RouteDelayCommand）
-		return r.HandleDelay(text)
+		return r.HandleDelay(text), ""
 	}
-	return false
+	return false, ""
 }
 
 // HandleFor 按猫处理一条指令——每猫独立对话端口（d-1b）的指令面。

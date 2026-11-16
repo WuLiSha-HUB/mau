@@ -203,8 +203,9 @@ func startCatHost(inst *catInstance, deps *hostInstanceDeps, port int) (*hostIns
 			})
 		}
 		// 指令面——Chat / session.new 落本猫会话；cat.* / catcfg.* / delay.* 与管理面同一执行体
+		// （每猫端口不回执行结果文本：result 只服务管理面建猫链，主端口 BindCommand(HandleResult) 提供）
 		if deps.DispatchCat != nil {
-			srv.BindCommand(func(text string) bool { return deps.DispatchCat(inst.id, sess, text) })
+			srv.BindCommand(func(text string) (bool, string) { return deps.DispatchCat(inst.id, sess, text), "" })
 		}
 		if deps.Admin != nil {
 			// 对话页路由——静态三件（chat-images / cache-image / audio）+ 项目挂载四件。

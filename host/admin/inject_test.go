@@ -450,7 +450,7 @@ func TestInjectProjectPost(t *testing.T) {
 		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
 	}
 	order := objectKeyOrder(t, rec.Body.Bytes())
-	if strings.Join(order, ",") != "ok,msg,injectList" {
+	if strings.Join(order, ",") != "ok,msg,injectList,rebuilt" {
 		t.Fatalf("键序不符: %v", order)
 	}
 	var payload injectProjectWriteResponse
@@ -459,6 +459,9 @@ func TestInjectProjectPost(t *testing.T) {
 	}
 	if !payload.OK || !strings.HasPrefix(payload.Msg, "已挂载 Demo——会话重建中") {
 		t.Fatalf("回执异常: %+v", payload)
+	}
+	if !payload.Rebuilt {
+		t.Fatalf("rebuilt 应为 true（未开始对话 + 重建请求）: %+v", payload)
 	}
 	if !strings.HasSuffix(payload.Msg, " · L3 仅 readme") {
 		t.Fatalf("关模式文案不符: %s", payload.Msg)

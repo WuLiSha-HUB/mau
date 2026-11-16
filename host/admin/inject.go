@@ -75,7 +75,7 @@ type injectPreviewResponse struct {
 	Mount string `json:"mount"`
 }
 
-// injectProjectWriteResponse 是 POST /api/v1/inject/project 回执（键序 ok / msg / injectList）。
+// injectProjectWriteResponse 是 POST /api/v1/inject/project 回执（键序 ok / msg / injectList / rebuilt）。
 type injectProjectWriteResponse struct {
 	// OK 恒 true
 	OK bool `json:"ok"`
@@ -83,6 +83,9 @@ type injectProjectWriteResponse struct {
 	Msg string `json:"msg"`
 	// InjectList 落盘后的注入清单——同 preview，JSON 数组文本
 	InjectList string `json:"injectList"`
+	// Rebuilt 本次调用是否已同步重建会话——true = 前文已按新清单重注入，
+	// 调用方不必再发 cat.new-session（否则同一份清单会被编译两遍，每只猫白等一次重建）
+	Rebuilt bool `json:"rebuilt"`
 }
 
 // injectAutoResponse 是自动识别开关回执（键序 ok / cat / on）。
@@ -401,7 +404,7 @@ func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Se
 		projectText = "(空)"
 	}
 	d.logInject(1, "项目挂载：cat="+displayName+" project="+projectText+" injectList="+strconv.Itoa(len(next)))
-	return injectProjectWriteResponse{OK: true, Msg: msg, InjectList: compactListJSON(next)}, next
+	return injectProjectWriteResponse{OK: true, Msg: msg, InjectList: compactListJSON(next), Rebuilt: rebuilt}, next
 }
 
 // applyInjectProjectDefault 主干（majordomo）项目挂载执行体——cat.cfg 合并写 +（未开始对话时）session.new。
@@ -478,7 +481,7 @@ func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet 
 		projectText = "(空)"
 	}
 	d.logInject(1, "项目挂载：cat=majordomo project="+projectText+" injectList="+strconv.Itoa(len(next)))
-	return injectProjectWriteResponse{OK: true, Msg: msg, InjectList: compactListJSON(next)}, next
+	return injectProjectWriteResponse{OK: true, Msg: msg, InjectList: compactListJSON(next), Rebuilt: rebuilt}, next
 }
 
 // compactListJSON 清单序列化为紧凑 JSON 数组文本——C# 侧 JsonUtil.Array 产出字符串值，
