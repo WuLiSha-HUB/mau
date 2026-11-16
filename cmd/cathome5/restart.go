@@ -26,7 +26,11 @@ import (
 
 const (
 	// restartGateWait 闸门等待上限——判据持续不满足即撤销重启态并出声。
-	restartGateWait = 30 * time.Second
+	//
+	// 300s（原 30s）：排空闸门下等待的是「在途工具自然跑完 + 在途 LLM 流收口」——
+	// 单张工具工单上限 120s（toolOfficeTimeoutFrames），300s 覆盖工具 + 轮末余量；
+	// 超时仍是唯一出口（存量泄漏时撤销重启、宿主继续服务，不无限期拒收输入）。
+	restartGateWait = 300 * time.Second
 	// restartGateWarnInterval 闸门卡点出声间隔（失败必须可见）。
 	restartGateWarnInterval = 5 * time.Second
 	// restartRelayProbeWindow 接力进程存活确认窗口（先确认接力者已起，再自杀）。
@@ -168,7 +172,8 @@ func (g *restartGate) describeBlockerFor(scope string) string {
 		sessions = append(sessions, g.sess)
 	}
 	for _, sess := range sessions {
-		if sess == nil || sess.IsIdle() {
+		// 冻结 = 已停手（工具批已回填、不再发新请求）——与 Idle 同判（排空闸门）
+		if sess == nil || sess.IsIdle() || sess.IsFrozenForRestart() {
 			continue
 		}
 		name, _, _ := sess.GetRunState()

@@ -211,6 +211,9 @@ type roundState struct {
 
 	// paused 中止请求（HTTP 线程置位，主线程消费）
 	paused bool
+	// drainFrozen 停机态冻结——重启登记后本轮停在批末 / 工具决策处，不发出新的 LLM 请求与工具批；
+	// 闸门撤销即自动解冻继续（unfreezeAfterRestart），重启则由 pendingRound 续跑接管。
+	drainFrozen bool
 	// contentSealed 本次请求的已生成内容已落盘（暂停保留不得重复落）
 	contentSealed bool
 	// reasonPersisted 本次请求的思考已落成独立 reason 块（轮末派生跳过，避免重复）
@@ -337,6 +340,66 @@ func (s *Session) RequestPause() {
 	}
 }
 
+// freezeForRestart 停机态冻结本轮——不发出新的 LLM 请求 / 不启动新工具批（重启后续跑接管）。
+//
+// 判据：停机态 + 非登记会话。返回 true = 已冻结（调用方立即 return，本轮停在当前位置）。
+// 登记会话豁免：它本轮照常收尾、发最终回复（闸门的「发起会话 Idle」等的是它）。
+func (s *Session) freezeForRestart(reason string) bool {
+	if !isHostRestarting() || s.isRestartOwner() {
+		return false
+	}
+	r := s.roundState()
+	r.mu.Lock()
+	r.drainFrozen = true
+	r.mu.Unlock()
+	logAt(LogModuleHost, 1, "宿主重启停机态——本轮冻结（"+s.DisplayName+"）："+reason+"；重启后续跑接管，闸门撤销自动解冻", LogCategoryRestart)
+	return true
+}
+
+// IsFrozenForRestart 停机态冻结判定——宿主重启闸门的会话面判据（冻结 = 已停手，不产生新工作）。
+func (s *Session) IsFrozenForRestart() bool {
+	if s == nil {
+		return false
+	}
+	r := s.roundState()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.drainFrozen
+}
+
+// unfreezeAfterRestart 解冻——闸门撤销（停机态解除）后继续本轮：批末冻结走续轮尾部，LLM 冻结重发请求。
+func (s *Session) unfreezeAfterRestart(phase int) {
+	r := s.roundState()
+	r.mu.Lock()
+	r.drainFrozen = false
+	r.mu.Unlock()
+	logAt(LogModuleHost, 1, "重启已撤销——本轮解冻继续（"+s.DisplayName+"）", LogCategoryRestart)
+	switch phase {
+	case chatPhaseToolBatchRunning:
+		s.resumeAfterBatch()
+	case chatPhaseLlmRunning:
+		s.launchLlm()
+	}
+}
+
+// resumeAfterBatch 批末续轮——插话优先（同轮插入续轮），否则 tool 轮 +1 发下一轮 LLM。
+//
+// 批末冻结点与正常批末共用本函数（回填已完成，两者只有「现在续不续」的差别）。
+func (s *Session) resumeAfterBatch() {
+	r := s.roundState()
+	if s.DrainPendingIntoRound(true) {
+		r.mu.Lock()
+		r.round = 0
+		r.mu.Unlock()
+		s.launchLlm()
+		return
+	}
+	r.mu.Lock()
+	r.round++
+	r.mu.Unlock()
+	s.launchLlm()
+}
+
 // Pump 推进一帧——Idle 检查排队；Llm 轮询完成槽；工具批轮询；终态收尾。
 func (s *Session) Pump() {
 	// 轮末总结——在途工单回收（每帧；无在途零成本返回）
@@ -345,9 +408,19 @@ func (s *Session) Pump() {
 	r.mu.Lock()
 	paused := r.paused
 	phase := r.phase
+	frozen := r.drainFrozen
 	r.mu.Unlock()
 	if paused {
 		s.pauseFinalize()
+		return
+	}
+	// 停机态冻结——重启等待期间不推进本轮（在途批已跑完 / 工具决策不再发出）；
+	// 闸门撤销（停机态解除）即解冻继续，重启则由 pendingRound 续跑接管。
+	if frozen {
+		if isHostRestarting() {
+			return
+		}
+		s.unfreezeAfterRestart(phase)
 		return
 	}
 	switch phase {
@@ -367,6 +440,11 @@ func (s *Session) pumpIdle() {
 	// 停机态丢弃在途系统注入——宿主即将重启，不再开新轮（人工队列跨重启保留）
 	if s.Pending != nil {
 		s.Pending.DropSysIfRestarting()
+	}
+	// 停机态——不启动任何新轮（继续请求 / 自动继续 / 排队消息都不发出：闸门等的是存量清空，
+	// 新工作一律排队到重启后；人工队列已落盘，跨重启保留）
+	if isHostRestarting() {
+		return
 	}
 	r := s.roundState()
 	r.mu.Lock()
@@ -799,6 +877,10 @@ func (s *Session) pumpLlm() {
 				s.finishReasoningOnlyRound(reasoning)
 				return
 			}
+			// 停机态——空回复不再重发（续跑接管重新请求）
+			if s.freezeForRestart("空回复续传前冻结（不重发请求）") {
+				return
+			}
 			s.retryEmptyReply("模型未生成回复文本")
 			return
 		}
@@ -815,7 +897,8 @@ func (s *Session) pumpLlm() {
 		s.Timeback.NoteEvent()
 		// A196 临时区——本轮收尾写空态（内容已由持久区承载）
 		s.ViewBus.SetLive(TypeEmpty, "")
-		if s.DrainPendingIntoRound(true) {
+		// 停机态——不取队列续轮（存量人工消息跨重启保留，新宿主重启后处理）
+		if !isHostRestarting() && s.DrainPendingIntoRound(true) {
 			r.mu.Lock()
 			r.round = 0
 			r.mu.Unlock()
@@ -826,6 +909,11 @@ func (s *Session) pumpLlm() {
 		r.mu.Lock()
 		r.phase = chatPhaseDone
 		r.mu.Unlock()
+		return
+	}
+	// 停机态——工具决策不再发出（本次决策丢弃：不落 assistant(tool_calls)，续跑重新决策；
+	// 落进去会留孤儿 tool_calls——部分端点对无结果的工具声明直接报错）
+	if s.freezeForRestart("工具决策处冻结（不启动新工具批，本次决策丢弃）") {
 		return
 	}
 	// 工具批入口——assistant 声明入上下文 + 视图
@@ -873,7 +961,8 @@ func (s *Session) finishReasoningOnlyRound(reasoning string) {
 	r.mu.Lock()
 	r.contentSealed = true
 	r.mu.Unlock()
-	if s.DrainPendingIntoRound(true) {
+	// 停机态——不取队列续轮（存量人工消息跨重启保留）
+	if !isHostRestarting() && s.DrainPendingIntoRound(true) {
 		r.mu.Lock()
 		r.round = 0
 		r.mu.Unlock()

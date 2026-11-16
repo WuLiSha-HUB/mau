@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -408,5 +409,110 @@ func TestRestartGatePreflightBlocks(t *testing.T) {
 	}
 	if strings.Contains(joined, "pid 4243") {
 		t.Fatalf("清扫面内的进程不应作为阻断理由：\n%s", joined)
+	}
+}
+
+// frozenTestStreamer 是排空闸门测试用的流式替身（按脚本逐条回放）。
+type frozenTestStreamer struct {
+	scripts [][]session.StreamEvent
+	calls   int
+}
+
+// Stream 实现 session.Streamer。
+func (f *frozenTestStreamer) Stream(ctx context.Context, messages []session.Message, tools []session.ToolSpec, userID string, emit func(session.StreamEvent)) {
+	if f.calls >= len(f.scripts) {
+		emit(session.StreamEvent{Kind: session.StreamError, Text: "ERR|FAKE_EXHAUSTED|脚本已用尽"})
+		return
+	}
+	script := f.scripts[f.calls]
+	f.calls++
+	for _, ev := range script {
+		emit(ev)
+	}
+}
+
+// frozenTestOffice 是即时闭合的工具工单替身（批末冻结测试）。
+type frozenTestOffice struct{}
+
+// Post 返回固定工单号。
+func (f *frozenTestOffice) Post(name, argsJSON string, timeoutFrames int64) (int64, string) {
+	return 1, ""
+}
+
+// State 恒报 Closed。
+func (f *frozenTestOffice) State(officeID int64) session.ToolOfficeState {
+	return session.ToolOfficeState{Status: 2, ClaimFrame: 1, Result: "回执正文", HasResult: true}
+}
+
+// TestRestartGateFrozenSessionNotBlocker 排空闸门——冻结会话（在途批已回填、不再发新请求）
+// 视为已停手：scope=all 与 scope=self 均不构成卡点；OA 在途仍硬等（等在途跑完）。
+func TestRestartGateFrozenSessionNotBlocker(t *testing.T) {
+	dir := t.TempDir()
+	prevRestart := session.HostRestarting
+	prevPending := session.PendingStoreDir()
+	prevOwner, _ := session.RestartOwnerCatKey.Load().(string)
+	restarting := false
+	session.HostRestarting = func() bool { return restarting }
+	session.ConfigurePendingStore(dir)
+	t.Cleanup(func() {
+		session.HostRestarting = prevRestart
+		session.ConfigurePendingStore(prevPending)
+		session.RestartOwnerCatKey.Store(prevOwner)
+	})
+	session.RestartOwnerCatKey.Store("other-cat") // 本会话非登记方——可冻结
+
+	ctx := session.NewContext()
+	store := session.NewSessionStore(filepath.Join(dir, "majordomo.jsonl"))
+	views := session.NewViewStore(filepath.Join(dir, "majordomo.view.jsonl"))
+	sess := session.NewSession("majordomo", ctx, store, views)
+	sess.SetDisplayName("majordomo")
+	sess.SetAuthorizer(func(name string) bool { return true })
+	sess.SetToolOffice(&frozenTestOffice{})
+	streamer := &frozenTestStreamer{scripts: [][]session.StreamEvent{
+		{{Kind: session.StreamToolCalls, Text: `[{"id":"1","type":"function","function":{"name":"text-read","arguments":"{}"}}]`}, {Kind: session.StreamDone}},
+		{{Kind: session.StreamText, Text: "完成"}, {Kind: session.StreamDone}},
+	}}
+	sess.SetStreamer(streamer)
+
+	oa := runtime.NewOA(nil)
+	gate := newRestartGate(admin.NewRestartState(nil), sess, runtime.NewRunner(runtime.NewDataBox(), oa, nil), oa, &config.WorkspaceConfig{}, dir, 8079, "dev", "", nil)
+	gate.setSessionsProvider(func() []*session.Session { return []*session.Session{sess} })
+	// NewRestartState 会把 HostRestarting 重接到 state.Requested——本测试改回自己的可控标志
+	session.HostRestarting = func() bool { return restarting }
+
+	// 启动轮并推进到工具批执行中
+	if !sess.PostUser("跑", "user", "", "") {
+		t.Fatal("用户消息未受理")
+	}
+	for i := 0; i < 200 && sess.PhaseText() != "ToolBatchRunning"; i++ {
+		sess.Pump()
+		time.Sleep(time.Millisecond)
+	}
+	if sess.PhaseText() != "ToolBatchRunning" {
+		t.Fatalf("未进入工具批执行态: %s", sess.PhaseText())
+	}
+	// 停机态置位——批完成帧冻结（在途批不中断）
+	restarting = true
+	for i := 0; i < 100 && !sess.IsFrozenForRestart(); i++ {
+		sess.Pump()
+		time.Sleep(time.Millisecond)
+	}
+	if !sess.IsFrozenForRestart() {
+		t.Fatal("批末应冻结")
+	}
+	if streamer.calls != 1 {
+		t.Fatalf("冻结后不应发起下一轮 LLM（calls=%d）", streamer.calls)
+	}
+	// 冻结会话视为已停手——OA 空时闸门应放行（两种 scope）
+	if blocker := gate.describeBlockerFor(""); blocker != "" {
+		t.Fatalf("冻结会话不应构成卡点，got %q", blocker)
+	}
+	if blocker := gate.describeBlockerFor("self"); blocker != "" {
+		t.Fatalf("scope=self 冻结会话不应构成卡点，got %q", blocker)
+	}
+	// OA 在途仍硬等（排空闸门等的是在途跑完，不放弃）
+	oa.Post(1, "TOOL", "text-read", 1200)
+	if blocker := gate.describeBlockerFor("self"); !strings.Contains(blocker, "OA 在途") {
+		t.Fatalf("OA 在途应硬等，got %q", blocker)
 	}
 }

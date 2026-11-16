@@ -435,18 +435,12 @@ func (s *Session) pumpToolBatch() {
 	if s.Pending != nil {
 		s.Pending.DropSysIfRestarting()
 	}
-	// 忙时插话——有排队消息则同轮插入并续轮
-	if s.DrainPendingIntoRound(true) {
-		r.mu.Lock()
-		r.round = 0
-		r.mu.Unlock()
-		s.launchLlm()
+	// 停机态——本轮冻结在批末：已完成批的结果全部回填，不再取队列 / 不再发起下一轮 LLM
+	// （「等在途跑完，阻塞下一条请求」——重启后续跑接管，闸门撤销自动解冻）
+	if s.freezeForRestart("工具批末冻结（回填已完成）") {
 		return
 	}
-	r.mu.Lock()
-	r.round++
-	r.mu.Unlock()
-	s.launchLlm()
+	s.resumeAfterBatch()
 }
 
 // pumpSleepWait sleep 同轮等待推进——每帧检查到点即闭合工具单（帧计数口径，100ms/帧，不引入真实时钟）。

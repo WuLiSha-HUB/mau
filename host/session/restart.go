@@ -1,12 +1,24 @@
 package session
 
-import "strings"
+import (
+	"strings"
+	"sync/atomic"
+)
+
+// RestartOwnerCatKey 登记重启请求的会话 key——批末冻结豁免该会话（它本轮照常收尾、发最终回复）。
+//
+// 主线程写（registerRestartFromBatch）/ 各会话主线程读（freezeForRestart）；atomic 只为防
+// 测试并发与 -race 噪声，语义上单线程。闸门撤销后无需清除——冻结判据以停机态为前提，
+// 下次登记会覆盖。
+var RestartOwnerCatKey atomic.Value // string
 
 // 本文件是宿主重启链的会话侧契约（对齐 C# ChatSession.RestartRequest / IsHostRestarting / IsIdle）：
 //
 //	T1 请求登记——工具批结果收集完成 → 重启族工具且回执非 ERR → 登记请求 + 置停机态（本轮照常收尾）；
 //	T2 停机态——新输入 / 系统注入 / 继续请求拒收（PendingQueue 的 isHostRestarting 判定消费）；
-//	T3 闸门——宿主主循环据 IsIdle（本文件）+ Flow 空闲 + OA 零在途 判全局 Idle 后执行接力。
+//	   其它会话的轮在「批末 / 工具决策处」冻结（drainFrozen——不再发出新请求，等在途跑完，
+//	   排空闸门：闸门等 OA 自然清空而非放弃在途单；登记会话豁免冻结、照常收尾）；
+//	T3 闸门——宿主主循环据 IsIdle（本文件）+ IsFrozenForRestart + Flow 空闲 + OA 零在途 判全局 Idle 后执行接力。
 //
 // 装配层注入两个钩子（进程级单例——单猫形态与 HostRestarting 同模式）；未注入 = 重启链不启用。
 
@@ -37,6 +49,7 @@ func (s *Session) registerRestartFromBatch(dogs []*toolDog) {
 		r.mu.Lock()
 		r.toolDone = true
 		r.mu.Unlock()
+		RestartOwnerCatKey.Store(s.CatKey)
 		RestartRequestRegister(payload)
 	}
 }
@@ -54,4 +67,13 @@ func (s *Session) IsIdle() bool {
 		return false
 	}
 	return s.pendingCount() == 0
+}
+
+// isRestartOwner 本会话是否为重启请求的登记方（freezeForRestart 的豁免判据）。
+func (s *Session) isRestartOwner() bool {
+	if s == nil || s.CatKey == "" {
+		return false
+	}
+	owner, _ := RestartOwnerCatKey.Load().(string)
+	return owner != "" && owner == s.CatKey
 }
