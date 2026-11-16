@@ -71,11 +71,14 @@ namespace CatHome4.Admin
             }
             if (targets.Count == 0)
             {
-                // 无人订阅不是失败——服务侧据此回「仅支持 / 指令」提示（A381：有猫接就静默）
+                // 无人订阅不是失败——服务侧据此回「该推送无 Cat 接收」（A381：有猫接就静默）
                 return "NO_TARGET";
             }
+            // A383 来源名（方案乙）——首行并列「群 · 发送人」：多群场景下群里与谁说的都在第一行，
+            // 正文保持原样（不塞「某某：」前缀，机器串不进正文）
             string label = GroupLabel(groupAlias, groupTitle, groupOpenId);
-            string content = "[来自QQ:" + label + "]\n" + (senderName == null || senderName.Length == 0 ? "（未知发送人）" : senderName) + "：" + text;
+            string sender = senderName == null || senderName.Length == 0 ? "（未知发送人）" : senderName.Trim();
+            string content = "[来自QQ:" + label + " · " + sender + "]\n" + text;
             StringBuilder failed = new StringBuilder();
             int delivered = 0;
             for (int i = 0; i < targets.Count; i = i + 1)
