@@ -235,7 +235,7 @@ namespace SetUp
                 }
                 _steps.Add(new StepReport() { Step = 5, Name = "段5e version.txt -> public/" + LinuxAppDirName, Ok = true, Detail = "version=" + version });
 
-                // [段5f] 构建指纹——与 prepare 段5c 同一实现（严判：脏工作区 / 无 HEAD 即失败）
+                // [段5f] 构建指纹——投放链唯一的指纹写入点（2026-11-16 莎裁：Windows prepare 不产指纹，只此一处）
                 long buildInfoMs = Environment.TickCount64;
                 string buildInfoCommit = "";
                 string buildInfoDetail = "";

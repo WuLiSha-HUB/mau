@@ -32,16 +32,30 @@ namespace Mau.Providers
         /// <summary>bot_state 取数委托（群 OpenID → 原始响应 JSON；失败返回空串）</summary>
         public Func<string, string> BotStateFetcher = null;
 
-        /// <summary>全局运行状态取数委托（自宿主注入；返回多行文本）</summary>
-        public Func<string> HostInfoProvider = null;
-
         /// <summary>收到事件到执行命令的耗时（毫秒）——/ping 的报告值</summary>
         public long ElapsedMs = 0;
+        /// <summary>已知群的目录条目（群 OpenID → 条目）——群真实名与权限快照由此取；缺项 = 该群尚未刷新过官方状态</summary>
+        public Dictionary<string, QqBotGroupEntry> GroupEntries = new Dictionary<string, QqBotGroupEntry>();
+
+        /// <summary>当前在线的机器人清单（名称 + AppID）——/homeinfo 的全局面，与哪只机器人收到指令无关</summary>
+        public List<QqBotOnlineBot> OnlineBots = new List<QqBotOnlineBot>();
+    }
+
+    /// <summary>
+    /// 在线机器人的一行（/homeinfo「在线机器人」表格用）——只放对外可展示的两项。
+    /// </summary>
+    public sealed class QqBotOnlineBot
+    {
+        /// <summary>显示名</summary>
+        public string DisplayName = "";
+
+        /// <summary>QQ 开放平台 AppID</summary>
+        public string AppId = "";
     }
 
     /// <summary>
     /// 硬编码命令层（A379）——群内 @ 且以 / 开头的消息、私聊以 / 开头的消息走此通道，不经 LLM、不走 OA。
-    /// 现行四条：/ping（处理耗时）· /help（指令集）· /botinfo（本 bot 所在群与权限）· /homeinfo（全局运行状态）。
+    /// 现行四条：/ping（处理耗时）· /help（指令集）· /botinfo（本 bot 所在群与权限）· /homeinfo（宿主环境 + 在线机器人）。
     /// 未知指令回提示，不静默——失败必须可见。
     /// </summary>
     public static class QqBotCommands
@@ -118,7 +132,7 @@ namespace Mau.Providers
             sb.Append("- **/ping** — 本机处理耗时\n");
             sb.Append("- **/help** — 本指令集\n");
             sb.Append("- **/botinfo** — 本机器人所在群与权限\n");
-            sb.Append("- **/homeinfo** — 宿主运行状态\n");
+            sb.Append("- **/homeinfo** — 宿主版本 · 时间 · 系统\n");
             sb.Append("\n> 群内仅响应 @ 我的 / 指令，不参与闲聊。");
             return sb.ToString();
         }
@@ -150,19 +164,25 @@ namespace Mau.Providers
                 {
                     continue;
                 }
-                sb.Append("\n\n## 群 ").Append(gid);
+                // A386——群标题用群真实名（无群名时退 OpenID 末 8 位），不对外暴露内部别名
+                sb.Append("\n\n## 群 ").Append(GroupDisplayName(ctx, gid));
                 string raw = ctx.BotStateFetcher == null ? "" : ctx.BotStateFetcher(gid);
                 string parsed = ParseBotState(raw, out bool official);
                 if (official)
                 {
                     sb.Append("\n").Append(parsed);
+                    continue;
                 }
-                else
+                // 官方接口不可用——取目录缓存（A384 刷新时点）的本地观测值，不把未知报成「关闭」
+                QqBotGroupEntry entry = LookupEntry(ctx, gid);
+                if (HasPermissionSnapshot(entry))
                 {
-                    sb.Append("\n> 权限取自本地观测（官方接口不可用 · ");
-                    sb.Append(parsed.Length > 0 ? parsed : "无响应");
-                    sb.Append("）");
+                    sb.Append("\n").Append(BuildPermissionFromEntry(entry));
+                    sb.Append("\n> 官方接口不可用（").Append(parsed.Length > 0 ? parsed : "无响应").Append("），以上取自本地观测");
+                    sb.Append("（").Append(entry.LastSeen.Length > 0 ? entry.LastSeen : "刷新时点未知").Append("）");
+                    continue;
                 }
+                sb.Append("\n> 权限未知（官方接口不可用 · ").Append(parsed.Length > 0 ? parsed : "无响应").Append("）");
             }
             return sb.ToString();
         }
@@ -206,16 +226,25 @@ namespace Mau.Providers
                     {
                         recv = e.GetString() ?? "";
                     }
+                    // A386——三态：字段缺失即未知，不把「没取到」报成「关闭」
+                    bool hasProactive = false;
                     bool proactive = false;
-                    if (root.TryGetProperty("allow_proactive_msg", out e) && e.ValueKind == JsonValueKind.True)
+                    if (root.TryGetProperty("allow_proactive_msg", out e)
+                        && (e.ValueKind == JsonValueKind.True || e.ValueKind == JsonValueKind.False))
                     {
-                        proactive = true;
+                        proactive = e.GetBoolean();
+                        hasProactive = true;
+                    }
+                    string proactiveText = "未知";
+                    if (hasProactive)
+                    {
+                        proactiveText = proactive ? "允许" : "不允许";
                     }
                     official = true;
                     StringBuilder sb = new StringBuilder();
                     sb.Append("- **角色**：").Append(role.Length > 0 ? role : "未知");
                     sb.Append("\n- **收信范围**：").Append(recv.Length > 0 ? recv : "未知");
-                    sb.Append("\n- **主动发言**：").Append(proactive ? "开启" : "关闭");
+                    sb.Append("\n- **主动发言**：").Append(proactiveText);
                     return sb.ToString();
                 }
             }
@@ -226,22 +255,120 @@ namespace Mau.Providers
         }
 
         /// <summary>
-        /// /homeinfo——宿主全局运行状态（版本 / 运行时长 / 平台 / 连接数），由宿主注入的委托提供。
+        /// /homeinfo——QQBot 所在宿主的全局摘要：版本 / 时间 / 系统 / 在线机器人四块。
+        /// 面向群里的外部人——查的是「这台 CatHome 上跑着什么」，不含任何猫级 / 会话级数据
+        /// （受控根 / 计量 / 加载包 / 域记录都绑定会话，Cat 不指定会话，故不收集——2026-11-16 莎裁）。
         /// </summary>
-        /// <param name="ctx">执行上下文</param>
+        /// <param name="ctx">执行上下文（在线机器人清单由此取）</param>
         /// <returns>回复正文</returns>
         private static string BuildHomeInfo(QqBotCommandContext ctx)
         {
-            if (ctx.HostInfoProvider == null)
+            StringBuilder sb = new StringBuilder();
+            sb.Append("# CH4 宿主状态");
+            sb.Append("\n\n## 版本");
+            string version = global::Mau.Runtime.VersionInfo.GetEntryVersion();
+            sb.Append("\n- **版本**：").Append(version.Length > 0 ? version : "?");
+            string buildAt = global::Mau.Runtime.VersionInfo.GetEntryBuildTime();
+            if (buildAt.Length > 0)
             {
-                return "全局状态不可用（宿主未注入信息面）";
+                sb.Append("\n- **编译时刻**：").Append(buildAt);
             }
-            string info = ctx.HostInfoProvider();
-            if (info == null || info.Trim().Length == 0)
+            sb.Append("\n\n## 时间");
+            sb.Append("\n- **当前时间**：").Append(DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            sb.Append("\n\n## 系统");
+            sb.Append("\n- **描述**：").Append(System.Runtime.InteropServices.RuntimeInformation.OSDescription);
+            sb.Append("\n- **架构**：").Append(System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString());
+            sb.Append("\n- **运行时**：").Append(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription);
+            sb.Append("\n\n## 在线机器人");
+            List<QqBotOnlineBot> bots = ctx.OnlineBots;
+            if (bots == null || bots.Count == 0)
             {
-                return "全局状态不可用（宿主返回空）";
+                sb.Append("\n- （无在线机器人）");
             }
-            return info.Trim();
+            else
+            {
+                sb.Append("\n| 名称 | AppID |");
+                sb.Append("\n|:--|:--|");
+                for (int i = 0; i < bots.Count; i = i + 1)
+                {
+                    sb.Append("\n| ").Append(bots[i].DisplayName).Append(" | ").Append(bots[i].AppId).Append(" |");
+                }
+            }
+            return sb.ToString();
+        }
+        /// <summary>
+        /// 群显示名——群目录里的真实群名优先，无名时退 OpenID 末 8 位（内部别名不对外）。
+        /// </summary>
+        /// <param name="ctx">执行上下文</param>
+        /// <param name="groupOpenId">群 OpenID</param>
+        /// <returns>展示用群名</returns>
+        private static string GroupDisplayName(QqBotCommandContext ctx, string groupOpenId)
+        {
+            QqBotGroupEntry entry = LookupEntry(ctx, groupOpenId);
+            if (entry != null && entry.Title.Length > 0)
+            {
+                return entry.Title;
+            }
+            string id = groupOpenId == null ? "" : groupOpenId;
+            if (id.Length > 8)
+            {
+                return id.Substring(id.Length - 8);
+            }
+            return id;
+        }
+        /// <summary>
+        /// 取群目录条目——上下文未带目录或该群无条目时返回 null。
+        /// </summary>
+        /// <param name="ctx">执行上下文</param>
+        /// <param name="groupOpenId">群 OpenID</param>
+        /// <returns>条目或 null</returns>
+        private static QqBotGroupEntry LookupEntry(QqBotCommandContext ctx, string groupOpenId)
+        {
+            if (ctx.GroupEntries == null || groupOpenId == null)
+            {
+                return null;
+            }
+            QqBotGroupEntry entry = null;
+            ctx.GroupEntries.TryGetValue(groupOpenId, out entry);
+            return entry;
+        }
+        /// <summary>
+        /// 条目是否带权限快照——收信范围 / 角色 / 主动发言任一有值即视为本地观测过一次。
+        /// </summary>
+        /// <param name="entry">群条目（可空）</param>
+        /// <returns>true=可展示本地观测值</returns>
+        private static bool HasPermissionSnapshot(QqBotGroupEntry entry)
+        {
+            if (entry == null)
+            {
+                return false;
+            }
+            return entry.RecvSetting.Length > 0 || entry.Role.Length > 0 || entry.AllowProactive;
+        }
+        /// <summary>
+        /// 本地观测权限摘要——与工具面同口径三态（允许 / 不允许 / 未知），未知不报成否定。
+        /// </summary>
+        /// <param name="entry">群条目</param>
+        /// <returns>三行 Markdown 列表</returns>
+        private static string BuildPermissionFromEntry(QqBotGroupEntry entry)
+        {
+            StringBuilder sb = new StringBuilder();
+            sb.Append("- **角色**：").Append(entry.Role.Length > 0 ? entry.Role : "未知");
+            sb.Append("\n- **收信范围**：").Append(entry.RecvSetting.Length > 0 ? entry.RecvSetting : "未知");
+            string proactive = "未知";
+            if (entry.AllowProactive)
+            {
+                proactive = "允许";
+            }
+            else
+            {
+                if (entry.RecvSetting.Length > 0)
+                {
+                    proactive = "不允许";
+                }
+            }
+            sb.Append("\n- **主动发言**：").Append(proactive);
+            return sb.ToString();
         }
     }
 }

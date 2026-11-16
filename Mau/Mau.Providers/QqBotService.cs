@@ -33,9 +33,6 @@ namespace Mau.Providers
         /// <summary>消息留档面（群全量 / @ 收件 / @ 发出）</summary>
         private QqBotStore _store = null;
 
-        /// <summary>全局状态取数委托——宿主注入（/homeinfo 与工具面共用）</summary>
-        private Func<string> _hostInfoProvider = null;
-
         /// <summary>猫级绑定解析委托——宿主注入（A381；未注入 = 猫级过滤不生效，按池全量处理并出声）</summary>
         private QqBotBindingResolver _catBindingResolver = null;
 
@@ -70,15 +67,6 @@ namespace Mau.Providers
             _store = new QqBotStore(Path.Combine(dataRoot, "Data", "qq"));
             // A380 群目录——Data/qq/bots/<appId>/groups.json（别名 / 群名 / 群内权限）
             _directory = new QqBotGroupDirectory(Path.Combine(dataRoot, "Data", "qq", "bots"));
-        }
-
-        /// <summary>
-        /// 注入全局状态取数委托——宿主在启动链调用；未注入时 /homeinfo 明示不可用。
-        /// </summary>
-        /// <param name="provider">返回多行状态文本的委托</param>
-        public void SetHostInfoProvider(Func<string> provider)
-        {
-            _hostInfoProvider = provider;
         }
 
         /// <summary>
@@ -235,10 +223,7 @@ namespace Mau.Providers
             return err;
         }
 
-        /// <summary>
-        /// 本机器人信息——所在群与每群权限（官方 bot_state 优先，不可用时降级本地观测并明示）。
-        /// 硬编码 /botinfo 与工具面 qqbot-botinfo 共用同一实现。
-        /// </summary>
+        /// <summary>本机器人信息——所在群与每群权限（官方 bot_state 优先，不可用时降级本地观测并明示）。走硬编码 /botinfo 的同一命令实现；工具面 qqbot-botinfo 另走 BotDetailText（群目录逐条 + 权限三态）。</summary>
         /// <param name="botKey">配置池身份（空=全部已连接机器人的合并视图）</param>
         /// <returns>多行文本</returns>
         public string BotInfoText(string botKey)
@@ -351,74 +336,35 @@ namespace Mau.Providers
             {
                 QqBotGroupDocument doc = _directory.Load(conn.AppId);
                 System.Collections.Generic.List<string> openIds = new System.Collections.Generic.List<string>();
+                System.Collections.Generic.Dictionary<string, QqBotGroupEntry> entries
+                    = new System.Collections.Generic.Dictionary<string, QqBotGroupEntry>();
                 for (int i = 0; i < doc.Groups.Count; i = i + 1)
                 {
-                    openIds.Add(doc.Groups[i].OpenId);
+                    QqBotGroupEntry item = doc.Groups[i];
+                    openIds.Add(item.OpenId);
+                    // A386——群真实名与权限快照随上下文下传（/botinfo 取用，命令层不碰目录）
+                    entries[item.OpenId] = item;
                 }
                 ctx.KnownGroups = openIds;
+                ctx.GroupEntries = entries;
             }
             else if (_store != null)
             {
                 ctx.KnownGroups = _store.ReadKnownGroups(conn.AppId);
             }
-            ctx.BotStateFetcher = conn.GetBotStateRaw;
-            ctx.HostInfoProvider = _hostInfoProvider != null ? _hostInfoProvider : BuildDefaultHomeInfo;
-            return ctx;
-        }
-
-        /// <summary>
-        /// 内置全局状态文本——/homeinfo 的默认实现（宿主未注入 provider 时使用）：
-        /// 版本 / 构建时刻 / 运行时长 / 平台（OS + 架构 + .NET 运行时）。
-        /// </summary>
-        /// <returns>多行文本</returns>
-        private static string BuildDefaultHomeInfo()
-        {
-            StringBuilder sb = new StringBuilder();
-            string version = global::Mau.Runtime.VersionInfo.GetEntryVersion();
-            sb.Append("# CH4 宿主 v").Append(version.Length > 0 ? version : "?");
-            string buildAt = global::Mau.Runtime.VersionInfo.GetEntryBuildTime();
-            if (buildAt.Length > 0)
+            // /homeinfo 的在线机器人表——全连接面（与当前哪只机器人收到指令无关）
+            lock (_sync)
             {
-                sb.Append("\n- **构建**：").Append(buildAt);
-            }
-            try
-            {
-                using (System.Diagnostics.Process p = System.Diagnostics.Process.GetCurrentProcess())
+                foreach (KeyValuePair<string, QqBotConnection> pair in _connections)
                 {
-                    TimeSpan up = DateTime.Now - p.StartTime;
-                    sb.Append("\n- **运行时长**：").Append(BuildUptime(up));
+                    QqBotOnlineBot row = new QqBotOnlineBot();
+                    row.DisplayName = pair.Value.DisplayName;
+                    row.AppId = pair.Value.AppId;
+                    ctx.OnlineBots.Add(row);
                 }
             }
-            catch (Exception ex)
-            {
-                sb.Append("\n- **运行时长**：不可得（").Append(ex.Message).Append("）");
-            }
-            sb.Append("\n- **平台**：").Append(System.Runtime.InteropServices.RuntimeInformation.OSDescription);
-            sb.Append(" · ").Append(System.Runtime.InteropServices.RuntimeInformation.OSArchitecture.ToString());
-            sb.Append(" · ").Append(System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription);
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// 运行时长格式化——天/时/分/秒，取非零最大两级。
-        /// </summary>
-        /// <param name="up">时长</param>
-        /// <returns>可读文本</returns>
-        private static string BuildUptime(TimeSpan up)
-        {
-            if (up.TotalDays >= 1)
-            {
-                return up.Days.ToString() + " 天 " + up.Hours.ToString() + " 小时";
-            }
-            if (up.TotalHours >= 1)
-            {
-                return up.Hours.ToString() + " 小时 " + up.Minutes.ToString() + " 分";
-            }
-            if (up.TotalMinutes >= 1)
-            {
-                return up.Minutes.ToString() + " 分 " + up.Seconds.ToString() + " 秒";
-            }
-            return up.Seconds.ToString() + " 秒";
+            ctx.BotStateFetcher = conn.GetBotStateRaw;
+            return ctx;
         }
 
         /// <summary>截断文本——日志与回复展示用。</summary>

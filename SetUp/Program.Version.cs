@@ -145,7 +145,7 @@ namespace SetUp
         /// ——此时那个版本号就是即将编进产物的版本，与自述语义同源。
         /// <para>
         /// 版本号不承载源码状态：产物是否基于当前源码由构建指纹 buildinfo.txt 的 commit 判定
-        /// （SetUp 段5c 落盘 · 接收端哨兵 L6 比对）。本函数只回答「这份产物自称哪个版本」。
+        /// （SetUp publish-linux 段5f 落盘 · 接收端哨兵 L6 比对）。本函数只回答「这份产物自称哪个版本」。
         /// </para>
         /// </summary>
         /// <param name="repoRoot">仓库根（回落源）</param>

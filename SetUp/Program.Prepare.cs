@@ -193,20 +193,6 @@ namespace SetUp
                     Console.WriteLine("[SetUp] ⚠ 音频资产复制失败：" + assetsDetail);
                 }
 
-                // [段5c] 构建指纹落盘——产物自带 commit，接收端比提交身份不比时间戳
-                // 动机（2026-11-16）：双机两腿下产物 mtime = 推送落盘时刻、源码 mtime = 检出时刻，
-                // 恒有「源码比产物新」→ mtime 哨兵结构性误拒；commit 全等 ⇒ 源码树内容相同，
-                // mtime 判据要防的静默失效被全覆盖且无假阳性。
-                // 严判（莎 2026-11-16）：工作区有未提交改动 / 取不到 HEAD 即中止——产物无核验依据，不做半成品。
-                long buildInfoMs = Environment.TickCount64;
-                string buildInfoCommit;
-                string buildInfoDetail;
-                bool buildInfoOk = WriteBuildInfo(repoRoot, Path.Combine(repoRoot, "public", "app"), out buildInfoCommit, out buildInfoDetail);
-                _steps.Add(new StepReport() { Step = 5, Name = "段5c 构建指纹落盘 -> public/app/buildinfo.txt", Ok = buildInfoOk, Ms = Environment.TickCount64 - buildInfoMs, Detail = buildInfoDetail });
-                if (!buildInfoOk)
-                {
-                    return Fail("段5c 构建指纹落盘失败：" + buildInfoDetail + "——中止（无指纹的产物接收端必拒）。");
-                }
                 // [段6] 步6：宿主自检——CLI 全链（主线程直执 + 进程自退；8080 单例——验证前确认无宿主占用）
                 string hostExe = Path.Combine(repoRoot, "public", "app", PlatformServices.Paths.HostExeName);
                 if (!File.Exists(hostExe))
@@ -238,13 +224,14 @@ namespace SetUp
         }
 
         /// <summary>
-        /// 构建指纹落盘——写 public/app/buildinfo.txt（四行键=值：commit / dirty / built_at / version；UTF-8 无 BOM + LF）。
+        /// 构建指纹落盘——写产物区 buildinfo.txt（四行键=值：commit / dirty / built_at / version；UTF-8 无 BOM + LF）。
+        /// 🔴 唯一调用方 = publish-linux 段5f（2026-11-16 莎裁：Windows prepare 不产指纹，本机 incr 走 mtime 不需要它）。
         /// 来源：commit = git HEAD 完整 40 位；dirty = git status --porcelain 是否非空。
-        /// 严判（莎 2026-11-16）：取不到 HEAD / git 不可用 / 工作区有未提交改动 → 一律失败，不落半成品指纹
+        /// 严判：取不到 HEAD / git 不可用 / 工作区有未提交改动 → 一律失败，不落半成品指纹
         /// （产物无核验依据，接收端必拒——把门禁推到最左侧）。
         /// </summary>
         /// <param name="repoRoot">仓库根</param>
-        /// <param name="appDir">产物区（public/app）</param>
+        /// <param name="appDir">产物区（投放链为 public/app-linux）</param>
         /// <param name="commit">输出：写入的 commit（失败为空串）</param>
         /// <param name="detail">输出：步明细（成功 = commit 前 8 位 + dirty；失败 = 原因）</param>
         /// <returns>true=已落盘</returns>

@@ -755,7 +755,7 @@ namespace SetUp
         }
         /// <summary>
         /// Linux 侧 incr 哨兵——比构建指纹（L1–L6，命中即拒；不做任何 mtime 比较）。
-        /// 依据：产物自带 buildinfo.txt（prepare 段5c 落盘）记录编译时的 git HEAD；接收端只比
+        /// 依据：产物自带 buildinfo.txt（publish-linux 段5f 落盘）记录编译时的 git HEAD；接收端只比
         /// 「产物 commit == 仓库 HEAD」——全等即可搬，不等即拒。不设降级：缺失即未知，未知不放行。
         /// </summary>
         /// <param name="repoRoot">仓库根（读 HEAD）</param>

@@ -142,26 +142,35 @@ namespace Mau.Providers
             }
 
             // [段5] @ 推送订阅猫（A381）——走 user 入口：对目标猫而言这就是「有人在跟我说话」
-            bool handled = false;
+            string pushErr = "";
             if (_catPush == null)
             {
                 LogStore.Add("QQBot", 2, "QQBot | @ 推送未接线（宿主未注入推送委托）: " + Truncate(m.GroupOpenId, 12), "QQBOT");
+                pushErr = "推送未接线（宿主未注入推送委托）";
             }
             else
             {
-                handled = PushMentionToCats(botKey, conn, m.GroupOpenId, m.SenderName, clean);
+                pushErr = PushMentionToCats(botKey, conn, m.GroupOpenId, m.SenderName, clean);
             }
             // [段6] 回调路径收尾（A381）——两条路径互不掺杂：
             //   ① `/` 开头 = 指令路径（段4 已直执并 return，永不进这里）
             //   ② 非 `/` 开头 = 回调路径：推送成功即静默（由猫用 qqbot-send 回答），推送失败必须发声——
             //      「没人接」这件事对群里的人是信息，不能藏（失败必须可见）
-            if (handled)
+            if (pushErr.Length == 0)
             {
                 return;
             }
             if (isGroup)
             {
-                ReplyPassive(conn, true, m.GroupOpenId, m.MsgId, "**该推送无 Cat 接收**，请检查 CatHome");
+                // A386——无人订阅是配置事实，投递失败是运行事实：分开说，不让人按错误方向查
+                if (string.Equals(pushErr, "NO_TARGET", StringComparison.Ordinal))
+                {
+                    ReplyPassive(conn, true, m.GroupOpenId, m.MsgId, "**该推送无 Cat 接收**——本群没有已绑定并开启收信的猫（检查 cat.cfg 的 qqbotId / qqbotEnable / qqbotGroups）");
+                }
+                else
+                {
+                    ReplyPassive(conn, true, m.GroupOpenId, m.MsgId, "**该推送未能送达**——" + pushErr);
+                }
             }
             else
             {
@@ -177,25 +186,25 @@ namespace Mau.Providers
         /// <param name="groupOpenId">群 OpenID</param>
         /// <param name="senderName">发送人显示名</param>
         /// <param name="text">正文（已清洗）</param>
-        /// <returns>true=有猫受理（机制静默）；false=无人订阅或投递失败（由调用方回提示）</returns>
-        private bool PushMentionToCats(string botKey, QqBotConnection conn, string groupOpenId, string senderName, string text)
+        /// <returns>空串=有猫受理（机制静默）；NO_TARGET=无人订阅；其它=投递失败原文（由调用方按类回提示）</returns>
+        private string PushMentionToCats(string botKey, QqBotConnection conn, string groupOpenId, string senderName, string text)
         {
             string appId = conn == null ? "" : conn.AppId;
             string alias;
             string title;
             ResolveGroupInfo(appId, groupOpenId, out alias, out title);
             string err = _catPush(botKey, groupOpenId, alias, title, senderName, text);
-            if (err.Length == 0)
+            if (err == null || err.Length == 0)
             {
-                return true;
+                return "";
             }
             if (err == "NO_TARGET")
             {
                 LogStore.Add("QQBot", 1, "QQBot | @ 无人订阅（无猫绑定该机器人或群不在其白名单）: " + Truncate(groupOpenId, 12) + "——仅留档", "QQBOT");
-                return false;
+                return err;
             }
             LogStore.Add("QQBot", 2, "QQBot | @ 推送失败（" + Truncate(groupOpenId, 12) + "）: " + err, "QQBOT");
-            return false;
+            return err;
         }
 
         /// <summary>

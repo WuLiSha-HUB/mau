@@ -345,10 +345,9 @@ namespace CH4
             // 这里只装配与注入；实际连接由 S7 按池默认配置 + secrets 拉起（非交互模式不启）
             Mau.Providers.QqBotService qqBotSvc = new Mau.Providers.QqBotService();
             qqBotSvc.Configure(dataRoot);
-            // A381 猫级面——绑定解析（工具面过滤与发言授权）/ @ 推送（user 入口）/ 宿主状态（/homeinfo）
+            // A381 猫级面——绑定解析（工具面过滤与发言授权）/ @ 推送（user 入口）
             qqBotSvc.SetCatBindingResolver(CatHome4.Admin.CatHostService.ResolveQqBinding);
             qqBotSvc.SetCatPushHandler(CatHome4.Admin.CatHostService.PushQqMention);
-            qqBotSvc.SetHostInfoProvider(() => BuildEnvInfo());
             DataBox.Bind<Mau.Contracts.IQQBotService>(qqBotSvc);
             // A380 业务面——同一实例挂 IQQBotOps（工具组发言 / 通道自述 / 群目录维护）
             DataBox.Bind<Mau.Contracts.IQQBotOps>(qqBotSvc);
@@ -916,8 +915,8 @@ namespace CH4
             CatHostService.LoadCatsOnBoot();
             // [段6b-2] 群聊宿主——每组一端口（9000 起向上寻路）+ group.html + 本组运行时端点（A301）
             CatHostService.StartEnabledGroupHosts();
-            // [段6b-3] QQ 机器人收信拉起——按池默认配置 + secrets（A379）
-            // 无默认 / 无 secret / 服务未注入一律出声不拉起——静默不可用等于把故障伪装成正常
+            // [段6b-3] QQ 机器人收信拉起——遍历池内全部机器人 + secrets（A379；2026-11-16 莎裁：池内全部拉起）
+            // 无 secret / 服务未注入一律出声不拉起——静默不可用等于把故障伪装成正常
             {
                 CH_QqBotConfigStore qqStore = null;
                 DataBox.TryResolve<CH_QqBotConfigStore>(out qqStore);
@@ -929,28 +928,31 @@ namespace CH4
                 }
                 else
                 {
-                    CH_QqBotConfig qqCfg = qqStore.ResolveDefault();
-                    if (qqCfg == null)
+                    CH_QqBotConfig[] qqCfgs = qqStore.GetAll();
+                    if (qqCfgs.Length == 0)
                     {
-                        LogStore.Add("QQBot", 1, "QQBot | 池内无默认机器人——收信未拉起（配置页设默认后重启生效）", "QQBOT");
+                        LogStore.Add("QQBot", 1, "QQBot | 池内无机器人——收信未拉起（新增配置后重启生效）", "QQBOT");
                     }
-                    else
+                    int qqStarted = 0;
+                    for (int i = 0; i < qqCfgs.Length; i = i + 1)
                     {
+                        CH_QqBotConfig qqCfg = qqCfgs[i];
                         string qqSecret = qqStore.GetSecret(qqCfg.QqBotId);
                         if (qqSecret.Length == 0)
                         {
-                            LogStore.Add("QQBot", 2, "QQBot | 「" + qqCfg.DisplayName + "」未配置 AppSecret——收信未拉起", "QQBOT");
+                            LogStore.Add("QQBot", 2, "QQBot | 「" + qqCfg.DisplayName + "」未配置 AppSecret——跳过收信拉起", "QQBOT");
+                            continue;
                         }
-                        else
+                        bool qqSandbox = string.Equals(qqCfg.ApiEnv, "sandbox", StringComparison.OrdinalIgnoreCase);
+                        string qqErr = qqSvc.Start(qqCfg.QqBotId.ToString("D"), qqCfg.DisplayName, qqCfg.AppId, qqSecret, qqSandbox);
+                        if (qqErr.Length > 0)
                         {
-                            bool qqSandbox = string.Equals(qqCfg.ApiEnv, "sandbox", StringComparison.OrdinalIgnoreCase);
-                            string qqErr = qqSvc.Start(qqCfg.QqBotId.ToString("D"), qqCfg.DisplayName, qqCfg.AppId, qqSecret, qqSandbox);
-                            if (qqErr.Length > 0)
-                            {
-                                LogStore.Add("QQBot", 3, "QQBot | 收信拉起失败: " + qqErr, "QQBOT");
-                            }
+                            LogStore.Add("QQBot", 3, "QQBot | 「" + qqCfg.DisplayName + "」收信拉起失败: " + qqErr, "QQBOT");
+                            continue;
                         }
+                        qqStarted = qqStarted + 1;
                     }
+                    LogStore.Add("QQBot", 1, "QQBot | 收信拉起完成 " + qqStarted.ToString() + " / " + qqCfgs.Length.ToString(), "QQBOT");
                 }
             }
             // [段6c] 前端测试服务拉起——开发流程（改前端 → 跑测试 → 刷新生效）；未监听则启动 node server.js
