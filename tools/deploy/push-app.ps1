@@ -1,20 +1,18 @@
 ﻿<#
 .SYNOPSIS
-    CH4 产物区推送（A368）——本地全产、整套覆盖远端 public/app，之后由 restart-incr 搬运到运行区。
+    CH4 产物区推送（A368）——本地全产、投递到远端 /srv/inbox，之后由猫会话执行 take-app + restart-incr 落位。
 
 .DESCRIPTION
-    链路固定：本地 publish + 18 组组翻译 + html 对齐 → 打包 → scp → 远端「旧目录改名 .prev → 解包」。
-    远端使用顺序（不可反）：git pull → push-app → restart-incr。
+    链路固定：本地 publish + 18 组组翻译 + html 对齐 → 打包 → scp → /srv/inbox → 由 root 跑 take-app.sh 校验后覆盖 public/app。
+    远端使用顺序（不可反）：git pull → push-app → take-app → restart-incr。
     反序会让源码 mtime 新于产物，incr 哨兵直接判「产物过期」（假红）。
 
-    落点固定为 <远端仓库根>/public/app（产物区）。运行区（mauout）只由 incr 搬运——
+    本脚本只投递到 /srv/inbox——落位（public/app）与搬运（mauout）都需要 root：
+    take-app 校验后覆盖产物区，restart-incr 再搬运行区。
     直接覆盖运行区会绕过原子切换与回滚，禁止。
 
 .PARAMETER Remote
     SSH 别名（默认 cathome，见 ~/.ssh/config）。
-
-.PARAMETER RemoteRepo
-    远端仓库根（默认 /cathome4/mau）。
 
 .PARAMETER SkipBuild
     跳过宿主 publish（只在改过 Flows / html 时用——产物区宿主 dll 保持上次）。
@@ -27,7 +25,6 @@
 #>
 param(
     [string]$Remote = "cathome",
-    [string]$RemoteRepo = "/cathome4/mau",
     [switch]$SkipBuild,
     [switch]$SkipFlows
 )
@@ -39,7 +36,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $appDir = Join-Path $repoRoot "public\app"
 $mauExe = Join-Path $repoRoot "Mau-public\Mau.exe"
 $tarPath = Join-Path $repoRoot "CatTemp\ch4-app.tar.gz"
-$remoteTar = "/tmp/ch4-app.tar.gz"
+$remoteTar = "/srv/inbox/ch4-app.tar.gz"
 
 if (!(Test-Path $mauExe))
 {
@@ -188,28 +185,7 @@ if ($LASTEXITCODE -ne 0)
     throw "scp 失败（退出码 $LASTEXITCODE）"
 }
 
-# [段6] 远端落位——旧目录改名 .prev（保留一份可回退）→ 解包 → 执行位
-function Invoke-Remote
-{
-    param([string]$CommandText)
-    & ssh $Remote $CommandText
-    if ($LASTEXITCODE -ne 0)
-    {
-        throw ("远端执行失败：" + $CommandText)
-    }
-}
-
-Write-Host "[push-app] 远端落位 public/app"
-Invoke-Remote ("rm -rf " + $RemoteRepo + "/public/app.prev")
-Invoke-Remote ("if [ -d " + $RemoteRepo + "/public/app ]; then mv " + $RemoteRepo + "/public/app " + $RemoteRepo + "/public/app.prev; fi")
-Invoke-Remote ("mkdir -p " + $RemoteRepo + "/public/app")
-Invoke-Remote ("tar -xzf " + $remoteTar + " -C " + $RemoteRepo + "/public/app")
-Invoke-Remote ("chmod 0755 " + $RemoteRepo + "/public/app/CatHome4")
-
-# [段7] 自证——产物时间戳 + Flows 数量（判据面：后续 incr 搬的就是这一批）
-Write-Host "[push-app] 远端产物："
-Invoke-Remote ("ls -l --time-style=+%Y-%m-%d%t%H:%M:%S " + $RemoteRepo + "/public/app/CatHome4")
-Invoke-Remote ("ls " + $RemoteRepo + "/public/app/Flows | wc -l")
-Invoke-Remote ("cat " + $RemoteRepo + "/public/app/buildinfo.txt")
-
-Write-Host "[push-app] 完成——下一步：restart-incr（不传 target，缺省落受控根 mauout）"
+# [段6] 落位交由远端 root 侧接管（2026-11-16 甲案）
+# 本脚本只投递——public/app 的覆盖与执行位设置都在 take-app.sh 内（root）；
+# ubuntu 侧既无权改产物区，也无权读回自证，故不再内联 ssh 落位与核验。
+Write-Host "[push-app] 包已投 /srv/inbox —— 等猫会话执行 take-app + restart-incr"
