@@ -279,6 +279,10 @@ namespace Mau.Runtime
             {
                 throw new InvalidDataException("LLM API endpoint is invalid.");
             }
+            if (config.MaxToken < 0)
+            {
+                throw new InvalidDataException("LLM API maxToken is invalid.");
+            }
         }
 
         /// <summary>读取秘密 cfg 并过滤全部键值。</summary>
@@ -406,6 +410,7 @@ namespace Mau.Runtime
             result.ApiType = source.ApiType;
             result.Endpoint = source.Endpoint;
             result.DefaultModel = source.DefaultModel;
+            result.MaxToken = source.MaxToken;
             result.IsDefault = source.IsDefault;
             return result;
         }

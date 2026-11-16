@@ -45,6 +45,10 @@ function renderApiRow(api) {
     var tdModel = document.createElement('td');
     tdModel.textContent = api.defaultModel || '';
     tr.appendChild(tdModel);
+    var tdMaxToken = document.createElement('td');
+    if (api.maxToken > 0) { tdMaxToken.textContent = String(api.maxToken); }
+    else { tdMaxToken.textContent = '—'; tdMaxToken.style.color = 'var(--ch-fg-weak)'; }
+    tr.appendChild(tdMaxToken);
     var tdKey = document.createElement('td');
     tdKey.textContent = api.hasKey ? api.apiKey : '（未配置）';
     tdKey.style.color = api.hasKey ? 'var(--ch-ok-weak)' : 'var(--ch-fg-weak)';
@@ -93,6 +97,8 @@ function startApiEdit(api) {
     document.getElementById('apiNewType').value = api.apiType || '';
     document.getElementById('apiNewEndpoint').value = api.endpoint || '';
     document.getElementById('apiNewModel').value = api.defaultModel || '';
+    if (api.maxToken > 0) { document.getElementById('apiNewMaxToken').value = String(api.maxToken); }
+    else { document.getElementById('apiNewMaxToken').value = ''; }
     document.getElementById('apiNewKey').value = '';
     document.getElementById('apiAddBtn').textContent = '保存';
     document.getElementById('apiCancelEdit').style.display = '';
@@ -105,6 +111,7 @@ function cancelApiEdit() {
     document.getElementById('apiNewType').value = '';
     document.getElementById('apiNewEndpoint').value = '';
     document.getElementById('apiNewModel').value = '';
+    document.getElementById('apiNewMaxToken').value = '';
     document.getElementById('apiNewKey').value = '';
     document.getElementById('apiAddBtn').textContent = '新建';
     document.getElementById('apiCancelEdit').style.display = 'none';
@@ -117,6 +124,7 @@ function apiSubmit() {
         apiType: document.getElementById('apiNewType').value.trim(),
         endpoint: document.getElementById('apiNewEndpoint').value.trim(),
         defaultModel: document.getElementById('apiNewModel').value.trim(),
+        maxToken: document.getElementById('apiNewMaxToken').value.trim(),
         apiKey: document.getElementById('apiNewKey').value.trim()
     };
     var url = '/api/v1/llm-apis';

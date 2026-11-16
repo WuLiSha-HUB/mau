@@ -352,6 +352,55 @@ namespace Mau.Runtime.Tests
             Assert.Equal(1, port.FailureCount);
             Assert.Equal(2, port.FileCount);
         }
+        /// <summary>端点前文上限 maxToken 落盘往返——Save 后新 Store 读回同值。</summary>
+        [Fact]
+        public void Store_MaxToken_RoundTrips()
+        {
+            string settingsRoot;
+            string secretsRoot;
+            CH_LlmApiConfigStore store = NewStore(out settingsRoot, out secretsRoot);
+            try
+            {
+                CH_LlmApiConfig config = MakeConfig(Guid.NewGuid(), "Budget",
+                    "https://budget.example/v1");
+                config.MaxToken = 200000;
+                store.Save(config, "");
+                CH_LlmApiConfigStore reopened = new CH_LlmApiConfigStore(
+                    settingsRoot, secretsRoot);
+                CH_LlmApiConfig[] all = reopened.GetAll();
+                Assert.Single(all);
+                Assert.Equal(200000, all[0].MaxToken);
+            }
+            finally
+            {
+                CleanDir(settingsRoot);
+                CleanDir(secretsRoot);
+            }
+        }
+        /// <summary>端点前文上限为负——Save 拒绝（不静默归零）。</summary>
+        [Fact]
+        public void Store_MaxToken_NegativeRejected()
+        {
+            string settingsRoot;
+            string secretsRoot;
+            CH_LlmApiConfigStore store = NewStore(out settingsRoot, out secretsRoot);
+            try
+            {
+                CH_LlmApiConfig config = MakeConfig(Guid.NewGuid(), "BadBudget",
+                    "https://bad.example/v1");
+                config.MaxToken = -1;
+                Assert.Throws<InvalidDataException>(delegate
+                {
+                    store.Save(config, "");
+                });
+                Assert.Empty(store.GetAll());
+            }
+            finally
+            {
+                CleanDir(settingsRoot);
+                CleanDir(secretsRoot);
+            }
+        }
 
         /// <summary>建立字段完整的测试配置。</summary>
         /// <param name="id">稳定身份</param>

@@ -471,6 +471,14 @@ namespace SetUp
             sb.Append(Environment.NewLine);
             sb.Append("产物: " + PlatformServices.Paths.HostExeName + " " + exeTs);
             sb.Append(Environment.NewLine);
+            string artifactCommit;
+            string artifactDirty;
+            string artifactErr;
+            if (ReadBuildInfo(Path.Combine(targetFull, "buildinfo.txt"), out artifactCommit, out artifactDirty, out artifactErr))
+            {
+                sb.Append("指纹: commit=" + ShortCommit(artifactCommit) + " dirty=" + artifactDirty);
+                sb.Append(Environment.NewLine);
+            }
             if (reportPath.Length > 0)
             {
                 sb.Append("报告: " + reportPath + "（前置版先落盘；终版 Complete=true 在自启后原子替换）");
@@ -673,7 +681,10 @@ namespace SetUp
             return max;
         }
         /// <summary>
-        /// incr 哨兵与拒绝面检查——源码比产物新即拒绝（搬运旧产物 = 静默「改了没生效」）；
+        /// incr 哨兵与拒绝面检查——平台分轨（2026-11-16 · 莎裁方案 C）：
+        ///   · Windows：源码比产物新即拒绝（mtime——单机同轴成立）；
+        ///   · Linux：比构建指纹 buildinfo.txt 的 commit（双机两腿下产物 mtime = 推送时刻、源码 mtime = 检出时刻，
+        ///     mtime 判据结构性误拒；commit 全等 ⇒ 源码树内容相同，静默失效面被全覆盖且无假阳性）。
         /// 命中生成物面（Bricks / Mau 基座 / 语料）时定向提示走 full（生成物不重翻 = 静默失效）。
         /// 判据 = 变更分类（Mau Job skill 方法一 A-E）：只搬「已在一键部署中验证过」的产物。
         /// </summary>
@@ -684,6 +695,10 @@ namespace SetUp
         private static bool CheckIncrSentinels(string repoRoot, string sourceDir, out string reason)
         {
             reason = "";
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+            {
+                return CheckIncrSentinelsByBuildInfo(repoRoot, sourceDir, out reason);
+            }
             string exe = Path.Combine(sourceDir, PlatformServices.Paths.HostExeName);
             if (!File.Exists(exe))
             {
@@ -737,6 +752,217 @@ namespace SetUp
                 return false;
             }
             return true;
+        }
+        /// <summary>
+        /// Linux 侧 incr 哨兵——比构建指纹（L1–L6，命中即拒；不做任何 mtime 比较）。
+        /// 依据：产物自带 buildinfo.txt（prepare 段5c 落盘）记录编译时的 git HEAD；接收端只比
+        /// 「产物 commit == 仓库 HEAD」——全等即可搬，不等即拒。不设降级：缺失即未知，未知不放行。
+        /// </summary>
+        /// <param name="repoRoot">仓库根（读 HEAD）</param>
+        /// <param name="sourceDir">产物区（public/app）</param>
+        /// <param name="reason">拒绝原因（空=通过）</param>
+        /// <returns>true=通过</returns>
+        private static bool CheckIncrSentinelsByBuildInfo(string repoRoot, string sourceDir, out string reason)
+        {
+            reason = "";
+            // [L1] 宿主产物在
+            string exe = Path.Combine(sourceDir, PlatformServices.Paths.HostExeName);
+            if (!File.Exists(exe))
+            {
+                reason = "产物区未就绪（" + exe + " 不存在）——请先在开发机重跑 prepare 并重推产物。";
+                return false;
+            }
+            // [L2] Flows 自足——只有宿主没 Flows 的包搬上去会全组失效（原逻辑只取 mtime，不验存在性）
+            string flowsDir = Path.Combine(sourceDir, "Flows");
+            int flowCount = 0;
+            try
+            {
+                if (Directory.Exists(flowsDir))
+                {
+                    flowCount = Directory.GetFiles(flowsDir, "*.dll").Length;
+                }
+            }
+            catch (Exception ex)
+            {
+                reason = "产物区 Flows 不可读：" + ex.Message;
+                return false;
+            }
+            if (flowCount == 0)
+            {
+                reason = "产物区缺 Flows（" + flowsDir + " 下无 *.dll）——包不自足，搬运即全组失效。";
+                return false;
+            }
+            // [L3] 指纹在
+            string infoPath = Path.Combine(sourceDir, "buildinfo.txt");
+            if (!File.Exists(infoPath))
+            {
+                reason = "产物缺构建指纹（" + infoPath + "）——请重跑 prepare 并重推产物。";
+                return false;
+            }
+            // [L4/L5] 指纹可解析且非脏
+            string commit;
+            string dirty;
+            string readErr;
+            if (!ReadBuildInfo(infoPath, out commit, out dirty, out readErr))
+            {
+                reason = readErr;
+                return false;
+            }
+            if (commit.Length != 40)
+            {
+                reason = "构建指纹 commit 缺失或格式非法（实际：「" + commit + "」）——产物无法核验。";
+                return false;
+            }
+            if (dirty != "false")
+            {
+                reason = "产物基于未提交源码（dirty=" + dirty + "）无法核验——请提交源码后重跑 prepare。";
+                return false;
+            }
+            // [L6] 产物 commit == 仓库 HEAD
+            string head;
+            if (!ReadRepoHeadCommit(repoRoot, out head, out readErr))
+            {
+                reason = "仓库 HEAD 不可解析（" + readErr + "）——无法核验产物代际。";
+                return false;
+            }
+            if (!string.Equals(head, commit, StringComparison.OrdinalIgnoreCase))
+            {
+                reason = "产物 commit=" + ShortCommit(commit) + "，仓库 HEAD=" + ShortCommit(head) + "——产物非当前源码所编，请重推产物。";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 读构建指纹——按行前缀匹配（不依赖行序）：commit= / dirty=；dirty 键缺失即失败（无法判定即拒绝）。
+        /// </summary>
+        /// <param name="path">buildinfo.txt 路径</param>
+        /// <param name="commit">输出：commit 值（可能为空）</param>
+        /// <param name="dirty">输出：dirty 值（已转小写；缺键为空）</param>
+        /// <param name="error">失败原因（空=成功）</param>
+        /// <returns>true=文件可读且 dirty 键存在</returns>
+        private static bool ReadBuildInfo(string path, out string commit, out string dirty, out string error)
+        {
+            commit = "";
+            dirty = "";
+            error = "";
+            string[] lines;
+            try
+            {
+                lines = File.ReadAllLines(path);
+            }
+            catch (Exception ex)
+            {
+                error = "构建指纹读取失败：" + ex.Message;
+                return false;
+            }
+            for (int i = 0; i < lines.Length; i = i + 1)
+            {
+                string line = lines[i].Trim();
+                if (line.StartsWith("commit=", StringComparison.Ordinal))
+                {
+                    commit = line.Substring(7).Trim();
+                }
+                else if (line.StartsWith("dirty=", StringComparison.Ordinal))
+                {
+                    dirty = line.Substring(6).Trim().ToLowerInvariant();
+                }
+            }
+            if (dirty.Length == 0)
+            {
+                error = "构建指纹缺 dirty 键——无法判定产物是否基于已提交源码。";
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>
+        /// 读仓库 HEAD commit——纯文件解析，不跑 git 进程（接收端宿主以 root 运行、仓库属主为 ubuntu，
+        /// root 跑 git 会报 dubious ownership）。支持三态：ref（.git/refs/…）/ packed-refs / detached HEAD。
+        /// </summary>
+        /// <param name="repoRoot">仓库根</param>
+        /// <param name="commit">输出：40 位 commit（失败为空串）</param>
+        /// <param name="error">失败原因（空=成功）</param>
+        /// <returns>true=解析成功</returns>
+        private static bool ReadRepoHeadCommit(string repoRoot, out string commit, out string error)
+        {
+            commit = "";
+            error = "";
+            string gitDir = Path.Combine(repoRoot, ".git");
+            try
+            {
+                if (File.Exists(gitDir))
+                {
+                    // worktree 形态：.git 是文件，首行 gitdir: <path>（当前部署形态不是 worktree，留此分支兜底）
+                    string[] pointer = File.ReadAllLines(gitDir);
+                    if (pointer.Length == 0 || !pointer[0].StartsWith("gitdir:", StringComparison.Ordinal))
+                    {
+                        error = ".git 为文件但不是 gitdir 指针";
+                        return false;
+                    }
+                    gitDir = pointer[0].Substring(7).Trim();
+                    if (!Path.IsPathRooted(gitDir))
+                    {
+                        gitDir = Path.GetFullPath(Path.Combine(repoRoot, gitDir));
+                    }
+                }
+                string headPath = Path.Combine(gitDir, "HEAD");
+                if (!File.Exists(headPath))
+                {
+                    error = "缺少 " + headPath;
+                    return false;
+                }
+                string head = File.ReadAllText(headPath).Trim();
+                if (head.Length == 40)
+                {
+                    commit = head;
+                    return true;
+                }
+                if (!head.StartsWith("ref:", StringComparison.Ordinal))
+                {
+                    error = "HEAD 内容不可识别：" + head;
+                    return false;
+                }
+                string refName = head.Substring(4).Trim();
+                string refPath = Path.Combine(gitDir, refName.Replace('/', Path.DirectorySeparatorChar));
+                if (File.Exists(refPath))
+                {
+                    string value = File.ReadAllText(refPath).Trim();
+                    if (value.Length == 40)
+                    {
+                        commit = value;
+                        return true;
+                    }
+                    error = "refs 文件内容非法：" + value;
+                    return false;
+                }
+                string packedPath = Path.Combine(gitDir, "packed-refs");
+                if (File.Exists(packedPath))
+                {
+                    string[] packed = File.ReadAllLines(packedPath);
+                    for (int i = 0; i < packed.Length; i = i + 1)
+                    {
+                        string line = packed[i].Trim();
+                        if (line.Length == 0 || line.StartsWith("#", StringComparison.Ordinal) || line.StartsWith("^", StringComparison.Ordinal))
+                        {
+                            continue;
+                        }
+                        string[] parts = line.Split(' ');
+                        if (parts.Length == 2 && parts[1] == refName && parts[0].Length == 40)
+                        {
+                            commit = parts[0];
+                            return true;
+                        }
+                    }
+                }
+                error = "refs 与 packed-refs 均未找到 " + refName;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                error = ex.GetType().Name + ": " + ex.Message;
+                return false;
+            }
         }
         /// <summary>探活超时毫秒（A135）——离线自检正常 ~5 s；30 s 上限（6 倍余量，与 full 全链 ~70 s 同量级），超时按失败处置并终止进程树</summary>
         private const int ProbeTargetTimeoutMs = 30000;
@@ -821,11 +1047,14 @@ namespace SetUp
                 WriteRelay(repoRoot, false, repReason);
                 return false;
             }
-            // [段16] 哨兵与拒绝面——源码比产物新即拒绝
+            // [段16] 哨兵与拒绝面——Windows 比 mtime（单机同轴成立）；Linux 比构建指纹（双机两腿下 mtime 结构性失效）
             long chkMs = Environment.TickCount64;
             string reason;
             bool chkOk = CheckIncrSentinels(repoRoot, sourceDir, out reason);
-            _steps.Add(new StepReport() { Step = 16, Name = "incr 哨兵与拒绝面检查", Ok = chkOk, Ms = Environment.TickCount64 - chkMs, Detail = chkOk ? "" : reason });
+            string chkName = RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                ? "incr 哨兵（托管环境：构建指纹）"
+                : "incr 哨兵与拒绝面检查";
+            _steps.Add(new StepReport() { Step = 16, Name = chkName, Ok = chkOk, Ms = Environment.TickCount64 - chkMs, Detail = chkOk ? "" : reason });
             if (!chkOk)
             {
                 Console.WriteLine("[SetUp] ❌ " + reason);

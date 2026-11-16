@@ -712,11 +712,12 @@ namespace CatHome4.Core.Tests
             Assert.True(HasMessage(session, LlmRole.User, "失败："));
             Assert.True(HasMessage(session, LlmRole.User, "只写「成果在哪」"));
             Assert.True(HasMessage(session, LlmRole.User, "位置必须是这趟真实读到"));
-            Assert.False(HasMessage(session, LlmRole.User, "⑥ 浏览器操作"), "text_search 卡不应含浏览器段");
+            Assert.True(HasMessage(session, LlmRole.User, "⑥ 出域流程（四段：开域 → 域内 → 收域 → 回读）"), "全部 type 的卡都带出域流程段");
+            Assert.False(HasMessage(session, LlmRole.User, "⑦ 浏览器操作"), "text_search 卡不应含浏览器段");
         }
 
         /// <summary>
-        /// 域规范卡——browser_vision 追加第⑥段浏览器操作指引（寻路 / 取值 / 截图落点 / 看图分流 / 扒图 / 边界）；其他 type 不含。
+        /// 域规范卡——browser_vision 追加第⑦段浏览器操作指引（寻路 / 取值 / 截图落点 / 看图分流 / 扒图 / 边界）；其他 type 不含。
         /// </summary>
         [Fact]
         public void Card_BrowserVisionCarriesBrowserGuide()
@@ -726,16 +727,17 @@ namespace CatHome4.Core.Tests
             llm.ToolCallsQueue.Enqueue(BuildToolCalls("timeback-start", "s1", "{\"type\":\"browser_vision\",\"purpose\":\"操作指引验证\"}"));
             session.PostUserMessage("操作指引验证");
             PumpUntilIdle(session);
-            Assert.True(HasMessage(session, LlmRole.User, "⑥ 浏览器操作（本域专属）"));
+            Assert.True(HasMessage(session, LlmRole.User, "⑦ 浏览器操作（本域专属）"));
+            Assert.True(HasMessage(session, LlmRole.User, "⑥ 出域流程（四段"));
             Assert.True(HasMessage(session, LlmRole.User, "data:browser/<cat>/out/"));
             Assert.True(HasMessage(session, LlmRole.User, "不含识图"));
             Assert.True(HasMessage(session, LlmRole.User, "页签：tabs"));
             Assert.True(HasMessage(session, LlmRole.User, "原图直链常 403"));
-            Assert.False(HasMessage(session, LlmRole.User, "⑦ 看图操作"), "browser_vision 卡不应含识图段");
+            Assert.False(HasMessage(session, LlmRole.User, "⑧ 看图操作"), "browser_vision 卡不应含识图段");
         }
 
         /// <summary>
-        /// 域规范卡——image_vision 追加第⑦段看图操作指引（直读 / OCR 分流 · ASCII 图证规格 · 多图与证据位置）；
+        /// 域规范卡——image_vision 追加第⑧段看图操作指引（直读 / OCR 分流 · ASCII 图证规格 · 多图与证据位置）；
         /// 回执骨架为识图类（图证 + 结论），且不带浏览器段（A293）。
         /// </summary>
         [Fact]
@@ -751,9 +753,9 @@ namespace CatHome4.Core.Tests
             Assert.True(HasMessage(session, LlmRole.User, "④ 回执骨架"));
             Assert.True(HasMessage(session, LlmRole.User, "图证："));
             Assert.True(HasMessage(session, LlmRole.User, "证据位置："));
-            Assert.True(HasMessage(session, LlmRole.User, "⑦ 看图操作（本域专属）"));
+            Assert.True(HasMessage(session, LlmRole.User, "⑧ 看图操作（本域专属）"));
             Assert.True(HasMessage(session, LlmRole.User, "ASCII 画判定所需区域"));
-            Assert.False(HasMessage(session, LlmRole.User, "⑥ 浏览器操作"), "image_vision 卡不应含浏览器段");
+            Assert.False(HasMessage(session, LlmRole.User, "⑦ 浏览器操作"), "image_vision 卡不应含浏览器段");
             Assert.False(HasMessage(session, LlmRole.User, "成果："), "识图类骨架不应含审查类成果段");
         }
 

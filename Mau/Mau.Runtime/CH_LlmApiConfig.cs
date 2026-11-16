@@ -23,6 +23,10 @@ namespace Mau.Runtime
         /// <summary>默认模型。</summary>
         public string DefaultModel;
         /// <summary>
+        /// 前文最大长度（token 预算上限）——0=未设置；当前只做记录与展示，消费方后续定。
+        /// </summary>
+        public int MaxToken;
+        /// <summary>
         /// 默认端点标记——true=未显式指定 API 的消费面（QuickCat 语料面）固定走此配置。
         /// </summary>
         public bool IsDefault;
@@ -35,6 +39,7 @@ namespace Mau.Runtime
             ApiType = "";
             Endpoint = "";
             DefaultModel = "";
+            MaxToken = 0;
         }
     }
 }

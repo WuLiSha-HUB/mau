@@ -115,6 +115,8 @@ namespace CH4
         /// 收域后回读规范——附于 back 返回体的 findings **之后**（载体注 §十一 同源 · 2026-10-10 莎裁止血）。
         /// 动机：findings 是域内自述，主干须按位置回读实况才算收域完成；规范原先只在开域的域规范卡里
         /// （回收时刻早已离开注意力）→ 在**动作点**再挂一条，令不变量与动作同处一屏。
+        /// 2026-11-16（A375）：补足域流程位次——回读是**主干的读调用、不属于任何域**（放进下一域会随该域一并被回收，
+        /// 导致再下一域重读）；回读完成本域才结束，此后才可开下一域。
         /// </summary>
         /// <param name="type">域类型（TimebackProfile 枚举）</param>
         /// <returns>回读规范文本</returns>
@@ -122,13 +124,13 @@ namespace CH4
         {
             if (TimebackProfile.Kind(type) == TimebackProfile.KindImage)
             {
-                return "🔴 回读规范（收域第一步）——findings 是自述不是实况：核 `图证` 是否真的支撑 `结论`；要再亲眼看一眼原图 → 另开一个识图域，别拿结论当实况";
+                return "🔴 收域回读（主干动作）——findings 是自述不是实况：核 `图证` 是否真的支撑 `结论`；要再亲眼看一眼原图 → 另开一个识图域（那是新一轮取证，不是回读）。回读在主干做、不属于任何域（放进下一域会随该域被回收）；回读完成本域才结束";
             }
             if (TimebackProfile.Kind(type) == TimebackProfile.KindWrite)
             {
-                return "🔴 回读规范（收域第一步）——findings 是自述不是实况：按 `变更` 的位置逐条读回改动面";
+                return "🔴 收域回读（主干动作）——findings 是自述不是实况：按 `变更` 的位置逐条读回改动面、照 `跑测` 行复跑。回读在主干做、不属于任何域（放进下一域会随该域被回收）；回读完成本域才结束";
             }
-            return "🔴 回读规范（收域第一步）——findings 是自述不是实况：按 `成果` 的位置逐条读回原文";
+            return "🔴 收域回读（主干动作）——findings 是自述不是实况：按 `成果` 的位置逐条读回原文（域内不下判断，以回读到的真实内容为准）。回读在主干做、不属于任何域（放进下一域会随该域被回收）；回读完成本域才结束";
         }
 
         /// <summary>
@@ -160,7 +162,7 @@ namespace CH4
         /// 浏览器操作指引——仅 `browser_vision` 域追加（§十一 卡扩展 · 2026-10-10）。
         /// 承载时机敏感、易踩的操作面（寻路 / 取值 / 截图落点 / 看图分流 / 扒图链 / 边界）。
         /// </summary>
-        private const string BrowserGuideText = "⑥ 浏览器操作（本域专属）：\n"
+        private const string BrowserGuideText = "⑦ 浏览器操作（本域专属）：\n"
             + "  · 寻路：open 只开页，不能点击/输入——翻页改 URL，或先 read(mode=links) 拿候选\n"
             + "  · 读页：read(mode=text|ax|links) 落盘；DOM 属性 / 内嵌数据 / img 直链一律用 eval 取\n"
             + "  · 截图：shot(full) 落盘返回路径——存 data:browser/<cat>/out/（tree 自 data:browser 下扫会漏 out，给全路径才有）\n"
@@ -174,7 +176,7 @@ namespace CH4
         /// 看图操作指引——仅 `image_vision` 域追加（§十一 卡扩展 · A293 2026-11-02）。
         /// 承载识图域的三件易错面：直读 vs OCR 分流 / ASCII 图证规格 / 多图与证据位置。
         /// </summary>
-        private const string ImageGuideText = "⑦ 看图操作（本域专属）：\n"
+        private const string ImageGuideText = "⑧ 看图操作（本域专属）：\n"
             + "  · 分流：要「亲眼看」用 image-inject（原图进前文，随域回收）；只要文字（OCR / 逐字转录）用 image-analyze\n"
             + "  · 图证：findings 的 `图证` 用 ASCII 画判定所需区域——≤24 行 × ≤80 列，字符 + - | / \\ . # @\n"
             + "  · 只画结构：布局 / 位置 / 状态用 ASCII；颜色 / 字号 / 纹理写一行文字，别拿字符硬凑\n"
@@ -183,7 +185,7 @@ namespace CH4
             + "  · 边界：单图 ≤32MiB；判断不了就说判断不了（不做模糊描述），需要更大信息量另开一域";
 
         /// <summary>
-        /// 域规范卡全文——注入用的 systemauto user 文本（五段：边界 / 可用 / 不可用 / 骨架 / 建议长度；`browser_vision` 追加第⑥段、`image_vision` 追加第⑦段）。
+        /// 域规范卡全文——注入用的 systemauto user 文本（六段：边界 / 可用 / 不可用 / 骨架 / 建议长度 / 出域流程；`browser_vision` 追加第⑦段、`image_vision` 追加第⑧段）。
         /// </summary>
         /// <param name="type">域类型</param>
         /// <param name="purpose">用途标签</param>
@@ -200,6 +202,11 @@ namespace CH4
             text.Append("\n③ 域内不可用：").Append(LockedText);
             text.Append("\n④ 回执骨架（back 的 findings 按此写）：\n").Append(Findings(type));
             text.Append("\n⑤ 建议长度：本域建议 ≤").Append(SuggestedLength.ToString()).Append(" 条前文条目——超出先阶段性 back（建议非闸门）");
+            text.Append("\n⑥ 出域流程（四段：开域 → 域内 → 收域 → 回读）：\n")
+                .Append("  · 收域：back 的 findings 是交给主干的交接单——只写位置与「那是什么」，不写结论\n")
+                .Append("  · 回读：back 之后在主干按 findings 逐条读回原文——回读是主干的读调用，不属于任何域\n")
+                .Append("  · 别放进下一域：下一个域闭合时会把回读内容一并回收 → 再下一域还得重读一遍\n")
+                .Append("  · 回读完成本域即结束，此后才可开下一域（域内再取数属新一轮取证，直接开新域即可）");
             if (type == TimebackProfile.BrowserVision)
             {
                 text.Append("\n\n").Append(BrowserGuideText);

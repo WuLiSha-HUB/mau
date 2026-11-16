@@ -133,6 +133,7 @@ namespace CatHome4.Admin
                         apiType = c.ApiType,
                         endpoint = c.Endpoint,
                         defaultModel = c.DefaultModel,
+                        maxToken = c.MaxToken,
                         isDefault = c.IsDefault,
                         apiKey = keyShown,
                         hasKey = key.Length > 0
@@ -147,9 +148,7 @@ namespace CatHome4.Admin
             return Results.Json(resp);
         }
 
-        /// <summary>
-        /// LLM API 池新建——POST /api/v1/llm-apis（body: displayName/apiType/endpoint/defaultModel/apiKey）。
-        /// </summary>
+        /// <summary>LLM API 池新建——POST /api/v1/llm-apis（body: displayName/apiType/endpoint/defaultModel/maxToken/apiKey；maxToken = 前文最大长度，0 或留空 = 未设置）。</summary>
         /// <param name="ctx">HTTP 上下文</param>
         /// <returns>回执 JSON</returns>
         internal static async Task<IResult> HandleLlmApisPost(HttpContext ctx)
@@ -160,6 +159,8 @@ namespace CatHome4.Admin
             string endpoint = "";
             string defaultModel = "";
             string apiKey = "";
+            int maxToken = 0;
+            string maxTokenError = "";
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -170,6 +171,10 @@ namespace CatHome4.Admin
                     endpoint = GetJsonString(root, "endpoint");
                     defaultModel = GetJsonString(root, "defaultModel");
                     apiKey = GetJsonString(root, "apiKey");
+                    if (!TryReadMaxToken(root, out maxToken, out maxTokenError))
+                    {
+                        return Results.Json(new { ok = false, error = maxTokenError });
+                    }
                 }
             }
             catch (Exception)
@@ -200,8 +205,9 @@ namespace CatHome4.Admin
             config.ApiType = apiType;
             config.Endpoint = endpoint;
             config.DefaultModel = defaultModel;
+            config.MaxToken = maxToken;
             store.Save(config, apiKey);
-            LogStore.Add("CatHome4", 1, "LLM API 池新增配置「" + displayName + "」（" + config.ApiConfigId.ToString("D") + "）", "CONFIG");
+            LogStore.Add("CatHome4", 1, "LLM API 池新增配置「" + displayName + "」（" + config.ApiConfigId.ToString("D") + "），前文上限 " + maxToken.ToString(), "CONFIG");
             return Results.Json(new { ok = true, apiConfigId = config.ApiConfigId.ToString("D") });
         }
 
@@ -246,10 +252,7 @@ namespace CatHome4.Admin
             return Results.Json(new { ok = true });
         }
 
-        /// <summary>
-        /// LLM API 池编辑——POST /api/v1/llm-apis/edit（body: apiConfigId + 字段；apiKey 空=保留原 key）。
-        /// endpoint/model/key 编辑立即生效——Runtime 每次 ChatStream 实时读 Store（M2e 零机制）。
-        /// </summary>
+        /// <summary>LLM API 池编辑——POST /api/v1/llm-apis/edit（body: apiConfigId + 字段；apiKey 空=保留原 key；maxToken = 前文最大长度，0 或留空 = 未设置）。</summary>
         /// <param name="ctx">HTTP 上下文</param>
         /// <returns>回执 JSON</returns>
         internal static async Task<IResult> HandleLlmApisEdit(HttpContext ctx)
@@ -261,6 +264,8 @@ namespace CatHome4.Admin
             string endpoint = "";
             string defaultModel = "";
             string apiKey = "";
+            int maxToken = 0;
+            string maxTokenError = "";
             try
             {
                 using (JsonDocument doc = JsonUtil.ParseStrict(body))
@@ -272,6 +277,10 @@ namespace CatHome4.Admin
                     endpoint = GetJsonString(root, "endpoint");
                     defaultModel = GetJsonString(root, "defaultModel");
                     apiKey = GetJsonString(root, "apiKey");
+                    if (!TryReadMaxToken(root, out maxToken, out maxTokenError))
+                    {
+                        return Results.Json(new { ok = false, error = maxTokenError });
+                    }
                 }
             }
             catch (Exception)
@@ -303,8 +312,9 @@ namespace CatHome4.Admin
             config.ApiType = apiType;
             config.Endpoint = endpoint;
             config.DefaultModel = defaultModel;
+            config.MaxToken = maxToken;
             store.Save(config, apiKey);
-            LogStore.Add("CatHome4", 1, "LLM API 池「" + displayName + "」已更新（" + id.ToString("D") + "），密钥" + (apiKey.Length > 0 ? "已更换" : "保持原值"), "CONFIG");
+            LogStore.Add("CatHome4", 1, "LLM API 池「" + displayName + "」已更新（" + id.ToString("D") + "），密钥" + (apiKey.Length > 0 ? "已更换" : "保持原值") + "，前文上限 " + maxToken.ToString(), "CONFIG");
             return Results.Json(new { ok = true, apiConfigId = id.ToString("D") });
         }
 
@@ -1265,6 +1275,67 @@ namespace CatHome4.Admin
                 }
             }
             return "";
+        }
+        /// <summary>
+        /// 读取端点前文上限 maxToken——接受数字与数字字符串，缺字段 / null / 空串 = 未设置（0）。
+        /// 非法形态出声：返回 false 并给出错误文案（不静默回落 0）。
+        /// </summary>
+        /// <param name="obj">请求体根元素</param>
+        /// <param name="maxToken">前文上限（缺字段 / 空串为 0=未设置）</param>
+        /// <param name="error">形态非法时的错误文案（合法为空串）</param>
+        /// <returns>true=形态合法；false=形态非法（调用方按 error 回执）</returns>
+        internal static bool TryReadMaxToken(JsonElement obj, out int maxToken, out string error)
+        {
+            maxToken = 0;
+            error = "";
+            JsonElement value;
+            if (!obj.TryGetProperty("maxToken", out value))
+            {
+                return true;
+            }
+            if (value.ValueKind == JsonValueKind.Null)
+            {
+                return true;
+            }
+            if (value.ValueKind == JsonValueKind.Number)
+            {
+                int number;
+                if (!value.TryGetInt32(out number))
+                {
+                    error = "maxToken 超出整数范围";
+                    return false;
+                }
+                if (number < 0)
+                {
+                    error = "maxToken 不能为负数（0=未设置）";
+                    return false;
+                }
+                maxToken = number;
+                return true;
+            }
+            if (value.ValueKind == JsonValueKind.String)
+            {
+                string text = value.GetString();
+                if (text == null || text.Trim().Length == 0)
+                {
+                    return true;
+                }
+                int parsed;
+                if (!int.TryParse(text.Trim(), out parsed))
+                {
+                    error = "maxToken 非整数：" + text.Trim();
+                    return false;
+                }
+                if (parsed < 0)
+                {
+                    error = "maxToken 不能为负数（0=未设置）";
+                    return false;
+                }
+                maxToken = parsed;
+                return true;
+            }
+            error = "maxToken 类型非法（只接受数字或数字字符串）";
+            return false;
         }
         /// <summary>
         /// 读取工具名单形参——接受逗号分隔字符串与字符串数组两种形态（同端点其余授权面字段均支持数组）。

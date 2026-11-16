@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using CatHome4.Platform;
 
 namespace SetUp
@@ -192,6 +193,20 @@ namespace SetUp
                     Console.WriteLine("[SetUp] ⚠ 音频资产复制失败：" + assetsDetail);
                 }
 
+                // [段5c] 构建指纹落盘——产物自带 commit，接收端比提交身份不比时间戳
+                // 动机（2026-11-16）：双机两腿下产物 mtime = 推送落盘时刻、源码 mtime = 检出时刻，
+                // 恒有「源码比产物新」→ mtime 哨兵结构性误拒；commit 全等 ⇒ 源码树内容相同，
+                // mtime 判据要防的静默失效被全覆盖且无假阳性。
+                // 严判（莎 2026-11-16）：工作区有未提交改动 / 取不到 HEAD 即中止——产物无核验依据，不做半成品。
+                long buildInfoMs = Environment.TickCount64;
+                string buildInfoCommit;
+                string buildInfoDetail;
+                bool buildInfoOk = WriteBuildInfo(repoRoot, Path.Combine(repoRoot, "public", "app"), out buildInfoCommit, out buildInfoDetail);
+                _steps.Add(new StepReport() { Step = 5, Name = "段5c 构建指纹落盘 -> public/app/buildinfo.txt", Ok = buildInfoOk, Ms = Environment.TickCount64 - buildInfoMs, Detail = buildInfoDetail });
+                if (!buildInfoOk)
+                {
+                    return Fail("段5c 构建指纹落盘失败：" + buildInfoDetail + "——中止（无指纹的产物接收端必拒）。");
+                }
                 // [段6] 步6：宿主自检——CLI 全链（主线程直执 + 进程自退；8080 单例——验证前确认无宿主占用）
                 string hostExe = Path.Combine(repoRoot, "public", "app", PlatformServices.Paths.HostExeName);
                 if (!File.Exists(hostExe))
@@ -220,6 +235,107 @@ namespace SetUp
                     Console.WriteLine("[SetUp] 警告：build-server shutdown 未正常退出——可能有隐式构建进程残留，建议手动 dotnet build-server shutdown。");
                 }
             }
+        }
+
+        /// <summary>
+        /// 构建指纹落盘——写 public/app/buildinfo.txt（四行键=值：commit / dirty / built_at / version；UTF-8 无 BOM + LF）。
+        /// 来源：commit = git HEAD 完整 40 位；dirty = git status --porcelain 是否非空。
+        /// 严判（莎 2026-11-16）：取不到 HEAD / git 不可用 / 工作区有未提交改动 → 一律失败，不落半成品指纹
+        /// （产物无核验依据，接收端必拒——把门禁推到最左侧）。
+        /// </summary>
+        /// <param name="repoRoot">仓库根</param>
+        /// <param name="appDir">产物区（public/app）</param>
+        /// <param name="commit">输出：写入的 commit（失败为空串）</param>
+        /// <param name="detail">输出：步明细（成功 = commit 前 8 位 + dirty；失败 = 原因）</param>
+        /// <returns>true=已落盘</returns>
+        private static bool WriteBuildInfo(string repoRoot, string appDir, out string commit, out string detail)
+        {
+            commit = "";
+            detail = "";
+            string head = RunProcessCapture("git", "rev-parse HEAD", repoRoot);
+            if (head == null)
+            {
+                detail = "取 git HEAD 失败（git 不可用或仓库不可读）";
+                return false;
+            }
+            head = head.Trim();
+            if (head.Length != 40)
+            {
+                detail = "git HEAD 非 40 位 commit（实际 " + head.Length.ToString() + " 位）：" + head;
+                return false;
+            }
+            string status = RunProcessCapture("git", "status --porcelain", repoRoot);
+            if (status == null)
+            {
+                detail = "取 git status 失败——未知即脏，拒绝落指纹";
+                return false;
+            }
+            string dirtyItem = FindDirtyItem(status);
+            if (dirtyItem.Length > 0)
+            {
+                detail = "工作区有未提交改动——产物无法被接收端核验，请先提交：" + dirtyItem;
+                return false;
+            }
+            string text = "commit=" + head + "\n"
+                + "dirty=false\n"
+                + "built_at=" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "\n"
+                + "version=" + ReadVersion(repoRoot) + "\n";
+            string path = Path.Combine(appDir, "buildinfo.txt");
+            try
+            {
+                File.WriteAllText(path, text, new UTF8Encoding(false));
+            }
+            catch (Exception ex)
+            {
+                detail = "写 buildinfo.txt 失败：" + ex.Message;
+                return false;
+            }
+            commit = head;
+            detail = "commit=" + ShortCommit(head) + " dirty=false";
+            return true;
+        }
+
+        /// <summary>commit 短号——前 8 位（回执 / 拒绝语的可读面；比对一律用完整 40 位）。</summary>
+        /// <param name="commit">完整 commit</param>
+        /// <returns>前 8 位（不足则原样）</returns>
+        private static string ShortCommit(string commit)
+        {
+            if (commit == null || commit.Length <= 8)
+            {
+                return commit ?? "";
+            }
+            return commit.Substring(0, 8);
+        }
+
+        /// <summary>
+        /// 取首个「非产物元数据」的脏条目——排除 Directory.Build.props（版本单点：prepare 段0 的自增会写它，
+        /// 属产物自述字段而非源码改动；版本语义已固定为「产物自述」，不承载源码状态，源码状态由 commit 承载）。
+        /// </summary>
+        /// <param name="status">git status --porcelain 全文（可为 null）</param>
+        /// <returns>首个脏条目原文（无脏条目返回空串）</returns>
+        private static string FindDirtyItem(string status)
+        {
+            if (status == null)
+            {
+                return "";
+            }
+            string[] lines = status.Split('\n');
+            for (int i = 0; i < lines.Length; i = i + 1)
+            {
+                string line = lines[i].TrimEnd();
+                if (line.Trim().Length == 0)
+                {
+                    continue;
+                }
+                // 格式：XY <path>——两列状态码后即路径（含空格时 git 会加引号）
+                string path = line.Length > 3 ? line.Substring(3).Trim().Trim('"') : "";
+                if (string.Equals(path, "Directory.Build.props", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+                return line.Trim();
+            }
+            return "";
         }
 
         /// <summary>

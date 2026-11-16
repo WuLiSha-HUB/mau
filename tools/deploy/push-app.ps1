@@ -125,6 +125,50 @@ else
     Write-Host "[push-app] 警告：未能从 Directory.Build.props 读到 Version——version.txt 未落盘"
 }
 
+# [段3c] 构建指纹校验（2026-11-16 · 方案 C）——推出去的产物必须自带与已推送源码一致的指纹
+# 判据：接收端 incr 只比「产物 commit == 仓库 HEAD」，任何一条不满足都会在远端被拒
+$buildInfoPath = Join-Path $appDir "buildinfo.txt"
+if (!(Test-Path $buildInfoPath))
+{
+    throw "产物缺构建指纹（$buildInfoPath）——先跑 mau-setup prepare"
+}
+$buildInfo = @{}
+foreach ($line in (Get-Content $buildInfoPath))
+{
+    $idx = $line.IndexOf("=")
+    if ($idx -gt 0)
+    {
+        $buildInfo[$line.Substring(0, $idx).Trim()] = $line.Substring($idx + 1).Trim()
+    }
+}
+$biCommit = ""
+if ($buildInfo.ContainsKey("commit")) { $biCommit = $buildInfo["commit"] }
+$biDirty = ""
+if ($buildInfo.ContainsKey("dirty")) { $biDirty = $buildInfo["dirty"] }
+if ($biCommit.Length -ne 40)
+{
+    throw ("构建指纹 commit 非法（「" + $biCommit + "」）——先跑 mau-setup prepare")
+}
+if ($biDirty -ne "false")
+{
+    throw ("产物基于未提交源码（dirty=" + $biDirty + "）——先提交并重跑 prepare")
+}
+$headCommit = (& git -C $repoRoot rev-parse HEAD).Trim()
+if ($LASTEXITCODE -ne 0 -or $headCommit.Length -ne 40)
+{
+    throw "取本地 git HEAD 失败"
+}
+if ($biCommit -ne $headCommit)
+{
+    throw ("产物 commit=" + $biCommit.Substring(0, 8) + "，本地 HEAD=" + $headCommit.Substring(0, 8) + "——产物非当前源码所编，重跑 prepare")
+}
+$remoteRefs = (& git -C $repoRoot branch -r --contains $headCommit)
+if ($LASTEXITCODE -ne 0 -or $remoteRefs.Length -eq 0)
+{
+    throw ("源码未推送（本地 HEAD " + $headCommit.Substring(0, 8) + " 不在任何远端分支）——先 git push 源码，接收端才 pull 得到对应提交")
+}
+Write-Host ("[push-app] 构建指纹：commit=" + $biCommit.Substring(0, 8) + " dirty=false（与本地 HEAD 一致且已在远端）")
+
 # [段4] 打包——tar 单文件传输（Windows tar 不保留 Unix 权限位，远端落位后显式 chmod）
 if (Test-Path $tarPath)
 {
@@ -166,5 +210,6 @@ Invoke-Remote ("chmod 0755 " + $RemoteRepo + "/public/app/CatHome4")
 Write-Host "[push-app] 远端产物："
 Invoke-Remote ("ls -l --time-style=+%Y-%m-%d%t%H:%M:%S " + $RemoteRepo + "/public/app/CatHome4")
 Invoke-Remote ("ls " + $RemoteRepo + "/public/app/Flows | wc -l")
+Invoke-Remote ("cat " + $RemoteRepo + "/public/app/buildinfo.txt")
 
 Write-Host "[push-app] 完成——下一步：restart-incr（不传 target，缺省落受控根 mauout）"
