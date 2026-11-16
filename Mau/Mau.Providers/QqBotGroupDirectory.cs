@@ -185,12 +185,18 @@ namespace Mau.Providers
         /// <returns>空串成功；否则为失败原因</returns>
         public string SetAlias(string appId, string groupRef, string alias)
         {
-            QqBotGroupDocument doc = Load(appId);
-            QqBotGroupEntry entry;
+            QqBotGroupEntry resolved;
             string candidates;
-            if (!TryResolve(appId, groupRef, out entry, out candidates))
+            if (!TryResolve(appId, groupRef, out resolved, out candidates))
             {
                 return "群未命中: " + groupRef + (candidates.Length > 0 ? "（候选: " + candidates + "）" : "");
+            }
+            // TryResolve 内部自行 Load——返回的条目属于另一份文档实例；改动须回绑到本次 doc 上，否则 Save 把别名静默丢弃（只报成功、重名保护同时失效）
+            QqBotGroupDocument doc = Load(appId);
+            QqBotGroupEntry entry = FindByOpenId(doc, resolved.OpenId);
+            if (entry == null)
+            {
+                return "群未登记: " + resolved.OpenId;
             }
             string target = alias == null ? "" : alias.Trim();
             if (target.Length > 0)
