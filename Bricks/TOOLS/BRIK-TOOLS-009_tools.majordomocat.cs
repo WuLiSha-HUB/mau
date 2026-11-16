@@ -21,7 +21,7 @@ namespace Mau.Bricks
     public static class ToolsMajordomocatBrick
     {
         /// <summary>
-        /// 获取本组工具定义 JSON——{"group":"MajordomoCat","tools":[{name,description,parameters}]}
+        /// 获取本组工具定义 JSON——{"group":"Majordomo","tools":[{name,description,parameters}]}（JSON group 取 .mauproj 声明的组名，与积木约定名 tools.majordomocat 是两个面）
         /// </summary>
         /// <returns>工具定义 JSON 字符串</returns>
         public static string GetToolsJson()
@@ -36,4 +36,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:603EF365D0410592DDBC9333E78AEEB0A819434BC525CABAA4D60A49DFB6E18A
+// #MAU_CHECKSUM:SHA256:6197DB63C98C28942D6F6B8D1E1087C493C8A14A18B3141B2398714CBF1BD9A8

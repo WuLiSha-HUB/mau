@@ -1,6 +1,6 @@
 ﻿{
   "version": 3,
-  "generatedAt": "2026-11-16T06:28:56Z",
+  "generatedAt": "2026-11-16T08:24:29Z",
   "packages": ["Microsoft.CodeAnalysis.CSharp@4.11.0"],
   "bricks": [
     {"id":"BRIK-BROWSER-001","name":"browser.open","category":"BROWSER","path":"BROWSER/BRIK-BROWSER-001_browser.open.cs","dependencies":[],"packages":[],"status":"active","contract":{"implementation":"Mau.Bricks.BrowserOpenBrick.Open","inputs":[{"name":"argsJson","type":"string"}],"outputs":[{"name":"result","type":"string"}]},"return":"Bool","duration":"Sync","thread":"main"},
