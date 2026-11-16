@@ -31,7 +31,7 @@ namespace Mau.Bricks
         private const int WatchdogMs = 900000;
 
         /// <summary>
-        /// 一键部署——mode=prepare（默认，就地自举 public/ + Mau-public/）| sync-html（外观层静态资源镜像同步：源区 html → 产物区 + 运行区）；deploy 已从工具面退役——对外部署归 SetUp.exe 人工通道
+        /// 一键部署——mode=prepare（默认，就地自举 public/ + Mau-public/）| sync-html（外观层静态资源镜像同步：源区 html → 产物区 + 运行区）| publish-linux（Linux 部署链产物端：本地交叉构建 public/app-linux，不自增版本）；deploy 已从工具面退役——对外部署归 SetUp.exe 人工通道
         /// </summary>
         /// <param name="argsJson">工具参数 JSON（mode/target/report）</param>
         /// <param name="result">步骤摘要/诊断文本或 ERR| 错误文本</param>
@@ -40,7 +40,7 @@ namespace Mau.Bricks
         {
             result = "";
             // [参数面] 声明面口径零容忍——未知 / 非法 mode 一律 ERR|BAD_ARGS（catId 保留键放行）
-            string badArgs = JsonArgs.Validate(argsJson, "mode target report", "", "mode", "prepare|sync-html");
+            string badArgs = JsonArgs.Validate(argsJson, "mode target report", "", "mode", "prepare|sync-html|publish-linux");
             if (badArgs.Length > 0)
             {
                 result = badArgs;
@@ -51,9 +51,9 @@ namespace Mau.Bricks
             {
                 mode = "prepare";
             }
-            if (mode != "prepare" && mode != "sync-html")
+            if (mode != "prepare" && mode != "sync-html" && mode != "publish-linux")
             {
-                result = "ERR|BAD_ARGS|mode 仅支持 prepare/sync-html（当前: " + mode + "）";
+                result = "ERR|BAD_ARGS|mode 仅支持 prepare/sync-html/publish-linux（当前: " + mode + "）";
                 return false;
             }
             string target = JsonArgs.Get(argsJson, "target");
@@ -357,4 +357,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:E69ACF011E9E70DC04FFEAB5E7C54B85CBC032BA2EC7D686BDD5CCEF0E248C35
+// #MAU_CHECKSUM:SHA256:160B19238E765AEE823808A38D926EB37E0F2D7382F316562724F48D4459D4CE

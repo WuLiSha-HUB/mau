@@ -102,6 +102,11 @@ namespace SetUp
             {
                 exitCode = Prepare(repoRoot);
             }
+            else if (mode == "publish-linux")
+            {
+                // publish-linux —— Linux 部署链产物端（本地交叉构建 Linux 产物区，不自增版本；tools/deploy/README.md）
+                exitCode = PublishLinux(repoRoot);
+            }
             else if (mode == "deploy")
             {
                 if (args.Length < 2)
@@ -158,7 +163,8 @@ namespace SetUp
             Console.WriteLine("SetUp —— CH4/Mau 一键部署工具");
             Console.WriteLine("用法:");
             Console.WriteLine("  SetUp            打印本帮助（等同 -h / --help）");
-            Console.WriteLine("  SetUp prepare    重建全发布链（public/ + Mau-public/）");
+            Console.WriteLine("  SetUp prepare    重建全发布链（public/ + Mau-public/；版本自增唯一点）");
+            Console.WriteLine("  SetUp publish-linux  本地交叉构建 Linux 产物区（public/app-linux；不自增版本——Linux 部署链产物端）");
             Console.WriteLine("  SetUp deploy <目录>  部署正式运行实例到目标目录（原子切换——现行更名 _old 留作回退源）");
             Console.WriteLine("  SetUp sync-html [--target <运行区目录>] [--no-run] [--report <路径>]");
             Console.WriteLine("                           外观层静态资源镜像同步：源区 html → 产物区 + 运行区（--target 缺省从运行中宿主反推）");
