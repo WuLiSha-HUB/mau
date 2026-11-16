@@ -5,6 +5,7 @@ package bricks
 import (
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -41,9 +42,89 @@ func safeEval(cdp *cdpClient, expression string) string {
 	return value
 }
 
+// browserEvalError 是 JS 执行异常（Runtime.evaluate 的 exceptionDetails）。
+type browserEvalError struct {
+	// Message 异常文本（内核 description 首行）
+	Message string
+}
+
+// Error 实现 error 接口。
+func (e *browserEvalError) Error() string { return e.Message }
+
+// isEvalError 报告错误是否 JS 执行异常（区别于 CDP 通道错误）。
+func isEvalError(err error) bool {
+	var evalErr *browserEvalError
+	return errors.As(err, &evalErr)
+}
+
+// browserNavError 是导航层失败——Page.navigate 的 errorText 非空（内核已判不可达 / DNS / 拒绝连接）。
+type browserNavError struct {
+	// TargetURL 目标地址
+	TargetURL string
+	// Reason 内核原因（net::ERR_* 或返回体不可解析说明）
+	Reason string
+}
+
+// Error 实现 error 接口。
+func (e *browserNavError) Error() string {
+	return "页面无法访问（" + e.Reason + "）: " + e.TargetURL
+}
+
+// isNavError 报告错误是否导航层失败（区别于 CDP 通道错误）。
+func isNavError(err error) bool {
+	var navErr *browserNavError
+	return errors.As(err, &navErr)
+}
+
+// browserErrorPageScheme 是内核错误页的地址前缀——导航失败后 location.href 落在该 scheme 上。
+const browserErrorPageScheme = "chrome-error://"
+
+// navigatePage 导航到目标地址并检查内核给出的失败原因。
+//
+// 🔴 判据：Page.navigate 响应里 errorText 非空即失败——不把「CDP 调用成功」当「页面打开成功」。
+// 漏这条会让未监听端口回 ready=complete + chrome-error 错误页，读正文拿到的是「无法访问此页面」。
+func navigatePage(cdp *cdpClient, targetURL string, timeoutMs int) error {
+	response, err := cdp.Call("Page.navigate", `{"url":`+jsonString(targetURL)+`}`, timeoutMs)
+	if err != nil {
+		return err
+	}
+	var root struct {
+		Result struct {
+			ErrorText string `json:"errorText"`
+		} `json:"result"`
+	}
+	if json.Unmarshal(response, &root) != nil {
+		return &browserNavError{TargetURL: targetURL, Reason: "Page.navigate 返回体不可解析: " + browserPreview(string(response), 200)}
+	}
+	if reason := strings.TrimSpace(root.Result.ErrorText); reason != "" {
+		return &browserNavError{TargetURL: targetURL, Reason: reason}
+	}
+	return nil
+}
+
+// errorPageReason 判当前页是否内核错误页——是则返回错误页地址 + 正文首行（正文取不到只回地址）。
+//
+// 兜底判据：部分失败（策略 / 扩展拦截）不设 errorText，但地址会落到 chrome-error://。
+func errorPageReason(cdp *cdpClient, timeoutMs int) string {
+	href, err := evalRaw(cdp, "location.href", timeoutMs)
+	if err != nil || !strings.HasPrefix(href, browserErrorPageScheme) {
+		return ""
+	}
+	detail, detailErr := evalRaw(cdp, "document.body ? (document.body.innerText || '').split('\\n').map(s => s.trim()).filter(s => s).slice(0, 3).join(' / ') : ''", timeoutMs)
+	if detailErr != nil || strings.TrimSpace(detail) == "" {
+		return href
+	}
+	return href + " · " + firstLineOf(detail)
+}
+
 // evalRaw 执行 JS 表达式并取回值——非字符串按 JSON 文本返回。
+//
+// 🔴 失败必须可见：exceptionDetails 非空 → browserEvalError（空串与 undefined 不可区分，吞掉会把
+// `nope()` / 顶层 `return` 这类语法与引用错误伪装成「没有输出」）；返回体不可解析同样是错误。
+// awaitPromise=true 让 fetch / async 结果按 resolve 值返回——关掉时 Promise 序列化成 "{}"。
 func evalRaw(cdp *cdpClient, expression string, timeoutMs int) (string, error) {
-	response, err := cdp.Call("Runtime.evaluate", `{"expression":`+jsonString(expression)+`,"returnByValue":true}`, timeoutMs)
+	response, err := cdp.Call("Runtime.evaluate",
+		`{"expression":`+jsonString(expression)+`,"returnByValue":true,"awaitPromise":true}`, timeoutMs)
 	if err != nil {
 		return "", err
 	}
@@ -52,10 +133,33 @@ func evalRaw(cdp *cdpClient, expression string, timeoutMs int) (string, error) {
 			Result struct {
 				Value json.RawMessage `json:"value"`
 			} `json:"result"`
+			ExceptionDetails *struct {
+				Text      string `json:"text"`
+				Exception *struct {
+					Description string          `json:"description"`
+					Value       json.RawMessage `json:"value"`
+				} `json:"exception"`
+			} `json:"exceptionDetails"`
 		} `json:"result"`
 	}
 	if json.Unmarshal(response, &root) != nil {
-		return "", nil
+		return "", &browserEvalError{Message: "Runtime.evaluate 返回体不可解析: " + browserPreview(string(response), 200)}
+	}
+	if details := root.Result.ExceptionDetails; details != nil {
+		message := ""
+		if details.Exception != nil {
+			message = strings.TrimSpace(details.Exception.Description)
+			if message == "" && len(details.Exception.Value) > 0 {
+				message = strings.TrimSpace(string(details.Exception.Value))
+			}
+		}
+		if message == "" {
+			message = strings.TrimSpace(details.Text)
+		}
+		if message == "" {
+			message = "JS 执行异常（内核未给原因）"
+		}
+		return "", &browserEvalError{Message: firstLineOf(message)}
 	}
 	value := root.Result.Result.Value
 	if len(value) == 0 {

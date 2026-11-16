@@ -9,11 +9,14 @@ import (
 )
 
 // waitIO 等待后台探测批次完成。
+//
+// 预算 = 命令探测超时 × 4：批次按 job 串行，单 job 在负载下可打满 DepCommandTimeout；
+// 旧值写死 3s（与单次命令预算相等）→ 全量跑测并发时必掉（2026-11-16 prepare 实测超时）。
 func waitIO(t *testing.T, p *DepProbe) {
 	t.Helper()
 	select {
 	case <-p.ioWait:
-	case <-time.After(3 * time.Second):
+	case <-time.After(DepCommandTimeout * 4):
 		t.Fatal("依赖探测后台批次超时")
 	}
 }

@@ -205,13 +205,14 @@ func (s *BrowserService) Open(catID, targetURL string) string {
 	browser.Sync.Lock()
 	defer browser.Sync.Unlock()
 	started := time.Now()
-	if _, err := browser.cdp.Call("Page.navigate", `{"url":`+jsonString(targetURL)+`}`, browserBudgetSlice(started, browserNavTimeoutMs, browserCallTimeoutMs)); err != nil {
-		if isCDPTimeout(err) {
-			s.log(3, "browser.open 超时: "+err.Error())
-			return "ERR|BROWSER_TIMEOUT|页面无法访问（CDP 无响应）: " + targetURL + " —— " + err.Error()
+	navBudget := browserBudgetSlice(started, browserNavTimeoutMs, browserNavTimeoutMs)
+	if navErr := navigatePage(browser.cdp, targetURL, navBudget); navErr != nil {
+		if isCDPTimeout(navErr) {
+			s.log(3, "browser.open 导航超时: "+navErr.Error())
+			return "ERR|BROWSER_TIMEOUT|导航超时（CDP Page.navigate " + strconv.Itoa(navBudget) + "ms 无响应——卡在导航阶段，不是浏览器未启动）: " + targetURL + " —— " + navErr.Error()
 		}
-		s.log(3, "browser.open 失败: "+err.Error())
-		return "ERR|BROWSER_NAV|" + err.Error()
+		s.log(3, "browser.open 失败: "+navErr.Error())
+		return "ERR|BROWSER_NAV|" + navErr.Error()
 	}
 	state, waitErr := waitReady(browser.cdp, browserBudgetRemaining(started, browserNavTimeoutMs))
 	if waitErr != nil {
@@ -220,6 +221,10 @@ func (s *BrowserService) Open(catID, targetURL string) string {
 	}
 	if state != "interactive" && state != "complete" {
 		return "ERR|BROWSER_TIMEOUT|页面无法访问（" + strconv.Itoa(browserNavTimeoutMs) + "ms 内未进入可读状态，readyState=" + state + "）: " + targetURL
+	}
+	if reason := errorPageReason(browser.cdp, browserCallTimeoutMs); reason != "" {
+		s.log(3, "browser.open 错误页: "+targetURL+" → "+reason)
+		return "ERR|BROWSER_NAV|页面无法访问（内核错误页）: " + targetURL + " → " + reason
 	}
 	time.Sleep(browserSettleMs * time.Millisecond)
 	elapsed := time.Since(started).Milliseconds()
@@ -302,6 +307,10 @@ func (s *BrowserService) Eval(catID, expression string) string {
 	defer browser.Sync.Unlock()
 	value, err := evalRaw(browser.cdp, expression, browserCallTimeoutMs)
 	if err != nil {
+		if isEvalError(err) {
+			s.log(3, "browser.eval 异常: "+err.Error())
+			return "ERR|BROWSER_EVAL|" + err.Error()
+		}
 		s.log(3, "browser.eval 失败: "+err.Error())
 		return "ERR|BROWSER_CDP|" + err.Error()
 	}
@@ -400,15 +409,21 @@ func (s *BrowserService) Tabs(catID, action, target, url string) string {
 		navNote := " | url=（空白）"
 		if url != "" {
 			navStarted := time.Now()
-			if _, err := browser.cdp.Call("Page.navigate", `{"url":`+jsonString(url)+`}`, browserCallTimeoutMs); err != nil {
-				return "ERR|BROWSER_CDP|" + err.Error()
+			if navErr := navigatePage(browser.cdp, url, browserNavTimeoutMs); navErr != nil {
+				if isCDPTimeout(navErr) {
+					return "ERR|BROWSER_TIMEOUT|新页签导航超时（CDP Page.navigate " + strconv.Itoa(browserNavTimeoutMs) + "ms 无响应）: " + url + " —— " + navErr.Error()
+				}
+				return "ERR|BROWSER_NAV|" + navErr.Error()
 			}
-			navState, waitErr := waitReady(browser.cdp, browserNavTimeoutMs)
+			navState, waitErr := waitReady(browser.cdp, browserBudgetRemaining(navStarted, browserNavTimeoutMs))
 			if waitErr != nil {
-				return "ERR|BROWSER_CDP|" + waitErr.Error()
+				return "ERR|BROWSER_NAV|" + waitErr.Error()
 			}
 			if navState != "interactive" && navState != "complete" {
 				return "ERR|BROWSER_TIMEOUT|新页签未在 " + strconv.Itoa(browserNavTimeoutMs) + "ms 内进入可读状态（readyState=" + navState + "）: " + url
+			}
+			if reason := errorPageReason(browser.cdp, browserCallTimeoutMs); reason != "" {
+				return "ERR|BROWSER_NAV|新页签页面无法访问（内核错误页）: " + url + " → " + reason
 			}
 			time.Sleep(browserSettleMs * time.Millisecond)
 			navNote = " | navigated=" + url + " | ms=" + strconv.FormatInt(time.Since(navStarted).Milliseconds(), 10)
@@ -478,10 +493,12 @@ func (s *BrowserService) Headful(catID, action, url string) string {
 	nav := ""
 	if url != "" {
 		browser.Sync.Lock()
-		if _, err := browser.cdp.Call("Page.navigate", `{"url":`+jsonString(url)+`}`, browserCallTimeoutMs); err != nil {
-			nav = " | 导航失败: " + err.Error()
+		if navErr := navigatePage(browser.cdp, url, browserNavTimeoutMs); navErr != nil {
+			nav = " | 导航失败: " + navErr.Error()
 		} else if state, waitErr := waitReady(browser.cdp, browserNavTimeoutMs); waitErr != nil {
 			nav = " | 导航失败: " + waitErr.Error()
+		} else if reason := errorPageReason(browser.cdp, browserCallTimeoutMs); reason != "" {
+			nav = " | 导航失败: " + reason
 		} else {
 			nav = " | url=" + url + " | ready=" + state
 		}

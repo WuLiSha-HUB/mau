@@ -159,7 +159,7 @@ func (d *Deps) resolveMountName(token string) (string, string, bool) {
 	if text == "" {
 		return "", "miss", false
 	}
-	// 路径 / 受控根形态（tools/REA · workspace:QQBotB · ccbp:Project/Mau）——取末段
+	// 路径 / 受控根形态（tools/work/REA · workspace:QQBotB · ccbp:Project/Mau）——取末段
 	if cut := strings.LastIndexAny(text, "/\\:"); cut >= 0 && cut+1 < len(text) {
 		text = text[cut+1:]
 	}

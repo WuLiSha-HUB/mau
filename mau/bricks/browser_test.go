@@ -493,3 +493,125 @@ func TestCaptchaAndGoogleBlocked(t *testing.T) {
 		t.Fatal("正常页不应判拦截")
 	}
 }
+
+// TestEvalRawException 验证 JS 执行异常走 exceptionDetails（不再吞成空串）。
+func TestEvalRawException(t *testing.T) {
+	ws, server := newPipeWS()
+	defer func() { _ = ws.Close(); _ = server.Close() }()
+	cdp := &cdpClient{conn: ws}
+	go func() {
+		if _, _, err := readClientFrame(server); err != nil {
+			return
+		}
+		_ = writeServerFrame(server, 0x1, []byte(`{"id":1,"result":{"result":{"type":"object"},"exceptionDetails":{"text":"Uncaught","exception":{"description":"ReferenceError: nope is not defined","value":""}}}}`))
+	}()
+	_, err := evalRaw(cdp, "nope()", 3000)
+	if err == nil || !isEvalError(err) {
+		t.Fatalf("应判 JS 执行异常: %v", err)
+	}
+	if !strings.Contains(err.Error(), "ReferenceError: nope is not defined") {
+		t.Fatalf("异常文本不符: %v", err)
+	}
+}
+
+// TestEvalRawAsyncResult 验证 awaitPromise 打开（请求体带该字段，Promise 按 resolve 值返回）。
+func TestEvalRawAsyncResult(t *testing.T) {
+	ws, server := newPipeWS()
+	defer func() { _ = ws.Close(); _ = server.Close() }()
+	cdp := &cdpClient{conn: ws}
+	payload := make(chan string, 1)
+	go func() {
+		_, data, err := readClientFrame(server)
+		if err != nil {
+			return
+		}
+		payload <- string(data)
+		_ = writeServerFrame(server, 0x1, []byte(`{"id":1,"result":{"result":{"value":200}}}`))
+	}()
+	got, err := evalRaw(cdp, "fetch('/').then(r => r.status)", 3000)
+	if err != nil {
+		t.Fatalf("evalRaw 失败: %v", err)
+	}
+	if got != "200" {
+		t.Fatalf("取值不符: %q", got)
+	}
+	body := <-payload
+	if !strings.Contains(body, `"awaitPromise":true`) {
+		t.Fatalf("请求体缺 awaitPromise: %s", body)
+	}
+}
+
+// TestNavigatePageErrorText 验证 Page.navigate 的 errorText 转导航失败（不可达端口不再回成功）。
+func TestNavigatePageErrorText(t *testing.T) {
+	ws, server := newPipeWS()
+	defer func() { _ = ws.Close(); _ = server.Close() }()
+	cdp := &cdpClient{conn: ws}
+	go func() {
+		if _, _, err := readClientFrame(server); err != nil {
+			return
+		}
+		_ = writeServerFrame(server, 0x1, []byte(`{"id":1,"result":{"frameId":"F1","loaderId":"L1","errorText":"net::ERR_CONNECTION_REFUSED"}}`))
+	}()
+	err := navigatePage(cdp, "http://127.0.0.1:8821/", 3000)
+	if err == nil || !isNavError(err) {
+		t.Fatalf("应判导航失败: %v", err)
+	}
+	if !strings.Contains(err.Error(), "net::ERR_CONNECTION_REFUSED") {
+		t.Fatalf("原因文本不符: %v", err)
+	}
+}
+
+// TestNavigatePageOK 验证正常导航不误判（无 errorText 即通过）。
+func TestNavigatePageOK(t *testing.T) {
+	ws, server := newPipeWS()
+	defer func() { _ = ws.Close(); _ = server.Close() }()
+	cdp := &cdpClient{conn: ws}
+	go func() {
+		if _, _, err := readClientFrame(server); err != nil {
+			return
+		}
+		_ = writeServerFrame(server, 0x1, []byte(`{"id":1,"result":{"frameId":"F1","loaderId":"L1"}}`))
+	}()
+	if err := navigatePage(cdp, "https://example.com/", 3000); err != nil {
+		t.Fatalf("正常导航被误判: %v", err)
+	}
+}
+
+// TestErrorPageReason 验证内核错误页被识别（地址 + 正文首行）。
+func TestErrorPageReason(t *testing.T) {
+	ws, server := newPipeWS()
+	defer func() { _ = ws.Close(); _ = server.Close() }()
+	cdp := &cdpClient{conn: ws}
+	go func() {
+		responses := []string{
+			`{"id":1,"result":{"result":{"value":"chrome-error://chromewebdata/"}}}`,
+			`{"id":2,"result":{"result":{"value":"无法访问此页面 / ERR_CONNECTION_REFUSED"}}}`,
+		}
+		for _, item := range responses {
+			if _, _, err := readClientFrame(server); err != nil {
+				return
+			}
+			_ = writeServerFrame(server, 0x1, []byte(item))
+		}
+	}()
+	reason := errorPageReason(cdp, 3000)
+	if !strings.Contains(reason, "chrome-error://") || !strings.Contains(reason, "ERR_CONNECTION_REFUSED") {
+		t.Fatalf("错误页原因不符: %q", reason)
+	}
+}
+
+// TestErrorPageReasonNormalPage 验证正常页不回错误（成对判据——只测拦截必过度拦截）。
+func TestErrorPageReasonNormalPage(t *testing.T) {
+	ws, server := newPipeWS()
+	defer func() { _ = ws.Close(); _ = server.Close() }()
+	cdp := &cdpClient{conn: ws}
+	go func() {
+		if _, _, err := readClientFrame(server); err != nil {
+			return
+		}
+		_ = writeServerFrame(server, 0x1, []byte(`{"id":1,"result":{"result":{"value":"https://example.com/"}}}`))
+	}()
+	if reason := errorPageReason(cdp, 3000); reason != "" {
+		t.Fatalf("正常页被误判为错误页: %q", reason)
+	}
+}
