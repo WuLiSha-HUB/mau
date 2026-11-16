@@ -425,8 +425,8 @@ func (r *commandRouter) rebuildSpecsFor(catID string, sess *session.Session, cfg
 	if current := toolpool.CurrentRegistry(); current != nil && len(current.GetAllNames()) > 0 {
 		registry = current
 	}
-	authorized := applySessionAuth(registry, sess, catID, cfg.ToolNames)
-	defs := registry.FilterToolSpecs(authorized, toolpool.IsDefaultCatKey(catID))
+	authorized := applySessionAuth(registry, sess, catID, cfg)
+	defs := registry.FilterToolSpecsExplicit(authorized, toolpool.IsDefaultCatKey(catID), cfg.ToolsEmpty)
 	specs := make([]session.ToolSpec, 0, len(defs))
 	for _, def := range defs {
 		specs = append(specs, session.ToolSpec{Name: def.Name, Description: def.Description, ParametersJSON: def.ParametersJSON})
@@ -456,9 +456,15 @@ func (r *commandRouter) buildInjectSurface(cfg *config.CatCfg, specs []session.T
 // applySessionAuth 重算会话授权面——名单落盘即改本次运行的可调工具集（注入面仍新会话刷新）。
 //
 // 返回授权名集（调用方据此裁剪声明面）。三判定与 C# IsToolAllowed 同序：特权名 → 注册表 → 名单。
-func applySessionAuth(reg *toolpool.Registry, sess *session.Session, catKey, toolNames string) []string {
+func applySessionAuth(reg *toolpool.Registry, sess *session.Session, catKey string, cfg *config.CatCfg) []string {
 	includePrivileged := toolpool.IsDefaultCatKey(catKey)
-	authorized := reg.ResolveToolNames(toolNames, includePrivileged)
+	toolNames := ""
+	toolsEmpty := false
+	if cfg != nil {
+		toolNames = cfg.ToolNames
+		toolsEmpty = cfg.ToolsEmpty
+	}
+	authorized := reg.ResolveToolNamesExplicit(toolNames, toolsEmpty, includePrivileged)
 	allowed := make(map[string]bool, len(authorized))
 	for _, name := range authorized {
 		allowed[name] = true
@@ -1228,6 +1234,8 @@ func (r *commandRouter) tplBroadcast() string {
 	roots, _, _ := r.resolveTplEnabledRoots(tpl)
 	touched := 0
 	names := []string{}
+	// 模板工具清单为显式空 → 跟随猫也落到「零工具」语义（toolsEmpty 标记，不回落全量保底）
+	toolsEmpty := strings.TrimSpace(tools) == ""
 	for _, inst := range r.catEntries() {
 		if inst == nil || inst.id == "" {
 			continue
@@ -1238,8 +1246,9 @@ func (r *commandRouter) tplBroadcast() string {
 			continue
 		}
 		changed := false
-		if cfg.FollowDefaultTools && cfg.ToolNames != tools {
+		if cfg.FollowDefaultTools && (cfg.ToolNames != tools || cfg.ToolsEmpty != toolsEmpty) {
 			cfg.ToolNames = tools
+			cfg.ToolsEmpty = toolsEmpty
 			changed = true
 		}
 		if cfg.FollowDefaultInject && !sameStringArray(cfg.InjectList, injects) {
@@ -1379,6 +1388,9 @@ func formatCatCfg(id string, cfg *config.CatCfg) string {
 	sb.WriteString("  appearanceId=" + cfg.AppearanceID + "\r\n")
 	sb.WriteString("  reasoningEffort=" + effortText + "\r\n")
 	sb.WriteString("  cacheKey=" + cfg.CacheKey + "\r\n")
+	sb.WriteString("  followDefaultTools=" + boolText(cfg.FollowDefaultTools) + "\r\n")
+	sb.WriteString("  followDefaultInject=" + boolText(cfg.FollowDefaultInject) + "\r\n")
+	sb.WriteString("  followDefaultRoots=" + boolText(cfg.FollowDefaultRoots) + "\r\n")
 	sb.WriteString("  themeColor=" + strconv.Itoa(cfg.ThemeColor))
 	return sb.String()
 }
@@ -1502,8 +1514,20 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 			}
 			kept = append(kept, name)
 		}
+		prevToolNames := cfg.ToolNames
+		prevToolsEmpty := cfg.ToolsEmpty
 		cfg.ToolNames = strings.Join(kept, ",")
+		// 显式空 = 一件工具都不要（不回落全量保底）；非空清标记
+		cfg.ToolsEmpty = cfg.ToolNames == ""
 		applied := "toolNames=" + cfg.ToolNames
+		if cfg.ToolsEmpty {
+			applied += "（空——本猫不含任何可配置工具）"
+		}
+		// 自动独立——清单真的变了即视为本猫独立意图，关闭跟随位（防下一次模板广播覆盖回去）
+		if (cfg.ToolNames != prevToolNames || cfg.ToolsEmpty != prevToolsEmpty) && cfg.FollowDefaultTools {
+			cfg.FollowDefaultTools = false
+			applied += "｜已自动切独立（followDefaultTools=false——清单被显式改写）"
+		}
 		if len(removed) > 0 {
 			applied += "｜⚠️ 已剔除池外工具名 " + strconv.Itoa(len(removed)) + " 个：" + strings.Join(removed, ",")
 		}
@@ -1524,8 +1548,15 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 			}
 			paths = kept
 		}
+		prevInject := cfg.InjectList
 		cfg.InjectList = paths
-		return "injectList=" + strings.Join(paths, ","), false, ""
+		applied := "injectList=" + strings.Join(paths, ",")
+		// 自动独立——注入清单真的变了即关闭跟随位（防模板广播覆盖）
+		if !sameStringArray(paths, prevInject) && cfg.FollowDefaultInject {
+			cfg.FollowDefaultInject = false
+			applied += "｜已自动切独立（followDefaultInject=false——清单被显式改写）"
+		}
+		return applied, false, ""
 	case "packs":
 		cfg.Packs = splitCfgList(value)
 		return "packs=" + strings.Join(cfg.Packs, ","), false, ""
@@ -1552,8 +1583,14 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 		} else {
 			kept = append(kept, ids...)
 		}
+		prevRoots := cfg.EnabledRoots
 		cfg.EnabledRoots = kept
 		applied := "enabledRoots=" + strings.Join(kept, ",")
+		// 自动独立——受控根真的变了即关闭跟随位（防模板广播覆盖）
+		if !sameStringArray(kept, prevRoots) && cfg.FollowDefaultRoots {
+			cfg.FollowDefaultRoots = false
+			applied += "｜已自动切独立（followDefaultRoots=false——根清单被显式改写）"
+		}
 		if len(removed) > 0 {
 			applied += "｜⚠️ 已剔除池外根 id " + strconv.Itoa(len(removed)) + " 个：" + strings.Join(removed, ",")
 		}
@@ -1580,6 +1617,7 @@ func (r *commandRouter) applyCatCfgField(cfg *config.CatCfg, field, value string
 					valid, removed = r.ValidateToolNames(valid)
 				}
 				cfg.ToolNames = valid
+				cfg.ToolsEmpty = strings.TrimSpace(cfg.ToolNames) == ""
 				applied += "｜工具清单已同步模板（" + strconv.Itoa(len(toolpool.SplitToolNameList(cfg.ToolNames))) + " 件）"
 				if len(removed) > 0 {
 					applied += "｜⚠️ 已剔除池外工具名 " + strconv.Itoa(len(removed)) + " 个：" + strings.Join(removed, ",")

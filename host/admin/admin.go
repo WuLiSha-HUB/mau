@@ -576,6 +576,19 @@ func contains(list []string, name string) bool {
 	return false
 }
 
+// sameStringSlice 切片逐项相等（含长度与顺序；nil 与空表视为相等）。
+func sameStringSlice(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // join 逗号拼接（空列表返回空串）。
 func join(items []string, sep string) string {
 	var buf bytes.Buffer

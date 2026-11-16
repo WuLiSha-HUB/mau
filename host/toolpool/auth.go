@@ -124,6 +124,33 @@ func (r *Registry) ResolveToolNames(raw string, includePrivileged bool) []string
 	return r.AppendPrivilegedNames(r.ResolveConfigurableNames(raw), includePrivileged)
 }
 
+// ResolveToolNamesExplicit 工具名单解析（显式零工具口径）——explicitEmpty=true 时空名单**不回落全量**。
+//
+// 语义边界：explicitEmpty 只伴随「用户在配置面主动取消全部工具」出现（cat.cfg 的 toolsEmpty 标记）；
+// 历史文件缺名单（false）仍走全量保底，向后兼容。
+func (r *Registry) ResolveToolNamesExplicit(raw string, explicitEmpty bool, includePrivileged bool) []string {
+	if explicitEmpty && strings.TrimSpace(raw) == "" {
+		return r.AppendPrivilegedNames([]string{}, includePrivileged)
+	}
+	return r.ResolveToolNames(raw, includePrivileged)
+}
+
+// FilterToolSpecsExplicit 声明面裁剪（显式零工具口径）——explicitEmpty 且名单空 → 只留特权面。
+//
+// 其它情形与 FilterToolSpecs 同义（含「名单全非法 → 全量保底」）。
+func (r *Registry) FilterToolSpecsExplicit(names []string, includePrivileged bool, explicitEmpty bool) []Def {
+	if explicitEmpty && len(names) == 0 {
+		out := make([]Def, 0, 4)
+		for _, spec := range r.BuildSpecs() {
+			if includePrivileged && r.IsPrivilegedName(spec.Name) {
+				out = append(out, spec)
+			}
+		}
+		return out
+	}
+	return r.FilterToolSpecs(names, includePrivileged)
+}
+
 // FilterToolSpecs 工具声明面裁剪——按名单从全量表取子集；名单全非法 → 全量保底。
 //
 // 特权组按 includePrivileged 处置（默认会话永久激活 / 其他会话恒剔除）。

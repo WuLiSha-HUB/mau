@@ -444,7 +444,7 @@ func main() {
 				return
 			}
 			// 授权面实时——名单落盘即改本次运行的可调工具集（注入面仍新会话刷新）
-			applySessionAuth(toolsResult.Registry, inst.session, inst.id, cfg.ToolNames)
+			applySessionAuth(toolsResult.Registry, inst.session, inst.id, cfg)
 			// 端点面实时——apiConfigId / reasoningEffort 经同步访问器切换（猫级覆盖，不改端点池）
 			if inst.wiring.Client != nil {
 				inst.wiring.Client.SetBinding(cfg.APIConfigID, cfg.ReasoningEffort)

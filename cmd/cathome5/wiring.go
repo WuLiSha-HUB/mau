@@ -122,9 +122,9 @@ func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsRes
 
 	// 工具面——授权集实时口径快照 → 声明面裁剪 → 会话快照优先（A221：重启不改面，仅 session.new 换新）
 	includePrivileged := toolpool.IsDefaultCatKey(catID)
-	authorized := toolsResult.Registry.ResolveToolNames(cfg.ToolNames, includePrivileged)
+	authorized := toolsResult.Registry.ResolveToolNamesExplicit(cfg.ToolNames, cfg.ToolsEmpty, includePrivileged)
 	wiring.Authorized = authorized
-	defs := toolsResult.Registry.FilterToolSpecs(authorized, includePrivileged)
+	defs := toolsResult.Registry.FilterToolSpecsExplicit(authorized, includePrivileged, cfg.ToolsEmpty)
 	poolSpecs := make([]session.ToolSpec, 0, len(defs))
 	for _, def := range defs {
 		poolSpecs = append(poolSpecs, session.ToolSpec{Name: def.Name, Description: def.Description, ParametersJSON: def.ParametersJSON})

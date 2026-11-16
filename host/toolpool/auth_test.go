@@ -83,6 +83,49 @@ func TestFilterToolSpecs(t *testing.T) {
 	}
 }
 
+// TestResolveToolNamesExplicit 显式零工具口径——空名单不回落全量（只并特权）。
+func TestResolveToolNamesExplicit(t *testing.T) {
+	reg := buildTestRegistry(t)
+	// 显式零工具 + 默认猫：只剩特权
+	got := reg.ResolveToolNamesExplicit("", true, true)
+	if len(got) != 1 || got[0] != "majordomo-cmd" {
+		t.Fatalf("显式零工具 + 含特权 = %v，期望 [majordomo-cmd]", got)
+	}
+	// 显式零工具 + 非默认猫：空
+	got = reg.ResolveToolNamesExplicit("", true, false)
+	if len(got) != 0 {
+		t.Fatalf("显式零工具 + 去特权 = %v，期望空", got)
+	}
+	// 非显式空：仍全量保底（历史文件缺名单，向后兼容）
+	got = reg.ResolveToolNamesExplicit("", false, false)
+	if len(got) != 1 || got[0] != "text-read" {
+		t.Fatalf("历史空名单应保底 = %v", got)
+	}
+	// 非空名单：与普通口径一致
+	got = reg.ResolveToolNamesExplicit("text-read", true, false)
+	if len(got) != 1 || got[0] != "text-read" {
+		t.Fatalf("显式名单 = %v", got)
+	}
+}
+
+// TestFilterToolSpecsExplicit 显式零工具声明面——不回落全量（只留特权）。
+func TestFilterToolSpecsExplicit(t *testing.T) {
+	reg := buildTestRegistry(t)
+	specs := reg.FilterToolSpecsExplicit(nil, true, true)
+	if len(specs) != 1 || specs[0].Name != "majordomo-cmd" {
+		t.Fatalf("显式零工具 + 含特权 = %v，期望只特权", specs)
+	}
+	specs = reg.FilterToolSpecsExplicit(nil, false, true)
+	if len(specs) != 0 {
+		t.Fatalf("显式零工具 + 去特权 = %v，期望空", specs)
+	}
+	// 非显式空：照旧全量保底
+	specs = reg.FilterToolSpecsExplicit(nil, false, false)
+	if len(specs) != 2 {
+		t.Fatalf("历史空名单应全量保底 = %d", len(specs))
+	}
+}
+
 // TestResolveCatAuthorized 默认猫读默认名单、多猫读自身名单。
 func TestResolveCatAuthorized(t *testing.T) {
 	reg := buildTestRegistry(t)

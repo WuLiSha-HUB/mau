@@ -437,6 +437,8 @@ func (r *catRegistry) createCat(name, id string) (*catInstance, string) {
 	if tpl, err := config.LoadCatDefault(filepath.Join(r.dataRoot, "config", "cat-default.cfg")); err == nil && tpl != nil {
 		cfg.Persona = tpl.DefaultPersona
 		cfg.ToolNames = tpl.DefaultToolNames
+		// 模板工具清单为空 = 显式零工具（不回落全量保底）
+		cfg.ToolsEmpty = strings.TrimSpace(cfg.ToolNames) == ""
 		// 前文取「启用集」——defaultInjectList 去掉 defaultInjectDisabled（模板里取消勾选的条目不继承）
 		cfg.InjectList = config.ResolveTplEnabledInject(tpl)
 		cfg.Packs = append([]string{}, tpl.DefaultPacks...)

@@ -98,6 +98,8 @@ type catConfigWriteResponse struct {
 	RemovedEnabledRoots []string `json:"removedEnabledRoots"`
 	// RootsPoolUnavailable 根池不可用
 	RootsPoolUnavailable bool `json:"rootsPoolUnavailable"`
+	// AutoUnfollowed 因显式改写清单而自动关闭的跟随位（tools / inject / roots）
+	AutoUnfollowed []string `json:"autoUnfollowed"`
 }
 
 // sessionFor 按猫 key 取会话——多猫钩子优先（main 注入 cats.sessionByKey）；
@@ -319,13 +321,23 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 		cfg.Type = strings.TrimSpace(fieldString(fields, "type"))
 	}
 	removedToolNames := []string{}
+	toolsChanged := false
 	if _, present := fields["toolNames"]; present {
 		var removed []string
-		cfg.ToolNames, removed = d.validateToolNames(toolNames)
+		newToolNames, removed := d.validateToolNames(toolNames)
 		removedToolNames = removed
+		// 变更检测在旧值改写之前——自动独立的判据是「清单真的变了」（保存不变更不算意图）
+		newToolsEmpty := newToolNames == ""
+		toolsChanged = newToolNames != cfg.ToolNames || newToolsEmpty != cfg.ToolsEmpty
+		cfg.ToolNames = newToolNames
+		// 显式空 = 一件工具都不要（不回落全量保底）；非空清标记
+		cfg.ToolsEmpty = newToolsEmpty
 	}
+	injectChanged := false
 	if _, present := fields["injectList"]; present {
-		cfg.InjectList = filterInjectPaths(fieldStringArray(fields, "injectList"), d)
+		newInject := filterInjectPaths(fieldStringArray(fields, "injectList"), d)
+		injectChanged = !sameStringSlice(newInject, cfg.InjectList)
+		cfg.InjectList = newInject
 	}
 	if _, present := fields["packs"]; present {
 		cfg.Packs = trimItems(fieldStringArray(fields, "packs"))
@@ -335,8 +347,10 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 	}
 	removedEnabledRoots := []string{}
 	rootsPoolUnavailable := false
+	rootsChanged := false
 	if _, present := fields["enabledRoots"]; present {
 		kept, removed, unavailable := d.validateEnabledRoots(fieldStringArray(fields, "enabledRoots"))
+		rootsChanged = !sameStringSlice(kept, cfg.EnabledRoots)
 		cfg.EnabledRoots = kept
 		removedEnabledRoots = removed
 		rootsPoolUnavailable = unavailable
@@ -365,6 +379,7 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 		if tpl, err := config.LoadCatDefault(d.catDefaultPath()); err == nil && tpl != nil {
 			if followToolsPresent && followToolsOn {
 				cfg.ToolNames, _ = d.validateToolNames(tpl.DefaultToolNames)
+				cfg.ToolsEmpty = strings.TrimSpace(cfg.ToolNames) == ""
 			}
 			if followInjectPresent && followInjectOn {
 				cfg.InjectList = config.ResolveTplEnabledInject(tpl)
@@ -376,6 +391,25 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 				rootsPoolUnavailable = unavailable
 			}
 		}
+	}
+	// 自动独立——显式改写了某一维清单（且值真的变了）而**未显式提交该维 follow** 时，
+	// 视为「本猫独立意图」：自动关闭对应跟随位，防下一次模板保存把刚改的清单广播覆盖回去。
+	// 显式提交 follow 的请求不触发（用户明确意图优先，true / false 都照提交值落盘）。
+	autoUnfollowed := []string{}
+	if toolsChanged && !followToolsPresent && cfg.FollowDefaultTools {
+		cfg.FollowDefaultTools = false
+		autoUnfollowed = append(autoUnfollowed, "tools")
+	}
+	if injectChanged && !followInjectPresent && cfg.FollowDefaultInject {
+		cfg.FollowDefaultInject = false
+		autoUnfollowed = append(autoUnfollowed, "inject")
+	}
+	if rootsChanged && !followRootsPresent && cfg.FollowDefaultRoots {
+		cfg.FollowDefaultRoots = false
+		autoUnfollowed = append(autoUnfollowed, "roots")
+	}
+	if len(autoUnfollowed) > 0 {
+		d.log(1, "猫配置自动切独立："+catKey+"（已关闭跟随位 "+join(autoUnfollowed, ",")+"——清单被显式改写）")
 	}
 	if err := config.SaveCatCfg(d.catCfgPath(catKey), cfg); err != nil {
 		writeErr(w, "cat.cfg 写入失败: "+err.Error())
@@ -395,6 +429,7 @@ func (d *Deps) handleCatConfigPost(w http.ResponseWriter, r *http.Request) {
 		CacheKey:             cfg.CacheKey,
 		RemovedEnabledRoots:  removedEnabledRoots,
 		RootsPoolUnavailable: rootsPoolUnavailable,
+		AutoUnfollowed:       autoUnfollowed,
 	})
 }
 
@@ -509,6 +544,8 @@ type catDefaultWriteResponse struct {
 	RemovedRoots []string `json:"removedRoots"`
 	// RootsPoolUnavailable 根池不可用
 	RootsPoolUnavailable bool `json:"rootsPoolUnavailable"`
+	// TemplateUnchanged 内容与原值全等（本次未触发跟随广播）
+	TemplateUnchanged bool `json:"templateUnchanged"`
 }
 
 // handleCatDefaultGet 服务 GET /api/v1/cat-default——新猫默认模板。
@@ -579,16 +616,41 @@ func (d *Deps) handleCatDefaultPost(w http.ResponseWriter, r *http.Request) {
 	removedRoots := []string{}
 	rootsPoolUnavailable := false
 	tpl.DefaultEnabledRoots, removedRoots, rootsPoolUnavailable = d.validateEnabledRoots(fieldStringArray(fields, "defaultEnabledRoots"))
+	// 变更检测——模板面是 600ms 自动保存（前端每次防抖都回传全量），内容没真变就不该广播：
+	// 广播一次 = 全猫遍历 + 按 follow 覆盖清单（误触即覆盖用户现值）。
+	unchanged := false
+	if old, loadErr := config.LoadCatDefault(d.catDefaultPath()); loadErr == nil && old != nil {
+		unchanged = sameCatDefault(old, tpl)
+	}
 	if err := config.SaveCatDefault(d.catDefaultPath(), tpl); err != nil {
 		writeErr(w, "cat-default.cfg 写入失败: "+err.Error())
 		return
 	}
 	// 跟随广播——模板即改即同步（工具清单 / 前文注入 / 受控根）到 follow=true 的猫；生效仍为新会话
-	if d.Dispatch != nil {
+	if !unchanged && d.Dispatch != nil {
 		d.Dispatch("catcfg.tplbroadcast")
 	}
-	d.log(1, "全局默认模板已保存（注入 "+itoa(len(tpl.DefaultInjectList))+" 条）")
-	writeJSON(w, catDefaultWriteResponse{OK: true, RemovedToolNames: removed, RemovedRoots: removedRoots, RootsPoolUnavailable: rootsPoolUnavailable})
+	if unchanged {
+		d.log(1, "全局默认模板已保存（内容未变——跳过跟随广播）")
+	} else {
+		d.log(1, "全局默认模板已保存（注入 "+itoa(len(tpl.DefaultInjectList))+" 条）")
+	}
+	writeJSON(w, catDefaultWriteResponse{OK: true, RemovedToolNames: removed, RemovedRoots: removedRoots, RootsPoolUnavailable: rootsPoolUnavailable, TemplateUnchanged: unchanged})
+}
+
+// sameCatDefault 判断两份默认模板内容全等（八字段逐项；用于「内容未变不广播」判据）。
+func sameCatDefault(a, b *config.CatDefault) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.BaseRole == b.BaseRole &&
+		a.DefaultPersona == b.DefaultPersona &&
+		a.DefaultToolNames == b.DefaultToolNames &&
+		a.DefaultUserInjectIdleOnly == b.DefaultUserInjectIdleOnly &&
+		sameStringSlice(a.DefaultInjectList, b.DefaultInjectList) &&
+		sameStringSlice(a.DefaultPacks, b.DefaultPacks) &&
+		sameStringSlice(a.DefaultEnabledRoots, b.DefaultEnabledRoots) &&
+		sameStringSlice(a.DefaultInjectDisabled, b.DefaultInjectDisabled)
 }
 
 // catDetailResponse 是 GET /api/v1/cat-detail 的响应体。

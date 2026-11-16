@@ -25,6 +25,10 @@ type CatCfg struct {
 	Persona string `json:"persona"`
 	// ToolNames 工具名单（逗号清单；空 = 全量保底）
 	ToolNames string `json:"toolNames"`
+	// ToolsEmpty 显式零工具标记——用户在配置面主动取消全部工具时置 true（true 时 ToolNames 为空串且
+	// **不回落全量保底**：授权面 / 声明面 / LLM 请求 tools 数组全为空，注入报告不出现工具段）。
+	// 用途：把「历史文件缺名单（= 全量保底）」与「显式取消全部（= 一件都不要）」区分开。
+	ToolsEmpty bool `json:"toolsEmpty,omitempty"`
 	// InjectList 前文注入清单（id:相对路径）
 	InjectList []string `json:"injectList"`
 	// ProjectMount 当前挂载项目名（空 = 未挂载）

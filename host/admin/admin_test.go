@@ -450,6 +450,112 @@ func TestCatConfigFollowDefaultsSync(t *testing.T) {
 	}
 }
 
+// TestCatConfigAutoUnfollow 自动独立——显式改写清单（且值真变）自动关闭对应跟随位；值未变不动开关。
+func TestCatConfigAutoUnfollow(t *testing.T) {
+	deps, root := newTestDeps(t)
+	tpl := &config.CatDefault{
+		BaseRole:            "基础",
+		DefaultToolNames:    "text-read,file-tree",
+		DefaultInjectList:   []string{"ccbp:A.md"},
+		DefaultEnabledRoots: []string{"ccbp"},
+	}
+	if err := config.SaveCatDefault(filepath.Join(root, "config", "cat-default.cfg"), tpl); err != nil {
+		t.Fatalf("写模板失败: %v", err)
+	}
+	// 先全跟随（同步模板现值）
+	on := do(t, deps, http.MethodPost, "/api/v1/cat-config",
+		`{"cat":"majordomo","followDefaultTools":true,"followDefaultInject":true,"followDefaultRoots":true}`)
+	if !strings.Contains(on.Body.String(), `"ok":true`) {
+		t.Fatalf("全跟随写入失败: %s", on.Body.String())
+	}
+	// 值未变（提交与现值相同）——不应关掉 follow
+	same := do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"majordomo","toolNames":"text-read,file-tree"}`)
+	if !strings.Contains(same.Body.String(), `"ok":true`) {
+		t.Fatalf("同值写入失败: %s", same.Body.String())
+	}
+	cfgSame, _ := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if !cfgSame.FollowDefaultTools {
+		t.Fatalf("清单未变不应关闭跟随: %+v", cfgSame)
+	}
+	// 值真变——自动切独立并出声
+	changed := do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"majordomo","toolNames":"text-read"}`)
+	if !strings.Contains(changed.Body.String(), `"ok":true`) {
+		t.Fatalf("清单改写失败: %s", changed.Body.String())
+	}
+	if !strings.Contains(changed.Body.String(), `"autoUnfollowed":["tools"]`) {
+		t.Fatalf("回执未标自动独立: %s", changed.Body.String())
+	}
+	cfgChanged, _ := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if cfgChanged.FollowDefaultTools || cfgChanged.ToolNames != "text-read" {
+		t.Fatalf("改写后应自动独立且保持新清单: %+v", cfgChanged)
+	}
+	if !cfgChanged.FollowDefaultInject || !cfgChanged.FollowDefaultRoots {
+		t.Fatalf("其它两维跟随不应被连带关闭: %+v", cfgChanged)
+	}
+	// 显式 follow=true 同请求优先——不触发自动独立，并按跟随同步模板清单
+	explicit := do(t, deps, http.MethodPost, "/api/v1/cat-config",
+		`{"cat":"majordomo","followDefaultTools":true,"toolNames":"text-read"}`)
+	if !strings.Contains(explicit.Body.String(), `"autoUnfollowed":[]`) {
+		t.Fatalf("显式 follow 不应记自动独立: %s", explicit.Body.String())
+	}
+	cfgExplicit, _ := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if !cfgExplicit.FollowDefaultTools || cfgExplicit.ToolNames != "text-read,file-tree" {
+		t.Fatalf("显式全跟随应按模板同步清单: %+v", cfgExplicit)
+	}
+}
+
+// TestCatConfigEmptyTools 显式零工具——空清单落盘 toolsEmpty=true（不回落全量），回执空清单；再加回即清标记。
+func TestCatConfigEmptyTools(t *testing.T) {
+	deps, root := newTestDeps(t)
+	rec := do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"majordomo","toolNames":""}`)
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("零工具写入失败: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"toolNames":""`) {
+		t.Fatalf("回执应回空清单: %s", rec.Body.String())
+	}
+	cfg, _ := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if cfg.ToolNames != "" || !cfg.ToolsEmpty {
+		t.Fatalf("零工具应落盘 toolsEmpty=true: %+v", cfg)
+	}
+	// 再加回一件——标记清除（回到普通名单语义）
+	back := do(t, deps, http.MethodPost, "/api/v1/cat-config", `{"cat":"majordomo","toolNames":"text-read"}`)
+	if !strings.Contains(back.Body.String(), `"ok":true`) {
+		t.Fatalf("恢复写入失败: %s", back.Body.String())
+	}
+	cfgBack, _ := config.LoadCatCfg(filepath.Join(root, "sessions", "majordomo", "cat.cfg"))
+	if cfgBack.ToolNames != "text-read" || cfgBack.ToolsEmpty {
+		t.Fatalf("恢复后应清空 toolsEmpty: %+v", cfgBack)
+	}
+}
+
+// TestCatDefaultUnchangedSkipsBroadcast 模板内容未变（自动保存重复回传全量）不触发跟随广播。
+func TestCatDefaultUnchangedSkipsBroadcast(t *testing.T) {
+	deps, _ := newTestDeps(t)
+	count := 0
+	deps.Dispatch = func(command string) bool {
+		if command == "catcfg.tplbroadcast" {
+			count++
+		}
+		return true
+	}
+	body := `{"baseRole":"基础","defaultToolNames":"text-read","defaultInjectList":["ccbp:A.md"],"defaultEnabledRoots":["ccbp"],"defaultPacks":[]}`
+	first := do(t, deps, http.MethodPost, "/api/v1/cat-default", body)
+	if !strings.Contains(first.Body.String(), `"templateUnchanged":false`) {
+		t.Fatalf("首次保存应触发广播标记: %s", first.Body.String())
+	}
+	if count != 1 {
+		t.Fatalf("首次保存应广播一次，实得 %d", count)
+	}
+	second := do(t, deps, http.MethodPost, "/api/v1/cat-default", body)
+	if !strings.Contains(second.Body.String(), `"templateUnchanged":true`) {
+		t.Fatalf("重复保存应标未变: %s", second.Body.String())
+	}
+	if count != 1 {
+		t.Fatalf("内容未变不应再广播，实得 %d 次", count)
+	}
+}
+
 // TestCatDefaultPostTemplateFields 模板写面——defaultInjectDisabled / defaultEnabledRoots / allRoots + 广播入队。
 func TestCatDefaultPostTemplateFields(t *testing.T) {
 	deps, root := newTestDeps(t)

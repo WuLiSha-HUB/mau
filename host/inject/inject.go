@@ -291,26 +291,30 @@ func BuildReportJSON(files []FileResult, injectList []string, specs []session.To
 	b.WriteString(strconv.FormatBool(mountAuto))
 	b.WriteString(`,"mountDesc":`)
 	b.WriteString(session.JSONString(mountDesc))
-	b.WriteString(`,"toolGroups":[`)
-	for i, group := range BuildToolGroups(specs, ownerFlow) {
-		if i > 0 {
-			b.WriteString(",")
-		}
-		b.WriteString(`{"group":`)
-		b.WriteString(session.JSONString(group.Group))
-		b.WriteString(`,"tools":[`)
-		for k, tool := range group.Tools {
-			if k > 0 {
+	// 工具段——零工具（显式取消全部）时整段不出现（用户指定：不要出现空工具注入段）
+	if len(specs) > 0 {
+		b.WriteString(`,"toolGroups":[`)
+		for i, group := range BuildToolGroups(specs, ownerFlow) {
+			if i > 0 {
 				b.WriteString(",")
 			}
-			b.WriteString(`{"name":`)
-			b.WriteString(session.JSONString(tool.Name))
-			b.WriteString(`,"desc":`)
-			b.WriteString(session.JSONString(tool.Desc))
-			b.WriteString("}")
+			b.WriteString(`{"group":`)
+			b.WriteString(session.JSONString(group.Group))
+			b.WriteString(`,"tools":[`)
+			for k, tool := range group.Tools {
+				if k > 0 {
+					b.WriteString(",")
+				}
+				b.WriteString(`{"name":`)
+				b.WriteString(session.JSONString(tool.Name))
+				b.WriteString(`,"desc":`)
+				b.WriteString(session.JSONString(tool.Desc))
+				b.WriteString("}")
+			}
+			b.WriteString("]}")
 		}
-		b.WriteString("]}")
+		b.WriteString("]")
 	}
-	b.WriteString("]}")
+	b.WriteString("}")
 	return b.String()
 }

@@ -142,11 +142,12 @@ func TestBuildReportJSON(t *testing.T) {
 	}
 }
 
-// TestBuildReportJSONEmpty 零文件 / 零工具——空数组而非 null（对齐 C# RawArray 空形态）。
+// TestBuildReportJSONEmpty 零文件 / 零工具——files 空数组而非 null；零工具时 toolGroups 整段不出现
+// （显式取消全部工具 = 不要出现空工具注入段）。
 func TestBuildReportJSONEmpty(t *testing.T) {
 	got := BuildReportJSON(nil, nil, nil, nil, "", true, true, "")
 	want := `{"files":[],"total":0,"ok":0,"missing":0,"failed":0,"injectCount":0,` +
-		`"mount":"","mountExpert":true,"mountAuto":true,"mountDesc":"","toolGroups":[]}`
+		`"mount":"","mountExpert":true,"mountAuto":true,"mountDesc":""}`
 	if got != want {
 		t.Fatalf("空报告不符\n got=%s\nwant=%s", got, want)
 	}

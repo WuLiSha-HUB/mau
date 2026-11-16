@@ -339,6 +339,68 @@ func TestCatCfgSetFollowAndBroadcast(t *testing.T) {
 	}
 }
 
+// TestCatCfgSetAutoUnfollow 自动独立（指令面）——cat.cfg.set 改清单自动关跟随位；值未变不动。
+func TestCatCfgSetAutoUnfollow(t *testing.T) {
+	router, _, _ := newCommandRouter(t)
+	cfgPath := filepath.Join(router.DataRoot, "sessions", "majordomo", "cat.cfg")
+	if err := config.SaveCatCfg(cfgPath, &config.CatCfg{
+		ID:                  "majordomo",
+		DisplayName:         "majordomo",
+		ToolNames:           "text-read,text-write",
+		FollowDefaultTools:  true,
+		FollowDefaultInject: true,
+		FollowDefaultRoots:  true,
+		EnabledRoots:        []string{"workspace"},
+	}); err != nil {
+		t.Fatalf("写 cat.cfg 失败: %v", err)
+	}
+	// 值未变——不动开关
+	if got := router.catCfgSet("majordomo toolNames text-read,text-write"); strings.Contains(got, "已自动切独立") {
+		t.Fatalf("清单未变不应自动独立: %s", got)
+	}
+	cfg, _ := config.LoadCatCfg(cfgPath)
+	if !cfg.FollowDefaultTools {
+		t.Fatalf("清单未变不应关闭跟随: %+v", cfg)
+	}
+	// 值真变——自动切独立并出声
+	got := router.catCfgSet("majordomo toolNames text-read")
+	if !strings.Contains(got, "已自动切独立") {
+		t.Fatalf("清单改写未自动独立: %s", got)
+	}
+	cfg, _ = config.LoadCatCfg(cfgPath)
+	if cfg.FollowDefaultTools || cfg.ToolNames != "text-read" {
+		t.Fatalf("改写后应自动独立且保持新清单: %+v", cfg)
+	}
+	if !cfg.FollowDefaultInject || !cfg.FollowDefaultRoots {
+		t.Fatalf("其它两维不应连带关闭: %+v", cfg)
+	}
+	// 读面含 follow 三项（排障可见性）
+	if read := router.catCfgGet("majordomo"); !strings.Contains(read, "followDefaultTools=false") {
+		t.Fatalf("读面缺 follow 字段: %s", read)
+	}
+}
+
+// TestCatCfgSetClearsEmptyMarker 指令面加回工具——toolsEmpty 标记清除（回到普通名单语义）。
+func TestCatCfgSetClearsEmptyMarker(t *testing.T) {
+	router, _, _ := newCommandRouter(t)
+	cfgPath := filepath.Join(router.DataRoot, "sessions", "majordomo", "cat.cfg")
+	if err := config.SaveCatCfg(cfgPath, &config.CatCfg{
+		ID:          "majordomo",
+		DisplayName: "majordomo",
+		ToolNames:   "",
+		ToolsEmpty:  true,
+	}); err != nil {
+		t.Fatalf("写 cat.cfg 失败: %v", err)
+	}
+	if got := router.catCfgSet("majordomo toolNames text-read"); !strings.Contains(got, "已更新") {
+		t.Fatalf("写入失败: %s", got)
+	}
+	cfg, _ := config.LoadCatCfg(cfgPath)
+	if cfg.ToolNames != "text-read" || cfg.ToolsEmpty {
+		t.Fatalf("加回工具后应清 toolsEmpty: %+v", cfg)
+	}
+}
+
 // TestHandleForLocalCatControl 本地猫控——每猫端口无参 cat.pause / cat.continue 作用于本端口会话
 // （对齐 C# InputRoutes RoutePause / RouteContinue + LocalCatControlOnly）；主入口裸 cat.pause 仍归管理族报用法。
 func TestHandleForLocalCatControl(t *testing.T) {
