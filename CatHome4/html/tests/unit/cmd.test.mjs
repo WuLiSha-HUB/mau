@@ -214,3 +214,56 @@ test('DOS find 与 Resolve-Path', () => {
     .toBe('find · 统计文件行数 「C:\\Work\\Gitee\\mau\\public\\src\\BrowserCat\\FL_BrowserCat.cs」');
   expect(cmdDecodeTool(args('Resolve-Path C:\\Work\\Gitee\\mau')).brief).toBe('Resolve-Path · 解析路径 「C:\\Work\\Gitee\\mau」');
 });
+
+// ── A378：命令面归属（本机 / 远程）+ ssh 单独成类 ──
+test('ssh——远程执行面：本机连接命令与远端动作分开标注', () => {
+  const r = cmdDecodeTool(args('ssh -o BatchMode=yes cathome "cat /cathome4/mauout/version.txt"'));
+  expect(r.surface).toBe('ps');
+  expect(r.brief).toBe('ssh cathome · 远程执行 读取文件内容 「/cathome4/mauout/version.txt」');
+  expect(r.detail).toContain(' 1. 🌐 ssh cathome · 远程执行');
+  const seg = r.lines.filter(function (x) { return x.kind === 'seg'; })[0];
+  expect(seg.scope).toBe('remote');
+  expect(seg.known).toBe(true);
+});
+
+test('ssh 版本查询与交互连接——无远端命令形态', () => {
+  expect(cmdDecodeTool(args('ssh -V')).brief).toBe('ssh · SSH 版本 / 帮助查询');
+  expect(cmdDecodeTool(args('ssh -T git@gitee.com')).brief).toBe('ssh git@gitee.com · 连接主机 「git@gitee.com」（交互式）');
+});
+
+test('ssh 内嵌 sudo journalctl——两层拆解不套娃', () => {
+  const r = cmdDecodeTool(args('ssh -o BatchMode=yes cathome "sudo journalctl -u cathome4 -n 80 --no-pager"'));
+  expect(r.brief).toBe('ssh cathome · 远程执行 以 root 提权执行：查看服务日志 「cathome4」');
+});
+
+test('scp——本地与远程互传文件（scope=remote）', () => {
+  const r = cmdDecodeTool(args('scp C:\\Work\\x.txt cathome:/cathome4/x.txt'));
+  expect(r.brief).toBe('scp · 远程拷贝 「C:\\Work\\x.txt」 → 「cathome:/cathome4/x.txt」');
+  expect(r.lines[1].scope).toBe('remote');
+});
+
+test('sh-exec 面——整条命令走远程规则表', () => {
+  const r = cmdDecodeTool(args('ls -la /cathome4'), 'sh-exec');
+  expect(r.surface).toBe('sh');
+  expect(r.brief).toBe('ls · 列出目录 「/cathome4」');
+  expect(r.detail).toContain(' 1. 🌐 ls · 列出目录');
+});
+
+test('sh-exec 面——systemctl 子命令解读', () => {
+  expect(cmdDecodeTool(args('systemctl is-active cathome4'), 'sh-exec').brief)
+    .toBe('systemctl · 探测服务是否在跑 「cathome4」');
+});
+
+test('远程未识别——与本地未识别分开标注', () => {
+  const r = cmdDecodeTool(args('fakecmd --x'), 'sh-exec');
+  expect(r.brief).toBe('未识别命令');
+  expect(r.detail).toContain('❓ 远程未识别：fakecmd --x');
+  expect(cmdDecodeTool(args('Whatever-Func -Foo bar')).detail).toContain('❓ 未识别：Whatever-Func -Foo bar');
+});
+
+test('本机规则补齐——python / nvidia-smi / tree / wmic', () => {
+  expect(cmdDecodeTool(args('python -m http.server 8000')).brief).toBe('python · 运行 Python 「http.server」');
+  expect(cmdDecodeTool(args('nvidia-smi -L')).brief).toBe('nvidia-smi · 查看 GPU 状态');
+  expect(cmdDecodeTool(args('tree /F')).brief).toContain('tree · 列出目录树');
+  expect(cmdDecodeTool(args('wmic process list')).brief).toContain('wmic · 查询系统信息');
+});

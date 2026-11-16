@@ -31,13 +31,31 @@ function fxCmdIntentDecode(name, argsText) {
     if (typeof cmdDecodeTool !== 'function') {
         return null;
     }
-    return cmdDecodeTool(argsText);
+    return cmdDecodeTool(argsText, name);
 }
 
 /// 展开块挂载——解码结果非空时追加 `.cmd-intent` 首块（逐段意图对照；命令原文仍在输入段）
+/// 行级三类：`.cmd-local` 本机 / `.cmd-remote` 远程（ssh 内嵌命令与 sh-exec 面）/ `.cmd-unknown` 未识别
 function fxCmdIntentAttach(det, decoded) {
     if (!det || !decoded) {
         return;
     }
-    det.appendChild(elText('div', 'cmd-intent', decoded.detail));
+    var rows = decoded.lines || null;
+    if (!rows || rows.length === 0) {
+        det.appendChild(elText('div', 'cmd-intent', decoded.detail || ''));
+        return;
+    }
+    var box = elText('div', 'cmd-intent', '');
+    for (var i = 0; i < rows.length; i = i + 1) {
+        var row = rows[i];
+        var cls = 'cmd-line';
+        if (row.kind === 'seg') {
+            cls = cls + ((row.scope === 'remote') ? ' cmd-remote' : ' cmd-local');
+            if (row.known !== true) {
+                cls = cls + ' cmd-unknown';
+            }
+        }
+        box.appendChild(elText('div', cls, row.text));
+    }
+    det.appendChild(box);
 }

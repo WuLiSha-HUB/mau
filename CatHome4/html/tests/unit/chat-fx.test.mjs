@@ -172,6 +172,24 @@ describe('命令解码显示（fx/cmd-intent）', () => {
         window.fxCmdIntentAttach(host, null);
         expect(host.childNodes.length).toBe(0);
     });
+
+    it('行级分类——本机 / 远程 / 未识别三类各自成类（A378）', () => {
+        const host = window.el('div', 'detail');
+        const decoded = window.fxCmdIntentDecode('powershell', JSON.stringify({ command: 'git status; ssh cathome "systemctl is-active cathome4"' }));
+        window.fxCmdIntentAttach(host, decoded);
+        expect(host.querySelectorAll('.cmd-intent .cmd-line').length).toBe(3);
+        expect(host.querySelectorAll('.cmd-intent .cmd-local').length).toBe(1);
+        expect(host.querySelectorAll('.cmd-intent .cmd-remote').length).toBe(1);
+        expect(host.textContent).toContain('远程执行');
+    });
+
+    it('行级分类——未识别行走 .cmd-unknown', () => {
+        const host = window.el('div', 'detail');
+        const decoded = window.fxCmdIntentDecode('sh-exec', JSON.stringify({ command: 'fakecmd --x' }));
+        window.fxCmdIntentAttach(host, decoded);
+        expect(host.querySelectorAll('.cmd-intent .cmd-unknown').length).toBe(1);
+        expect(host.textContent).toContain('远程未识别');
+    });
 });
 
 // ── ⑥ scroll / pet ───────────────────────────

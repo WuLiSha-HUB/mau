@@ -97,6 +97,10 @@
     --ch-cmd-intent-bg: #0c1218;
     --ch-cmd-intent-fg: #9cdcfe;
     --ch-cmd-intent-line: #26404f;
+    /* 命令意图行分类（A378）——本机 / 远程两色：远程段（ssh 内嵌命令 · sh-exec 面）与本地段一眼可辨 */
+    --ch-cmd-local-fg: #9cdcfe;
+    --ch-cmd-remote-fg: #dcdcaa;
+    --ch-cmd-unknown-fg: #f48771;
     /* Token 统计段——状态条 Token 段已去（2026-09-22），仅 roundsum 轮末块消费 completion */
     --ch-tok-completion: var(--ch-ok);
 }
@@ -310,6 +314,11 @@ body { font-family: var(--ch-font-ui); background: var(--ch-bg-page); color: var
 .chat-tool.err summary { color: var(--ch-chat-error-fg); }
 /* 命令意图解读——powershell 工具卡展开区首块（chat-cmd.js；逐段自然语言 + 未识别 ❓ 标注） */
 .chat-tool .cmd-intent { color: var(--ch-cmd-intent-fg); word-break: break-all; white-space: pre-wrap; margin-top: 3px; padding: 3px 6px; background: var(--ch-cmd-intent-bg); border-left: 2px solid var(--ch-cmd-intent-line); border-radius: 2px; }
+/* 命令意图行——本机 / 远程 / 未识别三类分开着色（A378：ssh 通道命令单独成类，一眼区分本机与远端执行面） */
+.chat-tool .cmd-intent .cmd-line { display: block; }
+.chat-tool .cmd-intent .cmd-local { color: var(--ch-cmd-local-fg); }
+.chat-tool .cmd-intent .cmd-remote { color: var(--ch-cmd-remote-fg); }
+.chat-tool .cmd-intent .cmd-unknown { color: var(--ch-cmd-unknown-fg); }
 /* 工具段（2026-09-18 骨架层——输入 / 输出二级折叠；规格 design-ch4-frontend-tools §五）
    段 = details.seg：折叠头一行（可点，hover 轻反馈），展开内容限高滚动 */
 .chat-tool .seg { margin-top: 4px; }

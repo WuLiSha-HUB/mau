@@ -1,7 +1,9 @@
-// CH4 外观层——chat/lib/cmd.js：PowerShell 命令解读器（纯函数，无依赖 · A174 恢复）
-// 定位：powershell / powershell7 工具 command 原文硬解码为自然语言意图——工具卡折叠行 + 展开区首块
+// CH4 外观层——chat/lib/cmd.js：命令解读器（纯函数，无依赖 · A174 恢复）
+// 定位：命令类工具 command 原文硬解码为自然语言意图——工具卡折叠行 + 展开区首块
 // 消费：fx/cmd-intent.js（独立功能件 · A176 归位）——工具卡经该件取折叠行简报与展开区 `.cmd-intent`
 // 原则：表驱动确定性解析——零 LLM / 零网络 / 零状态；未识别段原样标注（不编造、不静默）
+// 命令面（A378）：两张规则表按工具归属分派——`CMD_RULES` 本机（powershell / powershell7）·
+//   `CMD_RULES_SH` 远程（sh-exec 与 ssh 内嵌命令）；段带 scope（local / remote），显示件据此分色
 // 加载顺序：lib 段（chat.html 脚本清单）→ fx/cmd-intent.js 运行期调用
 // 🔴 cmdUnescapeJson 为 C# TextUtil.JsonUnescape 的前端镜像（同规则，双实现须同步——L1/TOOL-REF §三-B）
 
@@ -14,7 +16,7 @@
  * @param {string} argsText 工具 arguments（JSON 字符串；实时 payload 可能被宿主截断）
  * @returns {object|null} {brief, detail, truncated}；无法解析返回 null（调用方回退覆盖表 headline / 骨架兜底）
  */
-function cmdDecodeTool(argsText) {
+function cmdDecodeTool(argsText, toolName) {
     var got = cmdExtractCommand(argsText);
     if (got === null) {
         return null;
@@ -26,15 +28,32 @@ function cmdDecodeTool(argsText) {
     if (segs.length === 0) {
         return null;
     }
+    var surface = cmdSurfaceOf(toolName);
     var intents = [];
     for (var i = 0; i < segs.length; i = i + 1) {
-        intents.push(cmdSegmentIntent(segs[i].text, segs[i].pipe));
+        intents.push(cmdSegmentIntent(segs[i].text, segs[i].pipe, surface, 0));
     }
     return {
         brief: cmdBrief(intents, got.truncated),
         detail: cmdDetail(intents, got.truncated),
+        lines: cmdLines(intents, got.truncated),
+        surface: surface,
         truncated: got.truncated
     };
+}
+
+/**
+ * 命令面归属——工具名 → 规则表（本机 / 远程）。
+ *
+ * 判据（A378）：`sh-exec` 是 Linux 侧单行执行面，命令实际跑在远端主机（design-ch4-platform §五）；
+ * 其余命令类工具（`powershell` / `powershell7`）跑在本机。两张表分开维护——
+ * 同一段文本在两台机器上是两种语言，混在一张表里必然互相误伤。
+ *
+ * @param {string} toolName 工具名（可空——未传时按本机面，兼容既有调用方）
+ * @returns {string} 'ps' 本机 / 'sh' 远程
+ */
+function cmdSurfaceOf(toolName) {
+    return (toolName === 'sh-exec') ? 'sh' : 'ps';
 }
 
 // ═══════════════════════════════════════════
@@ -190,7 +209,7 @@ function cmdSplitSegments(cmd) {
  * @param {boolean} piped 是否由管道接续
  * @returns {object} {known, text, piped}
  */
-function cmdSegmentIntent(segText, piped) {
+function cmdSegmentIntent(segText, piped, surface, depth) {
     var suffix = '';
     var body = segText;
     var redir = /\s(>>?)\s*([^>|]*)$/.exec(body);
@@ -199,18 +218,22 @@ function cmdSegmentIntent(segText, piped) {
         suffix = '（结果写入文件 ' + cmdQuote(cmdTrim(redir[2])) + '）';
     }
     var clean = cmdStripCall(body);
-    for (var i = 0; i < CMD_RULES.length; i = i + 1) {
-        var m = CMD_RULES[i].re.exec(clean);
+    var isRemote = (surface === 'sh');
+    var rules = isRemote ? CMD_RULES_SH : CMD_RULES;
+    var d = (depth || 0);
+    for (var i = 0; i < rules.length; i = i + 1) {
+        var m = rules[i].re.exec(clean);
         if (m) {
             return {
                 known: true,
-                tag: cmdRuleTag(CMD_RULES[i], clean, m),
-                text: CMD_RULES[i].fmt(clean, m) + suffix,
-                piped: piped === true
+                tag: cmdRuleTag(rules[i], clean, m),
+                text: rules[i].fmt(clean, m, d) + suffix,
+                piped: piped === true,
+                scope: isRemote ? 'remote' : (rules[i].scope || 'local')
             };
         }
     }
-    return { known: false, tag: cmdTagWord(clean), text: clean + suffix, piped: piped === true };
+    return { known: false, tag: cmdTagWord(clean), text: clean + suffix, piped: piped === true, scope: isRemote ? 'remote' : 'local' };
 }
 
 /** 去前导调用运算符 & / 表达式括号 ( 与空白（`(Get-Item x).VersionInfo…` 形态） */
@@ -251,27 +274,46 @@ function cmdBrief(intents, truncated) {
 }
 
 /**
- * 展开区逐段对照文本（纯文本——调用方 textContent 落 DOM）。
+ * 展开区逐段结构化行——显示件按行落 DOM（本地 / 远程 / 未识别三类可分别着色）。
+ * 单一真相源：`cmdDetail` 由本函数拼出，两边不各写一套文案。
+ * @param {array} intents 段意图数组
+ * @param {boolean} truncated 参数是否被截断
+ * @returns {array} [{kind:'cap'|'seg'|'note', text, scope, known}]
+ */
+function cmdLines(intents, truncated) {
+    var lines = [];
+    lines.push({ kind: 'cap', text: '🔎 命令意图（' + intents.length + ' 段）', scope: 'local', known: true });
+    for (var i = 0; i < intents.length; i = i + 1) {
+        var it = intents[i];
+        var mark = it.piped ? ' ⤷' : '';
+        var scopeMark = (it.scope === 'remote') ? '🌐 ' : '';
+        var body = '';
+        if (it.known) {
+            body = scopeMark + it.tag + ' · ' + it.text;
+        } else {
+            body = (it.scope === 'remote') ? ('❓ 远程未识别：' + it.text) : ('❓ 未识别：' + it.text);
+        }
+        lines.push({ kind: 'seg', scope: it.scope, known: it.known, text: ' ' + (i + 1) + '.' + mark + ' ' + body });
+    }
+    if (truncated) {
+        lines.push({ kind: 'note', scope: 'local', known: true, text: '（参数被宿主截断，仅前 200 字可见；完整命令见落盘历史）' });
+    }
+    return lines;
+}
+
+/**
+ * 展开区逐段对照文本（纯文本——兼容面：无结构行时的回落与既有断言）。
  * @param {array} intents 段意图数组
  * @param {boolean} truncated 参数是否被截断
  * @returns {string} 多行文本
  */
 function cmdDetail(intents, truncated) {
-    var lines = [];
-    lines.push('🔎 命令意图（' + intents.length + ' 段）');
-    for (var i = 0; i < intents.length; i = i + 1) {
-        var it = intents[i];
-        var mark = it.piped ? ' ⤷' : '';
-        if (it.known) {
-            lines.push(' ' + (i + 1) + '.' + mark + ' ' + it.tag + ' · ' + it.text);
-        } else {
-            lines.push(' ' + (i + 1) + '.' + mark + ' ❓ 未识别：' + it.text);
-        }
+    var rows = cmdLines(intents, truncated);
+    var out = [];
+    for (var i = 0; i < rows.length; i = i + 1) {
+        out.push(rows[i].text);
     }
-    if (truncated) {
-        lines.push('（参数被宿主截断，仅前 200 字可见；完整命令见落盘历史）');
-    }
-    return lines.join('\n');
+    return out.join('\n');
 }
 
 
@@ -386,10 +428,81 @@ var CMD_RULES = [
     { re: /^(Start-Sleep|sleep)\b\s*(.*)$/i, fmt: cmdVerb('等待') },
     { re: /^Get-Date\b\s*(.*)$/i, fmt: cmdVerb('获取当前时间') },
     { re: /^(Set-Location|cd|chdir)\b\s*(.*)$/i, fmt: cmdVerb('切换目录') },
+    // ── 远程通道（A378）——ssh / scp 段本身跑在本机，但它启动的是远端执行面：
+    //    scope=remote 让显示件把「本机发的连接命令」与「远端真正干的活」分开着色，
+    //    远端命令原文再交远程规则表 CMD_RULES_SH 解读（depth 限一层，防套娃）
+    { re: /^ssh-keygen\b\s*(.*)$/i, fmt: cmdFmtSshKeygen, tag: 'ssh-keygen' },
+    { re: /^ssh(?:\.exe)?\s+(.*)$/i, fmt: cmdFmtSsh, tag: cmdTagSsh, scope: 'remote' },
+    { re: /^scp(?:\.exe)?\s+(.*)$/i, fmt: cmdFmtScp, tag: 'scp', scope: 'remote' },
+    // ── 语言运行时（真实命令面高频：python / pip / go）──
+    { re: /^(python3?|py)(?:\.exe)?\b\s*(.*)$/i, fmt: cmdVerb('运行 Python'), tag: 'python' },
+    { re: /^(pip3?)(?:\.exe)?\b\s*(.*)$/i, fmt: cmdVerb('安装 Python 包'), tag: 'pip' },
+    { re: /^(go|gofmt)(?:\.exe)?\b\s*(.*)$/i, fmt: cmdVerb('Go 工具链'), tag: 'go' },
+    // ── 系统查询 / 治理（A378 真实命令面：GPU / 注册表 / 进程 / 事件日志 / 网络）──
+    { re: /^nvidia-smi\b\s*(.*)$/i, fmt: cmdVerbOnly('查看 GPU 状态'), tag: 'nvidia-smi' },
+    { re: /^(reg|reg\.exe)\s+(.*)$/i, fmt: cmdVerb('操作注册表'), tag: 'reg' },
+    { re: /^(wmic|Get-WmiObject)\b\s*(.*)$/i, fmt: cmdVerb('查询系统信息'), tag: cmdTagLower },
+    { re: /^tasklist\b\s*(.*)$/i, fmt: cmdVerbOnly('查看进程列表'), tag: 'tasklist' },
+    { re: /^tailscale\b\s*(.*)$/i, fmt: cmdVerb('Tailscale 网络'), tag: 'tailscale' },
+    { re: /^Format-Hex\b\s*(.*)$/i, fmt: cmdVerb('十六进制查看'), tag: 'Format-Hex' },
+    { re: /^Test-Json\b\s*(.*)$/i, fmt: cmdVerbOnly('校验 JSON'), tag: 'Test-Json' },
+    { re: /^Wait-Process\b\s*(.*)$/i, fmt: cmdVerbOnly('等待进程结束'), tag: 'Wait-Process' },
+    { re: /^Get-EventLog\b\s*(.*)$/i, fmt: cmdVerb('查看事件日志'), tag: 'Get-EventLog' },
+    { re: /^Get-ItemPropertyValue\b\s*(.*)$/i, fmt: cmdVerb('读取项属性值'), tag: 'Get-ItemPropertyValue' },
+    { re: /^Resolve-DnsName\b\s*(.*)$/i, fmt: cmdVerb('解析 DNS'), tag: 'Resolve-DnsName' },
+    { re: /^fsutil\b\s*(.*)$/i, fmt: cmdVerb('文件系统工具'), tag: 'fsutil' },
+    { re: /^setx\b\s*(.*)$/i, fmt: cmdVerb('设置环境变量'), tag: 'setx' },
+    { re: /^tree(?:\.exe)?\b\s*(.*)$/i, fmt: cmdVerb('列出目录树'), tag: 'tree' },
+    { re: /^(Start-Process|Start-Job)\b\s*(.*)$/i, fmt: cmdVerb('启动新进程（会被拦截）'), tag: cmdTagLower },
     // ── 通用兜底（收集表核销——专用规则在前，此处只保「不静默未识别」）──
     { re: /^["']?(?:[^"'\s]*[\/\\])?([^"'\s\/\\]+\.(?:cmd|bat|ps1))["']?\s*(.*)$/i, fmt: cmdFmtScript, tag: cmdTagLower },
     { re: /^["']?(?:[^"'\s]*[\/\\])?([^"'\s\/\\]+\.dll)["']?\s*(.*)$/i, fmt: cmdFmtDll, tag: cmdTagLower },
     { re: /^["']?(?:[^"'\s]*[\/\\])?([^"'\s\/\\]+\.exe)["']?\s*(.*)$/i, fmt: cmdFmtExeGeneric, tag: cmdTagLower }
+];
+
+// ═══════════════════════════════════════════
+// 远程规则表——Linux / bash（A378）
+// 消费面：① sh-exec 工具（命令整条跑在远端）② 本机表里 ssh 段的内嵌远端命令
+// 与 CMD_RULES 同格式（re / fmt / tag / scope 可省）；两条表不共享条目——
+// 「同一段文本在两台机器上是两种语言」，共享只会互相误伤（例：`ls` 两边都存在但语义面不同）
+// ═══════════════════════════════════════════
+
+var CMD_RULES_SH = [
+    // ── 提权前导——sudo 后接命令递归解读（部署链主形态）──
+    { re: /^sudo\s+(?:-\S+\s+)*(.*)$/i, fmt: cmdFmtSudo, tag: 'sudo' },
+    // ── 服务与日志（部署 / 重启 / 排障主战场）──
+    { re: /^systemctl\s+(\S+)\s*(.*)$/i, fmt: cmdFmtSystemctl, tag: 'systemctl' },
+    { re: /^journalctl\b\s*(.*)$/i, fmt: cmdFmtJournalctl, tag: 'journalctl' },
+    // ── 文件与文本 ──
+    { re: /^(cat|head|tail|less|more)\b\s*(.*)$/i, fmt: cmdVerb('读取文件内容'), tag: cmdTagLower },
+    { re: /^(ls|ll)\b\s*(.*)$/i, fmt: cmdVerb('列出目录'), tag: cmdTagLower },
+    { re: /^(grep|egrep|rg)\b\s*(.*)$/i, fmt: cmdVerb('搜索文本'), tag: cmdTagLower },
+    { re: /^find\b\s*(.*)$/i, fmt: cmdVerb('查找文件'), tag: 'find' },
+    { re: /^wc\b\s*(.*)$/i, fmt: cmdFmtWc, tag: 'wc' },
+    { re: /^(chmod|chown)\b\s*(.*)$/i, fmt: cmdVerb('修改权限/属主'), tag: cmdTagLower },
+    { re: /^(cp|mv|rm|mkdir|rmdir|touch|ln|install|stat)\b\s*(.*)$/i, fmt: cmdVerb('文件操作'), tag: cmdTagLower },
+    { re: /^(tar|gzip|gunzip|zip|unzip)\b\s*(.*)$/i, fmt: cmdVerb('归档/解包'), tag: cmdTagLower },
+    { re: /^(sed|awk|sort|uniq|cut|tr)\b\s*(.*)$/i, fmt: cmdVerb('文本处理'), tag: cmdTagLower },
+    { re: /^echo\b\s*(.*)$/i, fmt: cmdVerbOnly('输出文本'), tag: 'echo' },
+    { re: /^(bash|sh|source)\b\s*(.*)$/i, fmt: cmdVerb('执行 Shell 脚本'), tag: cmdTagLower },
+    // ── 系统信息 / 进程 / 网络 ──
+    { re: /^uname\b\s*(.*)$/i, fmt: cmdVerbOnly('查看系统信息'), tag: 'uname' },
+    { re: /^(df|du|free)\b\s*(.*)$/i, fmt: cmdVerb('查看磁盘/内存占用'), tag: cmdTagLower },
+    { re: /^(ps|top|htop)\b\s*(.*)$/i, fmt: cmdVerbOnly('查看进程'), tag: cmdTagLower },
+    { re: /^kill\b\s*(.*)$/i, fmt: cmdVerb('结束进程'), tag: 'kill' },
+    { re: /^(whoami|id)\b\s*(.*)$/i, fmt: cmdVerbOnly('查看当前用户'), tag: cmdTagLower },
+    { re: /^(ss|netstat)\b\s*(.*)$/i, fmt: cmdVerb('查看网络连接'), tag: cmdTagLower },
+    { re: /^(curl|wget)\b\s*(.*)$/i, fmt: cmdVerb('发起 HTTP 请求'), tag: cmdTagLower },
+    { re: /^(docker|docker-compose)\b\s*(.*)$/i, fmt: cmdVerb('容器操作'), tag: cmdTagLower },
+    { re: /^rsync\b\s*(.*)$/i, fmt: cmdVerb('同步文件'), tag: 'rsync' },
+    { re: /^(which|whereis)\b\s*(.*)$/i, fmt: cmdVerb('定位可执行文件'), tag: cmdTagLower },
+    { re: /^date\b\s*(.*)$/i, fmt: cmdVerbOnly('查看当前时间'), tag: 'date' },
+    { re: /^sleep\b\s*(.*)$/i, fmt: cmdVerbOnly('等待'), tag: 'sleep' },
+    { re: /^(env|export)\b\s*(.*)$/i, fmt: cmdVerbOnly('查看环境变量'), tag: cmdTagLower },
+    // ── 与 Windows 同名的工具（各自解读，不共享条目）──
+    { re: /^(python3?|pip3?)\b\s*(.*)$/i, fmt: cmdVerb('运行 Python'), tag: 'python' },
+    { re: /^dotnet\s+(build|test|publish|run|restore|clean|pack)\b\s*(.*)$/i, fmt: cmdFmtDotnet, tag: cmdTagDotnet },
+    { re: /^git(\.exe)?\s+(\S+)\s*(.*)$/i, fmt: cmdFmtGit, tag: cmdTagGit }
 ];
 
 // ═══════════════════════════════════════════
@@ -822,6 +935,201 @@ function cmdTagSetUp(seg) {
 function cmdTagHostExe(seg) {
     var m = /--(run|script|selfcheck|probe-llm|majordomopush)/i.exec(seg || '');
     return m ? ('CatHome4 --' + m[1].toLowerCase()) : 'CatHome4';
+}
+
+// ═══════════════════════════════════════════
+// 远程通道格式化器（A378：ssh / scp / sudo / systemctl / journalctl / wc）
+// ═══════════════════════════════════════════
+
+/** 取首个 token（引号感知）与其余文本——ssh 参数面逐 token 前进用 */
+function cmdFirstToken(text) {
+    var t = cmdTrim(text || '');
+    if (t.length === 0) {
+        return { tok: '', rest: '' };
+    }
+    var q = t.charAt(0);
+    if (q === '"' || q === '\'') {
+        var end = t.indexOf(q, 1);
+        if (end > 0) {
+            return { tok: t.substring(0, end + 1), rest: cmdTrim(t.substring(end + 1)) };
+        }
+    }
+    var m = /^\S+/.exec(t);
+    if (!m) {
+        return { tok: '', rest: '' };
+    }
+    return { tok: m[0], rest: cmdTrim(t.substring(m[0].length)) };
+}
+
+/**
+ * ssh 参数分解——跳过开关取目标主机，其余为远端命令原文。
+ * 带值开关（-o BatchMode=yes / -p 22 / -i key）整对跳过；无值开关（-T / -V / -4）只跳自身。
+ * @param {string} rest ssh 之后的参数文本
+ * @returns {object} {host, command}
+ */
+function cmdSshParts(rest) {
+    var s = cmdTrim(rest || '');
+    while (s.length > 0) {
+        var got = cmdFirstToken(s);
+        var tok = got.tok;
+        s = got.rest;
+        if (tok.length === 0) {
+            break;
+        }
+        if (tok.charAt(0) === '-') {
+            if (/^-(o|p|i|l|F|E|J|W|c|m|O|Q|R|S|L|D|b)$/.test(tok) && s.length > 0) {
+                s = cmdFirstToken(s).rest;
+            }
+            continue;
+        }
+        return { host: tok.replace(/^["']|["']$/g, ''), command: s };
+    }
+    return { host: '', command: '' };
+}
+
+/** ssh 指令类标识——「ssh <主机>」 */
+function cmdTagSsh(seg) {
+    var m = /^ssh(?:\.exe)?\s+(.*)$/i.exec(seg || '');
+    if (!m) {
+        return 'ssh';
+    }
+    var p = cmdSshParts(m[1]);
+    return (p.host.length > 0) ? ('ssh ' + p.host) : 'ssh';
+}
+
+/**
+ * ssh——本地连接命令 + 远端真正执行的动作。
+ * 远端命令走 CMD_RULES_SH 解读；depth 限一层（ssh 里再 ssh 不再展开）。
+ */
+function cmdFmtSsh(seg, m, depth) {
+    var p = cmdSshParts(m[1] || '');
+    if (p.host.length === 0) {
+        return 'SSH 版本 / 帮助查询';
+    }
+    var cmdText = cmdTrim(p.command);
+    if (cmdText.length === 0) {
+        return '连接主机 ' + cmdQuote(p.host) + '（交互式）';
+    }
+    var d = (depth || 0) + 1;
+    var raw = cmdStripPairQuote(cmdText);
+    if (d > 2) {
+        return '远程执行「' + cmdTrunc(raw, 60) + '」';
+    }
+    var segs = cmdSplitSegments(raw);
+    var parts = [];
+    for (var i = 0; i < segs.length; i = i + 1) {
+        parts.push(cmdSegmentIntent(segs[i].text, segs[i].pipe, 'sh', d).text);
+    }
+    return '远程执行 ' + cmdJoin(parts);
+}
+
+/** scp——本地 ↔ 远端传文件（取末两个非开关参数为源与目标） */
+function cmdFmtScp(seg, m) {
+    var toks = cmdTokens(m[1] || '');
+    var items = [];
+    for (var i = 0; i < toks.length; i = i + 1) {
+        var t = toks[i];
+        if (t.charAt(0) === '-' || t === '>' || t === '>>') {
+            continue;
+        }
+        items.push(t);
+    }
+    if (items.length < 2) {
+        return '远程拷贝文件';
+    }
+    return '远程拷贝 ' + cmdQuote(cmdTrunc(items[items.length - 2], 60)) + ' → ' + cmdQuote(cmdTrunc(items[items.length - 1], 60));
+}
+
+/** ssh-keygen——密钥生成 / 指纹查询 */
+function cmdFmtSshKeygen(seg, m) {
+    var rest = m[1] || '';
+    if (/(?:^|\s)-l\b/.test(rest)) {
+        return '查看密钥指纹';
+    }
+    if (/(?:^|\s)-t\s+(\S+)/.test(rest)) {
+        return '生成 SSH 密钥';
+    }
+    return 'SSH 密钥工具';
+}
+
+/** systemctl——子命令 → 中文动作 + 单元名 */
+function cmdFmtSystemctl(seg, m) {
+    var act = (m[1] || '').toLowerCase();
+    var map = {
+        start: '启动服务',
+        stop: '停止服务',
+        restart: '重启服务',
+        status: '查看服务状态',
+        'is-active': '探测服务是否在跑',
+        'is-enabled': '查询是否开机自启',
+        'is-failed': '查询服务是否失败',
+        enable: '启用开机自启',
+        disable: '关闭开机自启',
+        show: '查看服务属性',
+        reload: '重载服务配置',
+        'daemon-reload': '重载 systemd 单元配置'
+    };
+    var head = map[act] || ('systemctl ' + act);
+    var args = cmdArgs(m[2] || '');
+    return head + ((args.length > 0) ? (' ' + cmdQuote(cmdTrunc(args[0], 60))) : '');
+}
+
+/** journalctl——按单位 / 时间窗 / 关键字三要素描述（详情在原文块） */
+function cmdFmtJournalctl(seg, m) {
+    var rest = m[1] || '';
+    var head = '查看服务日志';
+    var unit = /(?:^|\s)-u\s+("[^"]*"|'[^']*'|[^\s]+)/i.exec(rest);
+    if (unit) {
+        head = head + ' ' + cmdQuote(unit[1]);
+    }
+    if (/--since/.test(rest)) {
+        head = head + '（按时间窗）';
+    }
+    if (/(?:^|\s)-g\s+\S+/.test(rest)) {
+        head = head + '（按关键字过滤）';
+    }
+    return head;
+}
+
+/** wc——统计口径（-l 行 / -c 字节 / -w 词） */
+function cmdFmtWc(seg, m) {
+    var rest = m[1] || '';
+    var what = '';
+    if (/(?:^|\s)-l\b/.test(rest)) {
+        what = '行数';
+    } else if (/(?:^|\s)-c\b/.test(rest)) {
+        what = '字节数';
+    } else if (/(?:^|\s)-w\b/.test(rest)) {
+        what = '词数';
+    }
+    var args = cmdArgs(rest);
+    var target = (args.length > 0) ? (' ' + cmdQuote(cmdTrunc(args[args.length - 1], 60))) : '';
+    return '统计' + (what.length > 0 ? what : '文本') + target;
+}
+
+/** sudo——提权前导，命令本体递归解读（远程表内） */
+function cmdFmtSudo(seg, m, depth) {
+    var inner = cmdTrim(m[1] || '');
+    if (inner.length === 0) {
+        return '以 root 身份执行';
+    }
+    var d = (depth || 0) + 1;
+    if (d > 3) {
+        return '以 root 提权执行「' + cmdTrunc(inner, 60) + '」';
+    }
+    return '以 root 提权执行：' + cmdSegmentIntent(inner, false, 'sh', d).text;
+}
+
+/** 多段意图拼接——分号连接（ssh 内嵌多命令） */
+function cmdJoin(parts) {
+    var out = '';
+    for (var i = 0; i < parts.length; i = i + 1) {
+        if (i > 0) {
+            out = out + '；';
+        }
+        out = out + parts[i];
+    }
+    return out;
 }
 
 // ═══════════════════════════════════════════
