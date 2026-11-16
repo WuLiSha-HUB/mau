@@ -53,6 +53,15 @@
         string SetGroupAlias(string botKey, string groupRef, string alias);
 
         /// <summary>
+        /// 群目录维护——从目录移除一个群（被踢出或不再使用的群要有出口，不给「只能进不能出」）。
+        /// 只清本地目录，平台侧归属不变；群寻址支持别名 / 群名 / OpenID / 唯一前缀。
+        /// </summary>
+        /// <param name="botKey">配置池身份（空=默认机器人）</param>
+        /// <param name="groupRef">群寻址（别名 / 群名 / OpenID / 前缀）</param>
+        /// <returns>空串成功；否则为 "ERR|CODE|说明"</returns>
+        string RemoveGroupFromDirectory(string botKey, string groupRef);
+
+        /// <summary>
         /// 群目录 JSON——前端配置页渲染用（每个 bot 一项：openId / alias / title / titleSource / role / allowProactive / recvSetting / firstSeen / lastSeen）。
         /// </summary>
         /// <param name="botKey">配置池身份（空=默认机器人）</param>
@@ -60,11 +69,11 @@
         string DirectoryJson(string botKey);
 
         /// <summary>
-        /// 群目录操作（工具面统一入口）——action：list（列群）· alias（设别名）· add（登记群）· refresh（刷官方状态）。
+        /// 群目录操作（工具面统一入口）——action：list（列群）· alias（设别名）· add（登记群）· refresh（刷官方状态）· remove（移除条目）。
         /// 回执为多行文本；失败以 ERR| 开头（失败可见）。
         /// </summary>
         /// <param name="botKey">配置池身份（空=默认机器人）</param>
-        /// <param name="action">动作（list / alias / add / refresh）</param>
+        /// <param name="action">动作（list / alias / add / refresh / remove）</param>
         /// <param name="groupRef">群寻址（别名 / 群名 / OpenID / 前缀）</param>
         /// <param name="alias">新别名（action=alias 时使用；空=清除）</param>
         /// <returns>多行文本</returns>

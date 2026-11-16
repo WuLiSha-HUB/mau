@@ -223,6 +223,14 @@ function renderQqGroups(d) {
         var tdTitle = document.createElement('td');
         tdTitle.textContent = g.title || '（未取到群名）';
         tdTitle.style.color = g.title ? 'var(--ch-identity)' : 'var(--ch-fg-weak)';
+        if (g.lastRefreshFail && g.lastRefreshFail.length > 0) {
+            // A384——刷新失败的群标未确认（旧权限值已被清空，可能已退群或接口无权限）
+            var unk = document.createElement('span');
+            unk.textContent = ' ⚠️ 未确认';
+            unk.style.color = 'var(--ch-warn, #d1a44a)';
+            unk.title = '刷新失败于 ' + g.lastRefreshFail + '——可能已退群或接口无权限，可用「移除」清理';
+            tdTitle.appendChild(unk);
+        }
         tr.appendChild(tdTitle);
         var tdAlias = document.createElement('td');
         tdAlias.textContent = g.alias || '';
@@ -260,6 +268,16 @@ function renderQqGroups(d) {
             };
         }(g);
         tdOp.appendChild(aliasBtn);
+        var removeBtn = document.createElement('button');
+        removeBtn.textContent = '移除';
+        removeBtn.className = 'btn-mini danger';
+        removeBtn.onclick = function (entry) {
+            return function () {
+                if (!confirm('从目录移除群「' + (entry.title || entry.openId) + '」？\n只清本地目录，不影响平台侧机器人归属；移除后不能再被寻址，重新收到消息或用「登记」可再入目录。')) { return; }
+                qgcPost('/api/v1/qqbot-groups/remove', { botKey: qgcBotSel.value, groupRef: entry.openId });
+            };
+        }(g);
+        tdOp.appendChild(removeBtn);
         tr.appendChild(tdOp);
         qgcTableBody.appendChild(tr);
     }

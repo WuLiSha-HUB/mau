@@ -35,6 +35,7 @@ namespace CatHome4.Admin
             sink.MapPost("/api/v1/qqbot-groups/alias", (Delegate)AdminService.HandleQqBotGroupsAlias);
             sink.MapPost("/api/v1/qqbot-groups/add", (Delegate)AdminService.HandleQqBotGroupsAdd);
             sink.MapPost("/api/v1/qqbot-groups/refresh", (Delegate)AdminService.HandleQqBotGroupsRefresh);
+            sink.MapPost("/api/v1/qqbot-groups/remove", (Delegate)AdminService.HandleQqBotGroupsRemove);
 
             // [段2] 每猫配置读写——M3
             sink.MapGet("/api/v1/cat-config", (Delegate)AdminService.HandleCatConfigGet);

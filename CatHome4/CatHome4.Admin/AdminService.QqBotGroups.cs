@@ -59,6 +59,16 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
+        /// 移除群条目——POST /api/v1/qqbot-groups/remove（body: botKey / groupRef；只清本地目录）。
+        /// </summary>
+        /// <param name="ctx">HTTP 上下文</param>
+        /// <returns>回执 JSON</returns>
+        internal static async Task<IResult> HandleQqBotGroupsRemove(HttpContext ctx)
+        {
+            return await HandleQqBotGroupsOp(ctx, "remove");
+        }
+
+        /// <summary>
         /// 刷新官方状态——POST /api/v1/qqbot-groups/refresh（body: botKey；逐群刷 bot_state + info）。
         /// </summary>
         /// <param name="ctx">HTTP 上下文</param>
@@ -72,7 +82,7 @@ namespace CatHome4.Admin
         /// 目录操作公共段——三个 POST 端点共用（解析 body → 调 IQQBotOps.GroupsOp → 统一回执）。
         /// </summary>
         /// <param name="ctx">HTTP 上下文</param>
-        /// <param name="action">动作（alias / add / refresh）</param>
+        /// <param name="action">动作（alias / add / refresh / remove）</param>
         /// <returns>回执 JSON</returns>
         private static async Task<IResult> HandleQqBotGroupsOp(HttpContext ctx, string action)
         {

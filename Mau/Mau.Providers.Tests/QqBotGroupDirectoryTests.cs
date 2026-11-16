@@ -186,5 +186,57 @@ namespace Mau.Providers.Tests
                 Cleanup(root);
             }
         }
+        /// <summary>
+        /// 移除群条目——移除后目录少一条、该群不再可解析；移除未登记的群报「群未命中」并附候选。
+        /// </summary>
+        [Fact]
+        public void RemoveGroup_DropsEntry()
+        {
+            string root;
+            QqBotGroupDirectory directory = CreateDirectory(out root);
+            try
+            {
+                string err = directory.RemoveGroup(AppId, "水疗");
+                Assert.Equal("", err);
+                QqBotGroupDocument doc = directory.Load(AppId);
+                Assert.Single(doc.Groups);
+                Assert.Equal(GroupA, doc.Groups[0].OpenId, StringComparer.OrdinalIgnoreCase);
+                QqBotGroupEntry resolved;
+                string candidates;
+                Assert.False(directory.TryResolve(AppId, "水疗", out resolved, out candidates));
+                string missing = directory.RemoveGroup(AppId, "水疗");
+                Assert.Contains("群未命中", missing, StringComparison.Ordinal);
+            }
+            finally
+            {
+                Cleanup(root);
+            }
+        }
+        /// <summary>
+        /// 刷新失败标记——落 LastRefreshFail 并清掉旧权限值（不再显示「允许主动发言」）；再次刷新成功即恢复确认。
+        /// </summary>
+        [Fact]
+        public void ApplyRefreshFailure_MarksUnconfirmed()
+        {
+            string root;
+            QqBotGroupDirectory directory = CreateDirectory(out root);
+            try
+            {
+                Assert.Equal("", directory.ApplyRefreshFailure(AppId, GroupB, "2026-11-16 17:00:00"));
+                QqBotGroupEntry failed = Find(directory.Load(AppId), GroupB);
+                Assert.Equal("2026-11-16 17:00:00", failed.LastRefreshFail, StringComparer.Ordinal);
+                Assert.Equal("", failed.Role);
+                Assert.Equal("", failed.RecvSetting);
+                Assert.False(failed.AllowProactive);
+                Assert.Equal("", directory.ApplyOfficialState(AppId, GroupB, "养生水疗中心", true, "only_mention", "member"));
+                QqBotGroupEntry recovered = Find(directory.Load(AppId), GroupB);
+                Assert.Equal("", recovered.LastRefreshFail);
+                Assert.True(recovered.AllowProactive);
+            }
+            finally
+            {
+                Cleanup(root);
+            }
+        }
     }
 }

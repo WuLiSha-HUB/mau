@@ -39,6 +39,8 @@ namespace Mau.Providers
 
         /// <summary>最近见到时间（yyyy-MM-dd HH:mm:ss）。</summary>
         public string LastSeen = "";
+        /// <summary>最近一次官方状态刷新失败的时刻（空 = 无失败记录；非空 = 该群状态未确认，可能已退群或接口无权限）。</summary>
+        public string LastRefreshFail = "";
     }
 
     /// <summary>
@@ -160,6 +162,7 @@ namespace Mau.Providers
                 return "群未登记: " + openId;
             }
             entry.AllowProactive = allowProactive;
+            entry.LastRefreshFail = "";
             if (recvSetting != null && recvSetting.Length > 0)
             {
                 entry.RecvSetting = recvSetting;
@@ -228,6 +231,59 @@ namespace Mau.Providers
             }
             string stamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
             return UpsertSeen(appId, openId.Trim(), "", stamp);
+        }
+        /// <summary>
+        /// 记录一次官方状态刷新失败（A384）——条目标为「未确认」并清掉旧权限值，避免被踢出后仍显示「允许主动发言」。
+        /// </summary>
+        /// <param name="appId">AppID</param>
+        /// <param name="openId">群 OpenID</param>
+        /// <param name="stamp">失败时刻（yyyy-MM-dd HH:mm:ss）</param>
+        /// <returns>空串成功；否则为失败原因</returns>
+        public string ApplyRefreshFailure(string appId, string openId, string stamp)
+        {
+            QqBotGroupDocument doc = Load(appId);
+            QqBotGroupEntry entry = FindByOpenId(doc, openId);
+            if (entry == null)
+            {
+                return "群未登记: " + openId;
+            }
+            entry.LastRefreshFail = stamp == null ? "" : stamp;
+            entry.Role = "";
+            entry.RecvSetting = "";
+            entry.AllowProactive = false;
+            return Save(appId, doc);
+        }
+        /// <summary>
+        /// 移除群条目（A384）——被踢出或永不再用的群从目录清掉，补上「只进不出」的出口。
+        /// 只动本地目录，不改平台侧归属（机器人在不在群里由平台决定）。
+        /// </summary>
+        /// <param name="appId">AppID</param>
+        /// <param name="groupRef">群寻址（别名 / 群名 / OpenID / 前缀）</param>
+        /// <returns>空串成功；否则为失败原因</returns>
+        public string RemoveGroup(string appId, string groupRef)
+        {
+            QqBotGroupEntry resolved;
+            string candidates;
+            if (!TryResolve(appId, groupRef, out resolved, out candidates))
+            {
+                return "群未命中: " + groupRef + (candidates.Length > 0 ? "（候选: " + candidates + "）" : "");
+            }
+            QqBotGroupDocument doc = Load(appId);
+            int index = -1;
+            for (int i = 0; i < doc.Groups.Count; i = i + 1)
+            {
+                if (string.Equals(doc.Groups[i].OpenId, resolved.OpenId, StringComparison.OrdinalIgnoreCase))
+                {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0)
+            {
+                return "群未登记: " + resolved.OpenId;
+            }
+            doc.Groups.RemoveAt(index);
+            return Save(appId, doc);
         }
 
         /// <summary>

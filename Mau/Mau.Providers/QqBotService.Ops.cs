@@ -238,6 +238,14 @@ namespace Mau.Providers
             for (int i = 0; i < doc.Groups.Count; i = i + 1)
             {
                 QqBotGroupEntry e = doc.Groups[i];
+                if (e.LastRefreshFail.Length > 0)
+                {
+                    // A384——刷新失败的群不再展示旧权限值（可能已退群），改标未确认并给出口
+                    lines.Add("· " + QqBotGroupDirectory.Label(e) + " · " + Tail8(e.OpenId)
+                        + " · ⚠️ 未确认（刷新失败于 " + e.LastRefreshFail + "，可能已退群或接口无权限；可用 action=remove 清理）"
+                        + " · 最近: " + (e.LastSeen.Length > 0 ? e.LastSeen : "—"));
+                    continue;
+                }
                 lines.Add("· " + QqBotGroupDirectory.Label(e) + " · " + Tail8(e.OpenId)
                     + " · 角色: " + (e.Role.Length > 0 ? e.Role : "未知")
                     + " · 收信: " + (e.RecvSetting.Length > 0 ? e.RecvSetting : "未知")
@@ -312,6 +320,34 @@ namespace Mau.Providers
             if (err.Length > 0)
             {
                 return "ERR|ALIAS_FAIL|" + err;
+            }
+            return "";
+        }
+        /// <summary>
+        /// 从群目录移除一个群（A384 · 契约面入口）——被踢出或不再使用的群不能只进不出。
+        /// </summary>
+        /// <param name="botKey">配置池身份（空=默认机器人）</param>
+        /// <param name="groupRef">群寻址（别名 / 群名 / OpenID / 前缀）</param>
+        /// <returns>空串成功；否则为 ERR| 文本</returns>
+        public string RemoveGroupFromDirectory(string botKey, string groupRef)
+        {
+            QqBotConnection conn = ResolveByKey(botKey);
+            if (conn == null)
+            {
+                return "ERR|BOT_NOT_CONNECTED|机器人未连接";
+            }
+            if (_directory == null)
+            {
+                return "ERR|DIRECTORY_NOT_READY|群目录未初始化";
+            }
+            if (groupRef == null || groupRef.Trim().Length == 0)
+            {
+                return "ERR|BAD_ARGS|请指定要移除的群（别名 / 群名 / OpenID）";
+            }
+            string err = _directory.RemoveGroup(conn.AppId, groupRef);
+            if (err.Length > 0)
+            {
+                return "ERR|DIR_REMOVE_FAIL|" + err;
             }
             return "";
         }
@@ -422,6 +458,7 @@ namespace Mau.Providers
                     .Append(",\"recvSetting\":").Append(JsonUtil.Str(g.RecvSetting))
                     .Append(",\"firstSeen\":").Append(JsonUtil.Str(g.FirstSeen))
                     .Append(",\"lastSeen\":").Append(JsonUtil.Str(g.LastSeen))
+                    .Append(",\"lastRefreshFail\":").Append(JsonUtil.Str(g.LastRefreshFail))
                     .Append("}");
             }
             sb.Append("]}");
@@ -429,7 +466,7 @@ namespace Mau.Providers
         }
 
         /// <summary>
-        /// 群目录操作（工具面统一入口）——list / alias / add / refresh。
+        /// 群目录操作（工具面统一入口）——list / alias / add / refresh / remove。
         /// </summary>
         /// <param name="botKey">配置池身份（空=默认机器人）</param>
         /// <param name="action">动作</param>
@@ -466,7 +503,16 @@ namespace Mau.Providers
             {
                 return RefreshOfficial(botKey);
             }
-            return "ERR|BAD_ARGS|未知 action: " + act + "（list / alias / add / refresh）";
+            if (act == "remove")
+            {
+                string removeErr = RemoveGroupFromDirectory(botKey, groupRef);
+                if (removeErr.Length > 0)
+                {
+                    return removeErr;
+                }
+                return "已从目录移除: " + (groupRef == null ? "" : groupRef) + "（只清本地目录，平台侧归属不变）";
+            }
+            return "ERR|BAD_ARGS|未知 action: " + act + "（list / alias / add / refresh / remove）";
         }
 
         /// <summary>
@@ -501,8 +547,17 @@ namespace Mau.Providers
                 {
                     okCount = okCount + 1;
                 }
+                else
+                {
+                    // A384——失败落到条目上：清掉旧权限值并标「未确认」，不让被踢出 / 无权限的群继续显示「允许主动发言」
+                    string failErr = _directory.ApplyRefreshFailure(conn.AppId, g.OpenId, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                    if (failErr.Length > 0)
+                    {
+                        LogStore.Add("QQBot", 2, "QQBot | 刷新失败标记落盘失败: " + failErr, "QQBOT");
+                    }
+                }
                 sb.Append("\n· ").Append(QqBotGroupDirectory.Label(g)).Append(" · ").Append(Tail8(g.OpenId))
-                    .Append(got ? " → 已刷新" : " → 官方接口不可用（保留本地观测）");
+                    .Append(got ? " → 已刷新" : " → 未确认（官方接口不可用——可能已退群或接口无权限；可用 action=remove 清理）");
             }
             sb.Append("\n成功 ").Append(okCount.ToString()).Append(" / ").Append(doc.Groups.Count.ToString());
             return sb.ToString();
