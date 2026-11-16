@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"cathome5/mau/fs"
@@ -453,6 +454,8 @@ func runCommandProbe(exe string, args []string, timeout time.Duration) (string, 
 	defer cancel()
 	var out bytes.Buffer
 	cmd := exec.CommandContext(ctx, exe, args...)
+	// 与部署链同口径：GUI 宿主里控制台子进程默认弹窗（CREATE_NO_WINDOW 之后孙进程同隐）。
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	cmd.Stdout = &out
 	cmd.Stderr = io.Discard
 	err := cmd.Run()

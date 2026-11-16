@@ -967,8 +967,12 @@ func waitProcessExit(pid int, timeout time.Duration) error {
 }
 
 // processAlive tasklist 判活（PID 精确匹配）。
+//
+// 调用方是 waitProcessExit 的 500ms 轮询——不加 CREATE_NO_WINDOW 就是「每半秒一个黑框」。
 func processAlive(pid int) bool {
-	out, err := exec.Command("tasklist", "/FI", "PID eq "+strconv.Itoa(pid), "/FO", "CSV", "/NH").Output()
+	cmd := exec.Command("tasklist", "/FI", "PID eq "+strconv.Itoa(pid), "/FO", "CSV", "/NH")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	out, err := cmd.Output()
 	if err != nil {
 		return false
 	}
@@ -996,9 +1000,15 @@ func (r *deployRun) resolveGo() (string, error) {
 }
 
 // runGo 执行 go 子命令并合并输出。
+//
+// 控制台必须隐藏：本进程是 GUI 子系统（无控制台），不设 CreationFlags 时 Windows 会为
+// go.exe 分配一个新的控制台窗口——输出被 CombinedOutput 吞掉，于是表现为「黑框一闪、什么
+// 都看不到」。go test 还会为每个包起一个测试二进制（Go 21 包 ≈ 21 个黑框连弹）。
+// CREATE_NO_WINDOW（0x08000000）分配不可见控制台，子进程继承它，孙进程也不再弹。
 func runGo(goExe, dir string, args ...string) (string, error) {
 	cmd := exec.Command(goExe, args...)
 	cmd.Dir = dir
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
 	raw, err := cmd.CombinedOutput()
 	return string(raw), err
 }

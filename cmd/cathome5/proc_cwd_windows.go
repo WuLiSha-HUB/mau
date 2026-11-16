@@ -89,7 +89,10 @@ type processBasicInformation struct {
 
 // listProcessCWDsImpl 枚举本机全部进程的工作目录——读不到的进程跳过（只报读得到的）。
 func listProcessCWDsImpl() ([]procCWDInfo, error) {
-	out, err := exec.Command("tasklist", "/FO", "CSV", "/NH").Output()
+	// CREATE_NO_WINDOW：同 runGo / listPIDsByImage——GUI 宿主里 tasklist 会弹控制台。
+	cmd := exec.Command("tasklist", "/FO", "CSV", "/NH")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}

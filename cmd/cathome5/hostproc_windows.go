@@ -157,7 +157,11 @@ func listHostProcesses(logf func(level int, message, category string)) ([]hostPr
 
 // listPIDsByImage 按映像名枚举本机进程 pid（tasklist CSV；无匹配时回本地化 INFO 行——非引号开头，跳过）。
 func listPIDsByImage(image string) ([]int, error) {
-	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+image, "/FO", "CSV", "/NH").Output()
+	// CREATE_NO_WINDOW：GUI 宿主里 tasklist 默认会分配控制台窗口（部署链一次重启会调用多次，
+	// 每次一闪 → 「过一会弹一个黑框」），与 runGo 同一处理。
+	cmd := exec.Command("tasklist", "/FI", "IMAGENAME eq "+image, "/FO", "CSV", "/NH")
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: 0x08000000}
+	out, err := cmd.Output()
 	if err != nil {
 		return nil, err
 	}
