@@ -124,12 +124,20 @@ fi
 mv "$NEW" "$APP"
 echo "[5/6] 已落位：$APP（上一代留存 $PREV）"
 
-# [6] 归档源包
+# [6] 归档源包（_done 只保留最新一份，更早的当场清掉）
 DONE="$INBOX/_done"
 mkdir -p "$DONE"
 STAMP=$(date +%Y%m%d_%H%M%S)
 BASE=$(basename "$SRC")
 mv "$SRC" "$DONE/${STAMP}-${BASE}"
 echo "[6/6] 源包已归档：$DONE/${STAMP}-${BASE}"
+
+KEEP=1
+if [ "$(ls -1 "$DONE" | wc -l)" -gt "$KEEP" ]; then
+    ls -1t "$DONE" | tail -n +2 | while IFS= read -r old; do
+        rm -rf -- "$DONE/$old"
+        echo "      已清理旧归档：$old"
+    done
+fi
 
 echo "OK|产物区已更新 → 下一步 restart-incr"
