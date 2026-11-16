@@ -14,7 +14,7 @@
 
 | 链 | 入口 | 落点 | 何时用 |
 |:--|:--|:--|:--|
-| **日常更新** | `tools/deploy/push-app.ps1`（A368） | **远端产物区** `<远端仓库>/public/app`，之后由 `restart-incr` 原子切到运行区 | 改了宿主程序集 / 语料 / 前端之后的标准路径 |
+| **日常更新** | `tools/deploy/push-app.ps1`（A368）→ `/srv/inbox` → `take-app.sh` | 包落**外部投放区**，root 校验指纹后覆盖**产物区** `<远端仓库>/public/app`，再由 `restart-incr` 原子切到运行区 | 改了宿主程序集 / 语料 / 前端之后的标准路径 |
 | **首次部署 / 纯运维** | 本文 §二 手链 + `apply.sh` | 直接停服切**运行区** | 目标机还没有产物区（首次）、或远端没有可用猫会话派 `restart-incr` 时 |
 
 🔴 **判据：能用 push-app 就别手拼链。** 手链直接切运行区会把**产物区留在旧版**——之后谁跑一次 `restart-incr`，运行区就被旧产物覆盖（静默倒退）。走 push-app 时两区同源，incr 才是「只搬运、不引入代际差」。
@@ -26,13 +26,30 @@
   1. git pull（保证源码最新）
   2. dotnet publish CatHome4/CatHome4.csproj -c Debug -r linux-x64 --self-contained false -o <out>
   3. tar -czf ch4-linux.tar.gz -C <out> .
-  4. scp ch4-linux.tar.gz cathome:/tmp/
+  4. scp ch4-linux.tar.gz cathome:/srv/inbox/
 
 [Linux（cathome-linux）]
   5. ssh cathome "sudo bash /cathome4/mau/tools/deploy/apply.sh /tmp/ch4-linux.tar.gz"
      └─ 解包 → Flows 继承 → 权限归一 → 完整性闸 → 停服 → 原子切换 → 启服 → 探活（15 s）
         └─ 探活失败：整目录回滚到上一版本
 ```
+
+## 二点五、`take-app.sh` —— 投放区取包（2026-11-16 增）
+
+**为什么有这一步**：ubuntu 被关进 `/srv/inbox`（700 · 唯一可写落点），它穿不进 `/cathome4`，也就改不到仓库 HEAD。取包由 **root** 执行，把「权限面 + 校验面」串起来。
+
+```
+用法：bash /cathome4/mau/tools/deploy/take-app.sh <包名|包路径> [--dry-run]
+      包名 = /srv/inbox 下的相对名；也可给绝对路径
+```
+
+**六段**：解包/取目录 → 结构闸（`buildinfo.txt` + `CatHome4`）→ 指纹闸（`commit` 40 位 · `dirty=false` · **`commit == git rev-parse HEAD`**）→ Flows 继承（包内未带则沿用现有）→ 权限归一 + 落位（旧 `app` 留存 `app.prev`）→ 源包归档到 `/srv/inbox/_done/<时间戳>-<名>`。
+
+**为什么指纹闸是硬闸**：攻击者若能伪造包，也只能往 inbox 丢。要过闸必须让 `commit == 仓库 HEAD`，而 HEAD 只有 root 能改——**权限隔离 + 指纹校验两道并联，缺一不可**。
+
+**边界**：不重启、不碰运行区。取包完成后由猫会话发起 `restart-incr`。
+
+---
 
 ## 三、两种更新档
 
