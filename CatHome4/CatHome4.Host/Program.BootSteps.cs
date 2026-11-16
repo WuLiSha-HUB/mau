@@ -345,6 +345,10 @@ namespace CH4
             // 这里只装配与注入；实际连接由 S7 按池默认配置 + secrets 拉起（非交互模式不启）
             Mau.Providers.QqBotService qqBotSvc = new Mau.Providers.QqBotService();
             qqBotSvc.Configure(dataRoot);
+            // A381 猫级面——绑定解析（工具面过滤与发言授权）/ @ 推送（user 入口）/ 宿主状态（/homeinfo）
+            qqBotSvc.SetCatBindingResolver(CatHome4.Admin.CatHostService.ResolveQqBinding);
+            qqBotSvc.SetCatPushHandler(CatHome4.Admin.CatHostService.PushQqMention);
+            qqBotSvc.SetHostInfoProvider(() => BuildEnvInfo());
             DataBox.Bind<Mau.Contracts.IQQBotService>(qqBotSvc);
             // A380 业务面——同一实例挂 IQQBotOps（工具组发言 / 通道自述 / 群目录维护）
             DataBox.Bind<Mau.Contracts.IQQBotOps>(qqBotSvc);

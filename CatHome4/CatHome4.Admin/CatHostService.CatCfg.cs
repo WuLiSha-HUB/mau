@@ -79,6 +79,14 @@ namespace CatHome4.Admin
 
             /// <summary>工具声明面——M2c 裁剪后（session.new 重注入复用）</summary>
             public ToolSpec[] ToolSpecs;
+            /// <summary>绑定的 QQ 机器人配置身份——cat.cfg 持久化（A381；空=未绑定）</summary>
+            public string QqBotId;
+            /// <summary>QQ 收信开关——cat.cfg 持久化（A381；true=群内 @ 本猫时按白名单推送）</summary>
+            public bool QqBotEnable;
+            /// <summary>QQ 渠道白名单——cat.cfg 持久化（A381；群别名 / 群名 / OpenID；空=目录内全部群）</summary>
+            public string[] QqBotGroups;
+            /// <summary>QQ 主动发言授权——cat.cfg 持久化（A381；true=可用 qqbot-send 向白名单内群发言）</summary>
+            public bool QqBotCanSend;
 
         }
 
@@ -134,6 +142,14 @@ namespace CatHome4.Admin
 
             /// <summary>库白名单——库 ID 清单（A266：首版只落字段与勾选面，工具面校验后置）</summary>
             public string[] DbLibs { get; set; }
+            /// <summary>绑定的 QQ 机器人配置身份——配置池 QqBotId 的 Guid 串；空=未绑定（A381）</summary>
+            public string QqBotId { get; set; }
+            /// <summary>QQ 收信开关——true=群内 @ 本猫时按白名单推送过来（A381）</summary>
+            public bool QqBotEnable { get; set; }
+            /// <summary>QQ 渠道白名单——群别名 / 群名 / OpenID 清单；空=该机器人目录内全部群（A381）</summary>
+            public string[] QqBotGroups { get; set; }
+            /// <summary>QQ 主动发言授权——true=可用 qqbot-send 向本猫白名单内的群发言（A381）</summary>
+            public bool QqBotCanSend { get; set; }
         }
 
         /// <summary>
@@ -296,6 +312,11 @@ namespace CatHome4.Admin
                     data.ReasoningEffort = GetStringProp(root, "reasoningEffort");
                     data.AppearanceId = GetStringProp(root, "appearanceId");
                     data.ThemeColor = GetIntProp(root, "themeColor");
+                    // A381 QQ 渠道绑定四字段——缺失即默认（未绑定 / 不收信 / 全目录 / 不可发言）
+                    data.QqBotId = GetStringProp(root, "qqbotId");
+                    data.QqBotEnable = GetBoolProp(root, "qqbotEnable");
+                    data.QqBotGroups = GetStringArrayProp(root, "qqbotGroups");
+                    data.QqBotCanSend = GetBoolProp(root, "qqbotCanSend");
                     return data;
                 }
             }
@@ -325,6 +346,11 @@ namespace CatHome4.Admin
             data.ReasoningEffort = cat.ReasoningEffort;
             data.AppearanceId = cat.AppearanceId.ToString("D");
             data.ThemeColor = cat.ThemeColor;
+            // A381 QQ 渠道绑定四字段——实体侧同源带出（否则 cat.* 指令保存会清掉绑定）
+            data.QqBotId = cat.QqBotId;
+            data.QqBotEnable = cat.QqBotEnable;
+            data.QqBotGroups = cat.QqBotGroups;
+            data.QqBotCanSend = cat.QqBotCanSend;
             SaveCatCfgData(cat.Id, data);
         }
 
@@ -515,7 +541,12 @@ namespace CatHome4.Admin
                 userInjectIdleOnly = data.UserInjectIdleOnly,
                 appearanceId = data.AppearanceId,
                 reasoningEffort = data.ReasoningEffort,
-                themeColor = data.ThemeColor
+                themeColor = data.ThemeColor,
+                // A381 QQ 渠道绑定四字段（写侧全量带出——字段级合并写在读侧完成，落盘面不丢字段）
+                qqbotId = data.QqBotId,
+                qqbotEnable = data.QqBotEnable,
+                qqbotGroups = data.QqBotGroups,
+                qqbotCanSend = data.QqBotCanSend
             };
             try
             {
@@ -611,6 +642,11 @@ namespace CatHome4.Admin
             }
             cat.AppearanceId = ResolveAppearanceId(cfg);
             cat.ThemeColor = cfg.ThemeColor;
+            // A381——QQ 渠道绑定即时生效（推送面与本猫权限面共用内存 meta；majordomo 分支走读盘不在此列）
+            cat.QqBotId = cfg.QqBotId == null ? "" : cfg.QqBotId;
+            cat.QqBotEnable = cfg.QqBotEnable;
+            cat.QqBotGroups = cfg.QqBotGroups == null ? new string[0] : cfg.QqBotGroups;
+            cat.QqBotCanSend = cfg.QqBotCanSend;
             cat.RoundSummary = ResolveEffectiveRoundSummary(key);
             if (cat.Session != null)
             {

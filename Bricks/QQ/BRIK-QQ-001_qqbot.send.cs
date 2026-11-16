@@ -5,8 +5,8 @@
 // 作用: 主动发言到指定 QQ 群——群寻址支持别名 / 群名 / OpenID / 唯一前缀（空=目录唯一群）；回执带实际投递目标
 // 依赖: 无
 // 引用: Mau.Contracts（IQQBotOps）/ Mau.Runtime（DataBox/JsonArgs）
-// 原理: DataBox.TryResolve<IQQBotOps> → SendProactiveTo(bot, group, text)
-//       白名单闸、别名解析、频控与错误码全在服务面（宿主侧单点）；本积木只做参数校验与回执整形
+// 原理: DataBox.TryResolve<IQQBotOps> → SendProactiveTo(catId, bot, group, text)
+//       猫级授权（绑定 / 发言开关 / 白名单）、别名解析、频控与错误码全在服务面（宿主侧单点）；本积木只做参数校验与回执整形
 // 常用: qqbot_cat.mau 认领线——'qqbot.send'[@args] > @result
 // 门禁: 出口仅主动消息（无 msg_id）——命令回复走被动通道，两条路径不混用（A379）
 // ═══════════════════════════════════════════════════
@@ -39,6 +39,8 @@ namespace Mau.Bricks
             string bot = JsonArgs.Get(argsJson, "bot");
             string group = JsonArgs.Get(argsJson, "group");
             string text = JsonArgs.Get(argsJson, "text");
+            // A381——调用者猫 key（宿主注入保留键）：服务侧据此判猫级发言授权
+            string catId = JsonArgs.Get(argsJson, "catId");
             if (text.Trim().Length == 0)
             {
                 result = "ERR|BAD_ARGS|缺少参数 text";
@@ -53,7 +55,7 @@ namespace Mau.Bricks
                     result = "ERR|QQBOT_NO_SERVICE|宿主未注入 IQQBotOps";
                     return false;
                 }
-                string body = service.SendProactiveTo(bot, group, text);
+                string body = service.SendProactiveTo(catId, bot, group, text);
                 result = body;
                 return !body.StartsWith("ERR|", StringComparison.Ordinal);
             }
@@ -65,4 +67,4 @@ namespace Mau.Bricks
         }
     }
 }
-// #MAU_CHECKSUM:SHA256:1874256C8013B6BF7443C2ED8F143EFC9464B3B860997972D55CB53A875EEB20
+// #MAU_CHECKSUM:SHA256:FB72153237477B62345C03248C549F6DDBAD2C2F91BB51F41B3E5094B586E743

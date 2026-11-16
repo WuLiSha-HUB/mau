@@ -8,6 +8,8 @@ var catCfgTarget = '';
 var catCfgAllTools = [];
 var catCfgInjectList = [];
 var catCfgAllPacks = [];
+// A381——QQ 机器人池（绑定下拉用）与群清单提示（渠道白名单参考）
+var catCfgAllQqBots = [];
 // A107——工具组定义缺陷（后端 defectGroups——不可用组不进勾选面 + 弹层提示）
 var catCfgDefectGroups = [];
 // A275——库权限池可取性（false = 清单不可取，保存时不提交 dbLibs，避免静默清空）
@@ -40,6 +42,13 @@ function openCatCfg(catId, name) {
             renderInjectList(d.injectList || []);
             catCfgAllPacks = d.allPacks || [];
             renderPackChecks(catCfgAllPacks, d.packs || []);
+            // A381——QQ 渠道绑定四字段（机器人 / 收信 / 发言 / 渠道白名单）
+            catCfgAllQqBots = d.allQqBots || [];
+            renderQqBotOptions(catCfgAllQqBots, d.qqbotId || '');
+            document.getElementById('catCfgQqEnable').checked = d.qqbotEnable === true;
+            document.getElementById('catCfgQqCanSend').checked = d.qqbotCanSend === true;
+            document.getElementById('catCfgQqGroups').value = (d.qqbotGroups || []).join(', ');
+            loadQqGroupHint(d.qqbotId || '');
             // M4e 猫级白名单——启用根勾选（workspace 强制常驻不可取消）
             renderRootChecks(d.allRoots || [], d.enabledRoots || []);
             // A275 库权限——库池 = 注册表登记的库（不可取时如实告警，不当成「无库」）
@@ -377,6 +386,75 @@ function renderThemeColorOptions(current) {
     };
 }
 
+// A381 渠道白名单解析——半角 / 全角逗号与换行皆认；去空去重（保持输入顺序）
+function parseQqGroups(text) {
+    var out = [];
+    if (!text) { return out; }
+    var parts = String(text).split(/[,，\n\r]+/);
+    for (var i = 0; i < parts.length; i = i + 1) {
+        var v = parts[i].trim();
+        if (v.length === 0) { continue; }
+        if (out.indexOf(v) < 0) { out.push(v); }
+    }
+    return out;
+}
+
+// A381 QQ 机器人下拉——首项「未绑定」= 空值语义（该猫看不到任何 QQ 渠道）；池为空时明示配置池未就绪
+function renderQqBotOptions(options, current) {
+    var sel = document.getElementById('catCfgQqBot');
+    sel.textContent = '';
+    var def = document.createElement('option');
+    def.value = '';
+    def.textContent = options.length === 0 ? '（配置池无可选机器人——先在「配置页 → QQ 机器人池」新建）' : '（未绑定 · 不收信也不能发言）';
+    if (!current || current.length === 0) { def.selected = true; }
+    sel.appendChild(def);
+    for (var i = 0; i < options.length; i = i + 1) {
+        var opt = document.createElement('option');
+        opt.value = options[i].id;
+        var label = options[i].displayName + ' · ' + (options[i].apiEnv || 'production');
+        if (options[i].isDefault) { label = label + ' · 池默认'; }
+        opt.textContent = label;
+        if (options[i].id === current) { opt.selected = true; }
+        sel.appendChild(opt);
+    }
+    sel.onchange = function () { loadQqGroupHint(sel.value); };
+}
+
+// A381 群清单提示——按绑定机器人拉目录（只读参考，不改数据）；填渠道白名单时照抄别名 / 群名即可
+function loadQqGroupHint(botKey) {
+    var hint = document.getElementById('catCfgQqGroupHint');
+    if (!hint) { return; }
+    if (!botKey || botKey.length === 0) {
+        hint.textContent = '（未绑定机器人——先选机器人，再填收信渠道）';
+        return;
+    }
+    hint.textContent = '读取该机器人的群目录…';
+    fetch('/api/v1/qqbot-groups?botKey=' + encodeURIComponent(botKey), { cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            if (!d || d.ok === false) {
+                hint.textContent = '群目录不可用: ' + ((d && d.error) || '读取失败');
+                return;
+            }
+            var groups = d.groups || [];
+            if (groups.length === 0) {
+                hint.textContent = '（该机器人还没有群——先在群里 @ 一次机器人，它会自动入目录）';
+                return;
+            }
+            var parts = [];
+            for (var i = 0; i < groups.length; i = i + 1) {
+                var g = groups[i];
+                var label = g.alias && g.alias.length > 0 ? g.alias : (g.title && g.title.length > 0 ? g.title : '');
+                var tail = (g.openId || '').slice(-8);
+                parts.push((label.length > 0 ? label + ' · ' : '') + tail);
+            }
+            hint.textContent = '目录内群（' + groups.length + '）：' + parts.join(' / ');
+        })
+        .catch(function () {
+            hint.textContent = '群目录读取失败——宿主未运行？';
+        });
+}
+
 function saveCatCfg() {
     var themeRaw = parseInt(document.getElementById('catCfgTheme').value, 10);
     var themeColor = isNaN(themeRaw) || themeRaw < 0 ? 0 : themeRaw;
@@ -394,7 +472,12 @@ function saveCatCfg() {
         appearanceId: document.getElementById('catCfgAppearance').value,
         reasoningEffort: document.getElementById('catCfgEffort').value,
         themeColor: themeColor,
-        enabledRoots: collectRootChecks()
+        enabledRoots: collectRootChecks(),
+        // A381——QQ 渠道四字段（收信 / 发言 / 渠道白名单；逗号或中文逗号分隔）
+        qqbotId: document.getElementById('catCfgQqBot').value,
+        qqbotEnable: document.getElementById('catCfgQqEnable').checked,
+        qqbotCanSend: document.getElementById('catCfgQqCanSend').checked,
+        qqbotGroups: parseQqGroups(document.getElementById('catCfgQqGroups').value)
     };
     // A275——库清单不可取时不提交 dbLibs（字段级合并：缺省保留磁盘现值，避免静默清空）
     if (catCfgDbLibsAvailable) {

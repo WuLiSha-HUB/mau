@@ -36,6 +36,12 @@ namespace Mau.Providers
         /// <summary>全局状态取数委托——宿主注入（/homeinfo 与工具面共用）</summary>
         private Func<string> _hostInfoProvider = null;
 
+        /// <summary>猫级绑定解析委托——宿主注入（A381；未注入 = 猫级过滤不生效，按池全量处理并出声）</summary>
+        private QqBotBindingResolver _catBindingResolver = null;
+
+        /// <summary>@ 推送委托——宿主注入（A381；未注入 = @ 消息只留档不推送，日志出声）</summary>
+        private QqBotCatPushHandler _catPush = null;
+
         /// <summary>留档根路径（空串=未注入，落档停用）</summary>
         public string InboxPath
         {
@@ -73,6 +79,24 @@ namespace Mau.Providers
         public void SetHostInfoProvider(Func<string> provider)
         {
             _hostInfoProvider = provider;
+        }
+
+        /// <summary>
+        /// 注入猫级绑定解析委托（A381）——宿主启动链调用；未注入时工具面按池全量处理并出声。
+        /// </summary>
+        /// <param name="resolver">猫 key → 绑定（未绑定返回 null）</param>
+        public void SetCatBindingResolver(QqBotBindingResolver resolver)
+        {
+            _catBindingResolver = resolver;
+        }
+
+        /// <summary>
+        /// 注入 @ 推送委托（A381）——宿主启动链调用；未注入时 @ 消息只留档不推送。
+        /// </summary>
+        /// <param name="handler">推送处理（服务侧只负责「收到了一条 @」）</param>
+        public void SetCatPushHandler(QqBotCatPushHandler handler)
+        {
+            _catPush = handler;
         }
 
         /// <summary>

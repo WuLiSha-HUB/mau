@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
@@ -107,6 +108,35 @@ namespace CatHome4.Admin
             bool failed = text.StartsWith("ERR|", StringComparison.Ordinal);
             LogStore.Add("CatHome4", failed ? 2 : 1, "qqbot-groups " + action + " → " + OneLineShort(text), "CONFIG");
             return Results.Json(new { ok = !failed, text = text, error = failed ? text : "" });
+        }
+
+        /// <summary>
+        /// QQ 机器人池选项（A381）——每猫配置弹层「QQ 机器人」下拉用（id / 显示名 / 环境 / 是否默认）。
+        /// 池未注入时返回空表（前端据空表提示"配置池未就绪"，不静默造空选项）。
+        /// </summary>
+        /// <returns>选项对象列表</returns>
+        private static List<object> BuildAllQqBots()
+        {
+            List<object> items = new List<object>();
+            CH_QqBotConfigStore pool = null;
+            DataBox.TryResolve<CH_QqBotConfigStore>(out pool);
+            if (pool == null)
+            {
+                return items;
+            }
+            CH_QqBotConfig[] bots = pool.GetAll();
+            for (int i = 0; i < bots.Length; i = i + 1)
+            {
+                CH_QqBotConfig bot = bots[i];
+                items.Add(new
+                {
+                    id = bot.QqBotId.ToString("D"),
+                    displayName = bot.DisplayName,
+                    apiEnv = bot.ApiEnv,
+                    isDefault = bot.IsDefault
+                });
+            }
+            return items;
         }
 
         /// <summary>

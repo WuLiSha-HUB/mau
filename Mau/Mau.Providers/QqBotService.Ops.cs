@@ -29,11 +29,12 @@ namespace Mau.Providers
         /// <summary>
         /// 主动发言——群寻址（别名 / 群名 / OpenID / 唯一前缀）→ 池白名单校验 → 发送 → 回执带实际目标。
         /// </summary>
+        /// <param name="catId">调用者猫 key（A381 猫级授权；空=调用者未注入——只按池白名单放行）</param>
         /// <param name="botKey">配置池身份（空=默认机器人）</param>
         /// <param name="groupRef">群寻址（空=目录唯一群）</param>
         /// <param name="text">正文</param>
         /// <returns>回执文本（失败以 ERR| 开头）</returns>
-        public string SendProactiveTo(string botKey, string groupRef, string text)
+        public string SendProactiveTo(string catId, string botKey, string groupRef, string text)
         {
             if (text == null || text.Trim().Length == 0)
             {
@@ -85,6 +86,12 @@ namespace Mau.Providers
             {
                 return "ERR|GROUP_NOT_FOUND|" + reference + (candidates.Length > 0 ? "（候选: " + candidates + "）" : "（目录为空，先让机器人在群里收到一条消息，或用 AddGroup 登记）");
             }
+            // A381 猫级授权——绑定一致 / 发言开关 / 群白名单（先于池白名单判：池是天花板，猫是子集）
+            string catGate = CheckCatSend(catId, key, conn.AppId, entry);
+            if (catGate.Length > 0)
+            {
+                return catGate;
+            }
             string gate = CheckAllowed(cfg, conn.AppId, entry);
             if (gate.Length > 0)
             {
@@ -107,9 +114,9 @@ namespace Mau.Providers
         }
 
         /// <summary>
-        /// 本通道自述——池内每个机器人：连接状态 / 环境 / 群目录摘要。
+        /// 本通道自述——A381 起按猫级绑定过滤：只列该猫绑定的机器人与其白名单内的群。
         /// </summary>
-        /// <param name="catId">调用者猫 key（A381 前仅记录，不参与过滤）</param>
+        /// <param name="catId">调用者猫 key（未绑定 / 未注入时如实说明，不返回空表）</param>
         /// <returns>多行文本</returns>
         public string MyChannelText(string catId)
         {
@@ -124,21 +131,57 @@ namespace Mau.Providers
             {
                 return "QQBot | 池内无机器人配置（控制台 config 页 →「QQ 机器人池」新建）";
             }
+            // A381 猫级过滤——只列本猫绑定的机器人与其白名单内的群；未接线 / 未注入调用者 = 按池全量并说明
+            bool catScoped = _catBindingResolver != null && catId != null && catId.Length > 0;
+            QqBotCatBinding binding = null;
+            if (catScoped)
+            {
+                binding = _catBindingResolver(catId);
+            }
             List<string> lines = new List<string>();
-            lines.Add("QQBot 通道 · 猫: " + (catId == null || catId.Length == 0 ? "(未注入)" : catId) + " · 机器人 " + bots.Length.ToString() + " 个");
+            lines.Add("QQBot 通道 · 猫: " + (catId == null || catId.Length == 0 ? "(未注入)" : catId));
+            if (catScoped)
+            {
+                if (binding == null || binding.BotKey.Length == 0)
+                {
+                    lines.Add("· 未绑定机器人——控制台「猫配置」里绑定 qqbotId 后可收信 / 发言（当前看不到任何渠道）");
+                    return string.Join("\n", lines.ToArray());
+                }
+                lines.Add("· 绑定 " + binding.BotKey + " · 收信 " + (binding.Enable ? "开" : "关")
+                    + " · 发言 " + (binding.CanSend ? "开" : "关")
+                    + " · 渠道 " + (binding.Groups.Length == 0 ? "（不限制——目录内全部群）" : string.Join(" / ", binding.Groups)));
+            }
             for (int i = 0; i < bots.Length; i = i + 1)
             {
                 CH_QqBotConfig cfg = bots[i];
                 string key = cfg.QqBotId.ToString("D");
+                if (catScoped && binding != null && binding.BotKey.Length > 0
+                    && !string.Equals(binding.BotKey, key, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
                 QqBotConnection conn = ResolveConnection(key);
                 string state = conn == null ? "未连接" : "已连接";
                 string groups = "";
                 if (_directory != null)
                 {
-                    groups = QqBotGroupDirectory.Describe(_directory.Load(cfg.AppId).Groups);
+                    List<QqBotGroupEntry> all = _directory.Load(cfg.AppId).Groups;
+                    List<QqBotGroupEntry> visible = new List<QqBotGroupEntry>();
+                    for (int j = 0; j < all.Count; j = j + 1)
+                    {
+                        if (!catScoped || binding == null || MatchCatGroup(binding, cfg.AppId, all[j]))
+                        {
+                            visible.Add(all[j]);
+                        }
+                    }
+                    groups = QqBotGroupDirectory.Describe(visible);
                 }
                 lines.Add("· " + cfg.DisplayName + (cfg.IsDefault ? "（默认）" : "") + " · " + cfg.ApiEnv
                     + " · " + state + " · 群: " + (groups.Length > 0 ? groups : "（无）"));
+            }
+            if (catScoped && binding != null && lines.Count <= 2)
+            {
+                lines.Add("· 绑定的机器人在池内不存在（" + binding.BotKey + "）——配置池可能已删除该机器人");
             }
             return string.Join("\n", lines.ToArray());
         }
@@ -463,6 +506,80 @@ namespace Mau.Providers
             }
             sb.Append("\n成功 ").Append(okCount.ToString()).Append(" / ").Append(doc.Groups.Count.ToString());
             return sb.ToString();
+        }
+        /// <summary>
+        /// 猫级发言授权（A381）——绑定机器人一致 / 发言开关打开 / 群在本猫白名单内。
+        /// 未注入解析委托或调用者空 = 只按池白名单放行（猫级面尚未接线时不误拦）。
+        /// </summary>
+        /// <param name="catId">调用者猫 key</param>
+        /// <param name="botKey">机器人身份</param>
+        /// <param name="appId">AppID</param>
+        /// <param name="entry">目标群</param>
+        /// <returns>空串放行；否则 ERR| 文本</returns>
+        private string CheckCatSend(string catId, string botKey, string appId, QqBotGroupEntry entry)
+        {
+            if (_catBindingResolver == null || catId == null || catId.Length == 0)
+            {
+                return "";
+            }
+            QqBotCatBinding binding = _catBindingResolver(catId);
+            if (binding == null || binding.BotKey.Length == 0)
+            {
+                return "ERR|QQBOT_NOT_BOUND|调用者猫无 QQ 绑定（" + catId + "）——先在控制台「猫配置」里绑定机器人";
+            }
+            if (!string.Equals(binding.BotKey, botKey, StringComparison.OrdinalIgnoreCase))
+            {
+                return "ERR|QQBOT_BOT_DENIED|该猫未绑定此机器人（绑定: " + binding.BotKey + "）";
+            }
+            if (!binding.CanSend)
+            {
+                return "ERR|QQBOT_SEND_DENIED|该猫未获 QQ 主动发言授权（cat.cfg qqbotCanSend=false）";
+            }
+            if (!MatchCatGroup(binding, appId, entry))
+            {
+                return "ERR|QQBOT_GROUP_DENIED|该群不在本猫 QQ 渠道白名单内（" + QqBotGroupDirectory.Label(entry)
+                    + "）· 白名单: " + string.Join(" / ", binding.Groups);
+            }
+            return "";
+        }
+        /// <summary>
+        /// 群是否命中猫级白名单（A381）——OpenID / 别名直接比，其余按目录寻址解析后比 OpenID；空名单=全目录。
+        /// </summary>
+        /// <param name="binding">猫级绑定</param>
+        /// <param name="appId">AppID</param>
+        /// <param name="entry">目标群</param>
+        /// <returns>true=命中</returns>
+        private bool MatchCatGroup(QqBotCatBinding binding, string appId, QqBotGroupEntry entry)
+        {
+            if (entry == null)
+            {
+                return false;
+            }
+            if (binding.Groups == null || binding.Groups.Length == 0)
+            {
+                return true;
+            }
+            for (int i = 0; i < binding.Groups.Length; i = i + 1)
+            {
+                string item = binding.Groups[i];
+                if (item == null || item.Length == 0)
+                {
+                    continue;
+                }
+                if (string.Equals(item, entry.OpenId, StringComparison.OrdinalIgnoreCase)
+                    || string.Equals(item, entry.Alias, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+                QqBotGroupEntry resolved;
+                string ignored;
+                if (_directory != null && _directory.TryResolve(appId, item, out resolved, out ignored) && resolved != null
+                    && string.Equals(resolved.OpenId, entry.OpenId, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>

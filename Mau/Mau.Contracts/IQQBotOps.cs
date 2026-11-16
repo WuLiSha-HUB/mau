@@ -12,15 +12,16 @@
         /// 群寻址支持别名 / 群名 / OpenID / 唯一前缀；空 = 该 bot 目录中的唯一群。
         /// 回执正文含实际投递目标（别名 + 群名 + OpenID 末 8 位）；失败必可见。
         /// </summary>
+        /// <param name="catId">调用者猫 key（A381 起用于猫级发言授权；空=调用者未注入，仅按池白名单放行）</param>
         /// <param name="botKey">配置池身份（空=默认机器人）</param>
         /// <param name="groupRef">群寻址（别名 / 群名 / OpenID / 前缀；空=目录唯一群）</param>
         /// <param name="text">正文（Markdown）</param>
         /// <returns>空串外的任何内容 = 回执行文本（首行 JSON 头 + 摘要行 + 正文）；失败以 ERR| 开头</returns>
-        string SendProactiveTo(string botKey, string groupRef, string text);
+        string SendProactiveTo(string catId, string botKey, string groupRef, string text);
 
         /// <summary>
-        /// 本通道自述——池内每个机器人的连接状态、收/发能力与群目录摘要。
-        /// A381 落地前不带猫级过滤（catId 仅记录在回执头，不参与过滤）。
+        /// 本通道自述——A381 起按猫级绑定过滤：只列该猫绑定的机器人与其白名单内的群；
+        /// 未注入调用者 / 该猫未绑定时如实说明（不静默返回空表）。
         /// </summary>
         /// <param name="catId">调用者猫 key（宿主注入保留键，可空）</param>
         /// <returns>多行文本</returns>

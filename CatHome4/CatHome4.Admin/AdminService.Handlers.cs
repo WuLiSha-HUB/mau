@@ -419,6 +419,12 @@ namespace CatHome4.Admin
                 reasoningEffort = cfg.ReasoningEffort,
                 appearanceId = cfg.AppearanceId,
                 themeColor = cfg.ThemeColor,
+                // A381——猫级 QQ 渠道绑定（机器人 / 收信开关 / 渠道白名单 / 发言授权）
+                qqbotId = cfg.QqBotId,
+                qqbotEnable = cfg.QqBotEnable,
+                qqbotGroups = cfg.QqBotGroups,
+                qqbotCanSend = cfg.QqBotCanSend,
+                allQqBots = BuildAllQqBots(),
                 roundSummary = ResolveEffectiveRoundSummary(catKey),
                 defaultReasoningEffort = ResolveGlobalReasoningEffort(),
                 enabledRoots = cfg.EnabledRoots,
@@ -491,6 +497,14 @@ namespace CatHome4.Admin
             bool reasoningEffortPresent = false;
             bool appearanceIdPresent = false;
             bool themeColorPresent = false;
+            bool qqbotIdPresent = false;
+            bool qqbotEnablePresent = false;
+            bool qqbotGroupsPresent = false;
+            bool qqbotCanSendPresent = false;
+            string qqbotIdValue = "";
+            bool qqbotEnableValue = false;
+            bool qqbotCanSendValue = false;
+            List<string> qqbotGroups = new List<string>();
             string displayName = "";
             string persona = "";
             string typeValue = "";
@@ -524,6 +538,11 @@ namespace CatHome4.Admin
                     packsPresent = root.TryGetProperty("packs", out probeEl);
                     dbLibsPresent = root.TryGetProperty("dbLibs", out probeEl);
                     injectListPresent = root.TryGetProperty("injectList", out probeEl);
+                    // A381——猫级 QQ 渠道四字段（缺省 = 保留旧值，与其余字段同语义）
+                    qqbotIdPresent = root.TryGetProperty("qqbotId", out probeEl);
+                    qqbotEnablePresent = root.TryGetProperty("qqbotEnable", out probeEl);
+                    qqbotGroupsPresent = root.TryGetProperty("qqbotGroups", out probeEl);
+                    qqbotCanSendPresent = root.TryGetProperty("qqbotCanSend", out probeEl);
                     JsonElement apiConfigIdEl;
                     if (root.TryGetProperty("apiConfigId", out apiConfigIdEl))
                     {
@@ -542,6 +561,26 @@ namespace CatHome4.Admin
                     userInjectIdleOnly = GetBoolProp(root, "userInjectIdleOnly");
                     reasoningEffort = GetJsonString(root, "reasoningEffort");
                     appearanceIdValue = GetJsonString(root, "appearanceId");
+                    // A381——猫级 QQ 渠道四字段取值（qqbotGroups：渠道白名单，群别名 / 群名 / OpenID）
+                    qqbotIdValue = GetJsonString(root, "qqbotId");
+                    qqbotEnableValue = GetBoolProp(root, "qqbotEnable");
+                    qqbotCanSendValue = GetBoolProp(root, "qqbotCanSend");
+                    JsonElement qqGroupsEl;
+                    if (root.TryGetProperty("qqbotGroups", out qqGroupsEl) && qqGroupsEl.ValueKind == JsonValueKind.Array)
+                    {
+                        for (int i = 0; i < qqGroupsEl.GetArrayLength(); i = i + 1)
+                        {
+                            JsonElement item = qqGroupsEl[i];
+                            if (item.ValueKind == JsonValueKind.String)
+                            {
+                                string got = item.GetString();
+                                if (got != null && got.Trim().Length > 0)
+                                {
+                                    qqbotGroups.Add(got.Trim());
+                                }
+                            }
+                        }
+                    }
                     JsonElement themeColorEl;
                     if (root.TryGetProperty("themeColor", out themeColorEl))
                     {
@@ -767,13 +806,43 @@ namespace CatHome4.Admin
                 // 启用根校验——workspace 强制 + 全局池子集；池外 id 剔除并出声（A261）
                 cfg.EnabledRoots = ValidateEnabledRoots(enabledRoots.ToArray(), out removedEnabledRoots, out rootsPoolUnavailable);
             }
+            // A381——猫级 QQ 渠道四字段（空串 qqbotId = 解绑；群白名单空数组 = 目录内全部群）
+            if (qqbotIdPresent)
+            {
+                string trimmedBot = qqbotIdValue == null ? "" : qqbotIdValue.Trim();
+                if (trimmedBot.Length == 0 || trimmedBot == Guid.Empty.ToString("D"))
+                {
+                    cfg.QqBotId = "";
+                }
+                else
+                {
+                    Guid parsedBot;
+                    if (!Guid.TryParse(trimmedBot, out parsedBot) || parsedBot == Guid.Empty)
+                    {
+                        return Results.Json(new { ok = false, error = "qqbotId 非法（配置池机器人 ID 或空）" });
+                    }
+                    cfg.QqBotId = parsedBot.ToString("D");
+                }
+            }
+            if (qqbotEnablePresent)
+            {
+                cfg.QqBotEnable = qqbotEnableValue;
+            }
+            if (qqbotGroupsPresent)
+            {
+                cfg.QqBotGroups = qqbotGroups.ToArray();
+            }
+            if (qqbotCanSendPresent)
+            {
+                cfg.QqBotCanSend = qqbotCanSendValue;
+            }
             SaveCatCfgData(catKey, cfg);
             // 运行时生效——入队主线程泵（注册表/会话面仅主线程触碰）
             PostInput(MainInputTarget(), "catcfg.apply " + catKey);
             LogStore.Add("CatHome4", 1, "猫配置已受理：" + catKey + "（工具面 " + cfg.ToolNames + "）", "CONFIG");
             // A132 剔除出声——被剔名字随响应带回（调用方可见；明细已记日志，不静默）
             // 字段级合并写——回执取落盘实况（cfg.ToolNames），不取本次提交值（字段缺省时二者不同）
-            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames, dbLibs = cfg.DbLibs, enabledRoots = cfg.EnabledRoots, removedEnabledRoots = removedEnabledRoots, rootsPoolUnavailable = rootsPoolUnavailable });
+            return Results.Json(new { ok = true, cat = catKey, toolNames = cfg.ToolNames, removedToolNames = removedToolNames, dbLibs = cfg.DbLibs, enabledRoots = cfg.EnabledRoots, removedEnabledRoots = removedEnabledRoots, rootsPoolUnavailable = rootsPoolUnavailable, qqbotId = cfg.QqBotId, qqbotGroups = cfg.QqBotGroups });
         }
 
         /// <summary>

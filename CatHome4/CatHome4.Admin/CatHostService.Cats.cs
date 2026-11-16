@@ -798,9 +798,70 @@ namespace CatHome4.Admin
                     applied = applied + "｜⚠️ 全局根池不可用——白名单按空处理（仅常驻根可用）";
                 }
             }
+            else if (field == "qqbotId")
+            {
+                // A381——绑定机器人配置身份（空=解绑）；非空须 Guid
+                string trimmedBot = value == null ? "" : value.Trim();
+                if (trimmedBot.Length == 0)
+                {
+                    cfg.QqBotId = "";
+                    applied = "qqbotId=（已解绑）";
+                }
+                else
+                {
+                    Guid parsedBot;
+                    if (!Guid.TryParse(trimmedBot, out parsedBot) || parsedBot == Guid.Empty)
+                    {
+                        return "cat.cfg.set | qqbotId 非法值: " + value + "（配置池机器人 ID 或空）";
+                    }
+                    cfg.QqBotId = parsedBot.ToString("D");
+                    applied = "qqbotId=" + parsedBot.ToString("D");
+                }
+            }
+            else if (field == "qqbotEnable")
+            {
+                if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    cfg.QqBotEnable = true;
+                    applied = "qqbotEnable=true";
+                }
+                else if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+                {
+                    cfg.QqBotEnable = false;
+                    applied = "qqbotEnable=false";
+                }
+                else
+                {
+                    return "cat.cfg.set | qqbotEnable 非法值: " + value + "（true/false）";
+                }
+            }
+            else if (field == "qqbotGroups")
+            {
+                // A381——QQ 渠道白名单（群别名 / 群名 / OpenID；空=机器人目录内全部群）
+                string[] qqGroups = SplitList(value);
+                cfg.QqBotGroups = qqGroups;
+                applied = "qqbotGroups=" + (qqGroups.Length == 0 ? "（不限制——目录内全部群）" : JoinArray(qqGroups));
+            }
+            else if (field == "qqbotCanSend")
+            {
+                if (string.Equals(value, "true", StringComparison.OrdinalIgnoreCase))
+                {
+                    cfg.QqBotCanSend = true;
+                    applied = "qqbotCanSend=true";
+                }
+                else if (string.Equals(value, "false", StringComparison.OrdinalIgnoreCase))
+                {
+                    cfg.QqBotCanSend = false;
+                    applied = "qqbotCanSend=false";
+                }
+                else
+                {
+                    return "cat.cfg.set | qqbotCanSend 非法值: " + value + "（true/false）";
+                }
+            }
             else
             {
-                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId/themeColor）";
+                return "cat.cfg.set | 非法字段: " + field + "（可用: displayName/apiConfigId/persona/type/toolNames/injectList/packs/dbLibs/enabledRoots/userInjectIdleOnly/reasoningEffort/appearanceId/themeColor/qqbotId/qqbotEnable/qqbotGroups/qqbotCanSend）";
             }
             // [段2] 全量写回 + 生效入队（与端点同源：写后 catcfg.apply 主线程泵消费）
             SaveCatCfgData(id, cfg);
@@ -1233,6 +1294,10 @@ namespace CatHome4.Admin
                 int themeColor = 0;
                 bool roundSummary = false;
                 string petKind = "";
+                string qqBotId = "";
+                bool qqBotEnable = false;
+                string[] qqBotGroups = new string[0];
+                bool qqBotCanSend = false;
                 if (cfgData != null)
                 {
                     if (cfgData.Persona != null)
@@ -1265,6 +1330,17 @@ namespace CatHome4.Admin
                     // A244——roundSummary 迁入外观池：经猫 key 解析生效值（cat.cfg 不再持该字段）
                     roundSummary = ResolveEffectiveRoundSummary(id);
                     petKind = ResolveEffectivePetKind(id);
+                    // A381——QQ 渠道绑定（未绑定/未启用/全目录/不可发言 为缺省）
+                    if (cfgData.QqBotId != null)
+                    {
+                        qqBotId = cfgData.QqBotId;
+                    }
+                    qqBotEnable = cfgData.QqBotEnable;
+                    if (cfgData.QqBotGroups != null)
+                    {
+                        qqBotGroups = cfgData.QqBotGroups;
+                    }
+                    qqBotCanSend = cfgData.QqBotCanSend;
                 }
                 else
                 {
@@ -1301,6 +1377,11 @@ namespace CatHome4.Admin
                 meta.AppearanceId = appearanceId;
                 meta.ThemeColor = themeColor;
                 meta.RoundSummary = roundSummary;
+                // A381——QQ 渠道绑定四字段（收信 / 白名单 / 发言授权；推送面与工具面共用）
+                meta.QqBotId = qqBotId;
+                meta.QqBotEnable = qqBotEnable;
+                meta.QqBotGroups = qqBotGroups;
+                meta.QqBotCanSend = qqBotCanSend;
                 meta.ToolSpecs = catSpecs;
                 // §4.3 空值语义可观测——toolNames 空=全量保底（反直觉默认）：解析结果落审计行
                 string toolSource = "子集";

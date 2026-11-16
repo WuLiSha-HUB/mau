@@ -150,7 +150,64 @@ namespace Mau.Providers
             {
                 LogStore.Add("QQBot", 1, "QQBot | " + displayName + " | 私聊非命令（静默）: " + Truncate(OneLine(clean), 40), "QQBOT");
             }
-            // [段6] @ 推送订阅猫 → A381（每猫 qqbot 绑定与收发权限）
+            // [段6] @ 推送订阅猫（A381）——走 user 入口：对目标猫而言这就是「有人在跟我说话」
+            if (_catPush == null)
+            {
+                LogStore.Add("QQBot", 2, "QQBot | @ 推送未接线（宿主未注入推送委托）: " + Truncate(m.GroupOpenId, 12), "QQBOT");
+            }
+            else
+            {
+                PushMentionToCats(botKey, conn, m.GroupOpenId, m.SenderName, clean);
+            }
+        }
+
+        /// <summary>
+        /// @ 消息推送（A381）——服务侧只把「收到了一条群内 @」交出去；谁该收、投递到哪个入口归宿主。
+        /// </summary>
+        /// <param name="botKey">配置池机器人身份</param>
+        /// <param name="conn">连接（取 AppId 查群标签）</param>
+        /// <param name="groupOpenId">群 OpenID</param>
+        /// <param name="senderName">发送人显示名</param>
+        /// <param name="text">正文（已清洗）</param>
+        private void PushMentionToCats(string botKey, QqBotConnection conn, string groupOpenId, string senderName, string text)
+        {
+            string appId = conn == null ? "" : conn.AppId;
+            string alias;
+            string title;
+            ResolveGroupInfo(appId, groupOpenId, out alias, out title);
+            string err = _catPush(botKey, groupOpenId, alias, title, senderName, text);
+            if (err.Length > 0)
+            {
+                LogStore.Add("QQBot", 2, "QQBot | @ 推送失败（" + Truncate(groupOpenId, 12) + "）: " + err, "QQBOT");
+            }
+        }
+
+        /// <summary>
+        /// 群别名与群名（A381）——目录命中即取，未命中两值皆空（推送侧按 OpenID 仍可命中白名单）。
+        /// </summary>
+        /// <param name="appId">AppID</param>
+        /// <param name="groupOpenId">群 OpenID</param>
+        /// <param name="alias">输出：群别名（未知空串）</param>
+        /// <param name="title">输出：群名称（未知空串）</param>
+        private void ResolveGroupInfo(string appId, string groupOpenId, out string alias, out string title)
+        {
+            alias = "";
+            title = "";
+            if (_directory == null || appId.Length == 0)
+            {
+                return;
+            }
+            QqBotGroupDocument doc = _directory.Load(appId);
+            for (int i = 0; i < doc.Groups.Count; i = i + 1)
+            {
+                QqBotGroupEntry g = doc.Groups[i];
+                if (g != null && string.Equals(g.OpenId, groupOpenId, StringComparison.OrdinalIgnoreCase))
+                {
+                    alias = g.Alias == null ? "" : g.Alias;
+                    title = g.Title == null ? "" : g.Title;
+                    return;
+                }
+            }
         }
 
         /// <summary>

@@ -381,6 +381,17 @@
                 加载包挂载（packs——池内 key 子集；挂载后本猫可用 pack 工具按需注入；空=未挂载；池在「配置页 → 加载包池」管理）
             </label>
             <div id="catCfgPacks" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:5px"></div>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:10px;display:block">QQ 机器人绑定（qqbotId——该猫收谁的消息、用谁发言；空=未绑定，看不到任何 QQ 渠道）</label>
+            <select id="catCfgQqBot" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px"></select>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:8px;display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="catCfgQqEnable"> 收 QQ 群 @（qqbotEnable——true=群里 @ 本机器人时把消息推给这只猫，走用户输入入口）
+            </label>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:6px;display:flex;align-items:center;gap:6px;cursor:pointer">
+                <input type="checkbox" id="catCfgQqCanSend"> 允许发言（qqbotCanSend——true=本猫可用 qqbot-send 向渠道白名单内的群发消息）
+            </label>
+            <label style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:8px;display:block">收信渠道（qqbotGroups——群别名 / 群名 / OpenID，逗号分隔；空=该机器人目录内全部群）</label>
+            <input id="catCfgQqGroups" placeholder="如 猫窝, 施工群（留空=不限制）" style="width:100%;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:6px 8px;font-family:inherit;font-size:var(--ch-fs-tag);margin-top:3px">
+            <div id="catCfgQqGroupHint" style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-top:4px"></div>
             <div style="display:flex;gap:6px;margin-top:12px;justify-content:flex-end">
                 <button id="catCfgSave" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">保存</button>
                 <button id="catCfgCancel" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消</button>
