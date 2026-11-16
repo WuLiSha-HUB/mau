@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestResolveCsBridgeSource 桥源目录解析——显式覆盖优先，空取 <repo>/host/csbridge/bin/Debug/net10.0。
@@ -92,9 +93,11 @@ func TestCollectCsBridge(t *testing.T) {
 // TestRelaunchSkipsAutostartWhenHostRunning 自启前检（CH4 1.8.266 同因）——运行区已有宿主实例：
 // 跳过自启、不新增第二个实例（退出码 0，报告出「自启跳过」步骤）；无实例时才走起实例路径。
 func TestRelaunchSkipsAutostartWhenHostRunning(t *testing.T) {
-	prev := hostScanFindInDir
-	t.Cleanup(func() { hostScanFindInDir = prev })
-	hostScanFindInDir = func(dir string) ([]int, error) { return []int{4321, 4322}, nil }
+	prev := hostScanFindInDirDetail
+	t.Cleanup(func() { hostScanFindInDirDetail = prev })
+	hostScanFindInDirDetail = func(dir string) ([]hostProcess, error) {
+		return []hostProcess{{PID: 4321}, {PID: 4322}}, nil
+	}
 	// 段1b 清扫不参与本用例（target 为临时目录——mock 空结果，不依赖本机进程表）
 	prevKill := hostKillInDir
 	t.Cleanup(func() { hostKillInDir = prevKill })
@@ -123,7 +126,7 @@ func TestRelaunchSkipsAutostartWhenHostRunning(t *testing.T) {
 		t.Fatalf("报告缺「自启跳过」步骤：%+v", r.steps)
 	}
 	// 对照：无实例 → 运行区缺 exe → 起实例失败 → 需人工（证明上面是「跳过」而不是「碰巧没起」）
-	hostScanFindInDir = func(dir string) ([]int, error) { return nil, nil }
+	hostScanFindInDirDetail = func(dir string) ([]hostProcess, error) { return nil, nil }
 	r = &deployRun{o: deployOptions{Target: target, Mode: "host"}, mode: "relaunch"}
 	if code := r.relaunch(); code != deployExitManual {
 		t.Fatalf("无实例且运行区缺 exe 应需人工，got %d", code)
@@ -177,5 +180,118 @@ func TestSweepStrayHostsReports(t *testing.T) {
 	r.sweepStrayHostsBeforeSwitch()
 	if len(r.steps) != 1 || r.steps[0].Name != "清扫残留（切换前）" || !r.steps[0].OK {
 		t.Fatalf("切换前复扫应记带标签的步骤：%+v", r.steps)
+	}
+}
+
+// TestSplitHostsBySwitchTime 切换时刻分界——早于切换 = 陈旧（旧映像），晚于 / 等于 / 时刻不可读 = 承载。
+func TestSplitHostsBySwitchTime(t *testing.T) {
+	switchAt := time.Date(2026, 11, 16, 17, 54, 45, 0, time.Local)
+	cases := []struct {
+		name  string
+		host  hostProcess
+		stale bool
+	}{
+		{"切换前创建", hostProcess{PID: 33316, CreatedAt: switchAt.Add(-3 * time.Second)}, true},
+		{"切换后创建", hostProcess{PID: 40001, CreatedAt: switchAt.Add(2 * time.Second)}, false},
+		{"切换同刻", hostProcess{PID: 40002, CreatedAt: switchAt}, false},
+		{"创建时刻不可读", hostProcess{PID: 40003}, false},
+	}
+	for _, tc := range cases {
+		fresh, stale := splitHostsBySwitchTime([]hostProcess{tc.host}, switchAt)
+		if tc.stale {
+			if len(stale) != 1 || len(fresh) != 0 {
+				t.Fatalf("%s：应判陈旧，got fresh=%v stale=%v", tc.name, fresh, stale)
+			}
+			continue
+		}
+		if len(fresh) != 1 || len(stale) != 0 {
+			t.Fatalf("%s：应判承载，got fresh=%v stale=%v", tc.name, fresh, stale)
+		}
+	}
+	// 未替换运行区（switchedAt 零值）——没有「新产物」可比，全部按承载（沿用旧语义）
+	fresh, stale := splitHostsBySwitchTime([]hostProcess{{PID: 1, CreatedAt: switchAt.Add(-time.Hour)}}, time.Time{})
+	if len(fresh) != 1 || len(stale) != 0 {
+		t.Fatalf("零值切换时刻应全部按承载：fresh=%v stale=%v", fresh, stale)
+	}
+}
+
+// TestAutostartPrecheckSweepsStaleHost G32 判例——切换前创建的实例即使路径在运行区也必须清退；
+// 清退后无承载实例 → 要求起新实例（不能按「已有实例」跳过自启，否则报告 exit0 而跑旧代码）。
+func TestAutostartPrecheckSweepsStaleHost(t *testing.T) {
+	prevScan, prevKill, prevDelay := hostScanFindInDirDetail, hostKillByPID, staleRescanDelay
+	t.Cleanup(func() { hostScanFindInDirDetail, hostKillByPID, staleRescanDelay = prevScan, prevKill, prevDelay })
+	staleRescanDelay = 0
+	switchAt := time.Now()
+	calls := 0
+	hostScanFindInDirDetail = func(dir string) ([]hostProcess, error) {
+		calls++
+		if calls == 1 {
+			return []hostProcess{{PID: 33316, CreatedAt: switchAt.Add(-3 * time.Second)}}, nil
+		}
+		return nil, nil
+	}
+	var killed []int
+	hostKillByPID = func(pids []int) hostSweepResult {
+		killed = append(killed, pids...)
+		return hostSweepResult{PIDs: pids, Killed: len(pids)}
+	}
+	r := &deployRun{o: deployOptions{Target: t.TempDir()}, switchedAt: switchAt}
+	if !r.autostartPrecheck() {
+		t.Fatalf("陈旧实例清退后应要求起新实例（steps=%+v）", r.steps)
+	}
+	if len(killed) != 1 || killed[0] != 33316 {
+		t.Fatalf("应定向清退 pid 33316，got %v", killed)
+	}
+	if len(r.steps) != 1 || r.steps[0].Name != "陈旧实例清退（切换前创建）" || !r.steps[0].OK ||
+		!strings.Contains(r.steps[0].Detail, "pid 33316") || !strings.Contains(r.steps[0].Detail, "旧产物") {
+		t.Fatalf("应记陈旧实例清退步骤（含 pid 与依据）：%+v", r.steps)
+	}
+}
+
+// TestAutostartPrecheckAdoptsSupervisorInstance 陈旧实例清退后复扫——监督者已拉起新实例（创建晚于切换）
+// 时直接接手，不再起第二个（双实例）。
+func TestAutostartPrecheckAdoptsSupervisorInstance(t *testing.T) {
+	prevScan, prevKill, prevDelay := hostScanFindInDirDetail, hostKillByPID, staleRescanDelay
+	t.Cleanup(func() { hostScanFindInDirDetail, hostKillByPID, staleRescanDelay = prevScan, prevKill, prevDelay })
+	staleRescanDelay = 0
+	switchAt := time.Now()
+	calls := 0
+	hostScanFindInDirDetail = func(dir string) ([]hostProcess, error) {
+		calls++
+		if calls == 1 {
+			return []hostProcess{{PID: 33316, CreatedAt: switchAt.Add(-3 * time.Second)}}, nil
+		}
+		return []hostProcess{{PID: 40001, CreatedAt: switchAt.Add(time.Second)}}, nil
+	}
+	hostKillByPID = func(pids []int) hostSweepResult { return hostSweepResult{PIDs: pids, Killed: len(pids)} }
+	r := &deployRun{o: deployOptions{Target: t.TempDir()}, switchedAt: switchAt}
+	if r.autostartPrecheck() {
+		t.Fatalf("复扫到新产物实例应跳过自启（steps=%+v）", r.steps)
+	}
+	adopted := false
+	for _, step := range r.steps {
+		if step.Name == "自启跳过（运行区已有实例 pid 40001）" && step.OK && strings.Contains(step.Detail, "晚于本次切换") {
+			adopted = true
+		}
+	}
+	if !adopted {
+		t.Fatalf("应记「自启跳过」并标明创建晚于切换：%+v", r.steps)
+	}
+}
+
+// TestAutostartPrecheckNoSwitchKeepsOldSemantics 未替换运行区（host 模式）——没有「新产物」可比，
+// 运行区实例一律按承载处理（沿用旧语义，不误杀）。
+func TestAutostartPrecheckNoSwitchKeepsOldSemantics(t *testing.T) {
+	prevScan := hostScanFindInDirDetail
+	t.Cleanup(func() { hostScanFindInDirDetail = prevScan })
+	hostScanFindInDirDetail = func(dir string) ([]hostProcess, error) {
+		return []hostProcess{{PID: 4321, CreatedAt: time.Now().Add(-time.Hour)}}, nil
+	}
+	r := &deployRun{o: deployOptions{Target: t.TempDir()}}
+	if r.autostartPrecheck() {
+		t.Fatalf("host 模式应跳过自启（steps=%+v）", r.steps)
+	}
+	if len(r.steps) != 1 || r.steps[0].Name != "自启跳过（运行区已有实例 pid 4321）" || !r.steps[0].OK {
+		t.Fatalf("应记自启跳过步骤：%+v", r.steps)
 	}
 }

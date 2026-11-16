@@ -39,15 +39,19 @@ type hostProcess struct {
 	PID int
 	// Exe 可执行文件全路径
 	Exe string
+	// CreatedAt 进程创建时刻（零值 = 不可读——判据按「不误杀」处理）
+	CreatedAt time.Time
 }
 
 var (
 	// hostScanForeignInTarget 重启闸门前置探测（单测可替换——生产 = Windows API 枚举）。
 	hostScanForeignInTarget = detectForeignHostInTargetImpl
-	// hostScanFindInDir 部署自启前检枚举（单测可替换）。
-	hostScanFindInDir = findHostsInDirectoryImpl
+	// hostScanFindInDirDetail 部署自启前检枚举（带创建时刻——切换前 / 切换后实例的判据来源；单测可替换）。
+	hostScanFindInDirDetail = findHostsInDirectoryDetailImpl
 	// procQueryFullProcessImageNameW kernel32.dll——取进程映像全路径。
 	procQueryFullProcessImageNameW = syscall.NewLazyDLL("kernel32.dll").NewProc("QueryFullProcessImageNameW")
+	// procGetProcessTimes kernel32.dll——取进程创建时刻（FILETIME）。
+	procGetProcessTimes = syscall.NewLazyDLL("kernel32.dll").NewProc("GetProcessTimes")
 )
 
 // detectForeignHostInTargetImpl 探测目标运行区是否已被另一宿主实例占用——返回占用者描述（空 = 无占用）。
@@ -67,24 +71,33 @@ func detectForeignHostInTargetImpl(target string, logf func(level int, message, 
 	return ""
 }
 
-// findHostsInDirectoryImpl 枚举目标运行区内的宿主实例（只读——不结束进程；pid 归属由调用方判定）。
-func findHostsInDirectoryImpl(dir string) ([]int, error) {
+// findHostsInDirectoryDetailImpl 枚举目标运行区内的宿主实例（含创建时刻——只读，不结束进程）。
+//
+// 判据（2026-11-16 G32 判例）：路径落在运行区 **不足**以证明实例跑的是新产物——外部监督者
+// （并发协议面板 auto=true）可能在原子切换前从旧目录拉起实例，切换后其映像路径字符串仍显示
+// target\cathome5.exe，映射的却是旧文件。调用方按「进程创建时刻 vs 本次切换完成时刻」分界：
+// 晚于切换 = 新产物（承载服务）；早于切换 = 陈旧实例（须清退）。
+func findHostsInDirectoryDetailImpl(dir string) ([]hostProcess, error) {
 	hosts, err := listHostProcesses(nil)
 	if err != nil {
 		return nil, err
 	}
-	pids := make([]int, 0, 2)
+	matched := make([]hostProcess, 0, 2)
 	for _, host := range hosts {
-		if hostPathUnder(host.Exe, dir) {
-			pids = append(pids, host.PID)
+		if !hostPathUnder(host.Exe, dir) {
+			continue
 		}
+		if created, createdErr := queryProcessCreationTime(uint32(host.PID)); createdErr == nil {
+			host.CreatedAt = created
+		}
+		matched = append(matched, host)
 	}
-	return pids, nil
+	return matched, nil
 }
 
 // listStrayProcesses 枚举目标运行区内的残留进程（宿主 + cs 桥）——部署清扫面用。
 //
-// 与 findHostsInDirectoryImpl 的分工：那个只认宿主（自启前检 / 闸门前置——桥不算「已有实例」）；
+// 与 findHostsInDirectoryDetailImpl 的分工：那个只认宿主（自启前检 / 闸门前置——桥不算「已有实例」）；
 // 本函数认全清扫面（改名要的是「目录无人持有」）。
 func listStrayProcesses(dir string) ([]hostProcess, error) {
 	self := os.Getpid()
@@ -167,9 +180,11 @@ func listPIDsByImage(image string) ([]int, error) {
 	return pids, nil
 }
 
+// processQueryLimitedInformation OpenProcess 最低权限（取映像路径 / 创建时刻够用，不申请更高权限）。
+const processQueryLimitedInformation = 0x1000
+
 // queryProcessImagePath 取进程可执行文件全路径（PROCESS_QUERY_LIMITED_INFORMATION + QueryFullProcessImageNameW）。
 func queryProcessImagePath(pid uint32) (string, error) {
-	const processQueryLimitedInformation = 0x1000
 	handle, err := syscall.OpenProcess(processQueryLimitedInformation, false, pid)
 	if err != nil {
 		return "", err
@@ -187,6 +202,27 @@ func queryProcessImagePath(pid uint32) (string, error) {
 		return "", callErr
 	}
 	return syscall.UTF16ToString(buf[:size]), nil
+}
+
+// queryProcessCreationTime 取进程创建时刻（GetProcessTimes；FILETIME → 本地 time.Time）。
+func queryProcessCreationTime(pid uint32) (time.Time, error) {
+	handle, err := syscall.OpenProcess(processQueryLimitedInformation, false, pid)
+	if err != nil {
+		return time.Time{}, err
+	}
+	defer syscall.CloseHandle(handle)
+	var creation, exit, kernel, user syscall.Filetime
+	ret, _, callErr := procGetProcessTimes.Call(
+		uintptr(handle),
+		uintptr(unsafe.Pointer(&creation)),
+		uintptr(unsafe.Pointer(&exit)),
+		uintptr(unsafe.Pointer(&kernel)),
+		uintptr(unsafe.Pointer(&user)),
+	)
+	if ret == 0 {
+		return time.Time{}, callErr
+	}
+	return time.Unix(0, creation.Nanoseconds()), nil
 }
 
 // hostPathUnder 判断可执行路径是否落在目录下（大小写不敏感；目录取绝对路径 + 分隔符边界）。
@@ -247,6 +283,8 @@ const (
 var (
 	// hostKillInDir 部署 relaunch 残留实例清扫（单测可替换）。
 	hostKillInDir = sweepHostsInDirectoryImpl
+	// hostKillByPID 自启前检的陈旧实例定向清退（单测可替换）。
+	hostKillByPID = sweepHostsByPID
 	// procEnumWindows 枚举顶层窗口（user32DLL / procPostMessageW 复用 tray_windows.go 的声明）。
 	procEnumWindows = user32DLL.NewProc("EnumWindows")
 	// procGetWindowThreadProcessID 窗口归属进程。
@@ -297,33 +335,52 @@ func sweepHostsInDirectoryImpl(dir string) (hostSweepResult, error) {
 		return res, err
 	}
 	for _, stray := range strays {
-		pid := stray.PID
-		res.PIDs = append(res.PIDs, pid)
-		if closeMainWindowGracefully(pid) && waitProcessGoneMS(pid, closeMainWindowWaitMS) {
-			res.Graceful++
-			fmt.Println("[部署] 残留宿主已正常退出：pid " + strconv.Itoa(pid))
-			continue
-		}
-		if err := terminateProcessByPID(pid); err != nil {
-			// 进程可能已自然退出（wait 后仍残留在 tasklist 枚举里）：再判一次活，已消失按处置成功计
-			// （判例 2026-11-15：incr 接力清扫把刚退出的旧宿主报成「失败 1 个」——假红）。
-			if !processAlive(pid) {
-				res.Killed++
-				fmt.Println("[部署] 残留宿主已自行退出：pid " + strconv.Itoa(pid))
-				continue
-			}
-			res.Failed++
-			fmt.Println("[部署] 警告：结束残留宿主失败（pid " + strconv.Itoa(pid) + "）：" + err.Error())
-			continue
-		}
-		waitProcessGoneMS(pid, killWaitMS)
-		res.Killed++
-		fmt.Println("[部署] 残留宿主已强制结束：pid " + strconv.Itoa(pid))
+		sweepOneHost(stray.PID, &res)
 	}
 	if res.Killed > 0 {
 		time.Sleep(1 * time.Second)
 	}
 	return res, nil
+}
+
+// sweepHostsByPID 结束指定的宿主实例（自启前检判出的「切换前创建」陈旧实例）——判据已由调用方定，此处只做处置。
+//
+// 与 sweepHostsInDirectoryImpl 的分工：那个按目录枚举全部清扫；本函数按 pid 定向处置——
+// 同一目录里可能同时存在「切换后创建的新实例」（不得误杀）与「切换前创建的陈旧实例」（须清退）。
+func sweepHostsByPID(pids []int) hostSweepResult {
+	var res hostSweepResult
+	for _, pid := range pids {
+		sweepOneHost(pid, &res)
+	}
+	if res.Killed > 0 {
+		time.Sleep(1 * time.Second)
+	}
+	return res
+}
+
+// sweepOneHost 处置单个残留宿主实例（优雅关 ≤2 s → 强杀 ≤3 s；已自行退出按处置成功计）。
+func sweepOneHost(pid int, res *hostSweepResult) {
+	res.PIDs = append(res.PIDs, pid)
+	if closeMainWindowGracefully(pid) && waitProcessGoneMS(pid, closeMainWindowWaitMS) {
+		res.Graceful++
+		fmt.Println("[部署] 残留宿主已正常退出：pid " + strconv.Itoa(pid))
+		return
+	}
+	if err := terminateProcessByPID(pid); err != nil {
+		// 进程可能已自然退出（wait 后仍残留在 tasklist 枚举里）：再判一次活，已消失按处置成功计
+		// （判例 2026-11-15：incr 接力清扫把刚退出的旧宿主报成「失败 1 个」——假红）。
+		if !processAlive(pid) {
+			res.Killed++
+			fmt.Println("[部署] 残留宿主已自行退出：pid " + strconv.Itoa(pid))
+			return
+		}
+		res.Failed++
+		fmt.Println("[部署] 警告：结束残留宿主失败（pid " + strconv.Itoa(pid) + "）：" + err.Error())
+		return
+	}
+	waitProcessGoneMS(pid, killWaitMS)
+	res.Killed++
+	fmt.Println("[部署] 残留宿主已强制结束：pid " + strconv.Itoa(pid))
 }
 
 // ---------- 服务进程清扫（py / ts / browser —— 部署 relaunch 段1b 第二面）----------

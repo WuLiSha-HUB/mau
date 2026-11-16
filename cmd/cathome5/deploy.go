@@ -41,6 +41,11 @@ const (
 	csBridgeExeName = "MauCsBridge.exe"
 )
 
+// staleRescanDelay 陈旧实例清退后的复扫窗口——外部监督者（并发协议面板 auto）可能在毫秒级重新拉起实例。
+//
+// 可变（非 const）：单测置 0 去掉等待。
+var staleRescanDelay = 600 * time.Millisecond
+
 // deployOptions 是三模式的共用参数（未用到的模式忽略多余参数）。
 type deployOptions struct {
 	// Target 运行区目录
@@ -127,6 +132,11 @@ type deployRun struct {
 	reportPath string
 	// startedAt 本次执行起算时刻（重启用时 = 接力起算 → 新宿主拉起前一刻）
 	startedAt time.Time
+	// switchedAt 本次原子切换完成时刻（零值 = 运行区未替换）
+	//
+	// 判据分界：晚于它创建的宿主实例加载的是新产物（承载服务可跳过自启）；
+	// 早于它创建的实例映射旧映像（陈旧——必须清退，否则报告 exit0 而内存跑旧代码）。
+	switchedAt time.Time
 }
 
 // add 记一步。
@@ -364,6 +374,8 @@ func (r *deployRun) deploy() error {
 		}
 		return fmt.Errorf("切换失败（_new→target，已重试 10×500 ms）: %w；%s", err, cwdHolderDiagnostics(r.o.Target))
 	}
+	// 切换完成时刻 = 新产物在 target 路径可见的那一瞬——自启前检的判据分界（见 relaunch 段4c）。
+	r.switchedAt = time.Now()
 	r.add("switch", true, targetNew+" → "+r.o.Target+"（版本 "+version+"）")
 	r.artifacts["version"] = version
 	return nil
@@ -470,20 +482,20 @@ func (r *deployRun) relaunch() (exitCode int) {
 	r.reportDeployReportPath()
 	// [段4c] 自启前检（CH4 1.8.266 同因）——目标运行区已有宿主实例在跑：跳过自启，不新增第二个实例。
 	//        判例 2026-11-13：deploy 原子切换失败后自启又拉起一个，运行区并存两个宿主（服务假象 + dll 持锁）。
-	runningHosts, scanErr := hostScanFindInDir(r.o.Target)
-	if scanErr != nil {
-		fmt.Println("[自启前检] 宿主进程扫描失败（按无实例继续）: " + scanErr.Error())
-	}
+	//        🔴 判例 2026-11-16（G32 假绿）：「路径落在运行区」不等于「跑的是新产物」——外部监督者
+	//        （并发协议面板 auto=true，pid 10700）在 switch 前从旧目录拉起 pid 33316，切换后其映像路径仍显示
+	//        target\cathome5.exe，内存里却是旧映像；上一版按「有实例」跳过自启 → 报告 exit0 而行为照旧。
+	//        判据：进程创建时刻 vs 本次切换完成时刻（段3 记录的 switchedAt）——早于切换的一律清退。
 	bootOK := false
-	if len(runningHosts) > 0 {
-		hostList := joinHostPIDs(runningHosts)
-		fmt.Println("[部署] 运行区已有宿主实例在跑（pid " + hostList + "）——跳过自启，不新增第二个实例。")
-		r.add("自启跳过（运行区已有实例 pid "+hostList+"）", true, "服务由已有实例承载；本次未新增进程")
-		bootOK = true
-	} else {
+	bootPID := 0
+	if r.autostartPrecheck() {
 		// [段5] 起新实例（带 --majordomopush）+ 探活
-		bootOK, _ = r.bootAndProbe(version, push)
+		bootOK, bootPID = r.bootAndProbe(version, push)
+	} else {
+		bootOK = true
 	}
+	// [段4d] 自启自检——本次拉起的新实例创建时刻必须晚于切换完成时刻（否则映射的是旧映像）。
+	r.verifyBootedFromNewArtifact(bootPID)
 	// [段6] 回退——仅本次已替换时 _old 才是有效回退源（最坏 = 原地重启）
 	if !bootOK && replaced {
 		return r.rollback(version, "自启 / 探活失败")
@@ -496,6 +508,114 @@ func (r *deployRun) relaunch() (exitCode int) {
 		return deployExitOK
 	}
 	return deployExitNotReplaced
+}
+
+// autostartPrecheck 自启前检（段4c）——返回 true = 无承载实例，需要起新实例。
+//
+// 三步：① 按「创建时刻 vs 切换完成时刻」把运行区实例分成承载（新产物）/ 陈旧（旧映像）；
+// ② 陈旧实例定向清退（它们占着「已有实例」的名义，实际跑的是被替换掉的旧代码）；
+// ③ 清退后复扫一次——外部监督者可能在实例离线瞬间拉起新实例（创建晚于切换 = 新产物），直接接手。
+func (r *deployRun) autostartPrecheck() bool {
+	hosts, scanErr := hostScanFindInDirDetail(r.o.Target)
+	if scanErr != nil {
+		fmt.Println("[自启前检] 宿主进程扫描失败（按无实例继续）: " + scanErr.Error())
+	}
+	for _, host := range hosts {
+		if host.CreatedAt.IsZero() {
+			fmt.Println("[自启前检] pid " + strconv.Itoa(host.PID) + " 创建时刻不可读（按承载处理，不误杀无法取证的进程）")
+		}
+	}
+	fresh, stale := splitHostsBySwitchTime(hosts, r.switchedAt)
+	if len(stale) > 0 {
+		swept := hostKillByPID(hostPIDsOf(stale))
+		detail := "另结束 " + strconv.Itoa(swept.Graceful+swept.Killed) + " 个切换前创建的同目录宿主实例（pid " +
+			joinHostPIDs(swept.PIDs) + "；优雅关 " + strconv.Itoa(swept.Graceful) + " / 强杀 " +
+			strconv.Itoa(swept.Killed) + "）——映像早于本次切换，跑的是旧产物"
+		if swept.Failed > 0 {
+			detail += "；失败 " + strconv.Itoa(swept.Failed) + " 个（见日志）"
+		}
+		r.add("陈旧实例清退（切换前创建）", swept.Failed == 0, detail)
+		time.Sleep(staleRescanDelay)
+		if rescan, err := hostScanFindInDirDetail(r.o.Target); err == nil {
+			if adopted, _ := splitHostsBySwitchTime(rescan, r.switchedAt); len(adopted) > 0 {
+				fresh = adopted
+			}
+		}
+	}
+	if len(fresh) == 0 {
+		return true
+	}
+	hostList := joinHostPIDs(hostPIDsOf(fresh))
+	fmt.Println("[部署] 运行区已有宿主实例在跑（pid " + hostList + "）——跳过自启，不新增第二个实例。")
+	detail := "服务由已有实例承载；本次未新增进程"
+	if !r.switchedAt.IsZero() {
+		detail = "服务由已有实例承载（" + describeHostCreatedAt(fresh) + "，晚于本次切换 " +
+			r.switchedAt.Format("15:04:05") + "——运行新产物）；本次未新增进程"
+	}
+	r.add("自启跳过（运行区已有实例 pid "+hostList+"）", true, detail)
+	return false
+}
+
+// splitHostsBySwitchTime 按切换完成时刻分界实例——fresh = 承载新产物（可跳过自启），stale = 陈旧（须清退）。
+//
+// switchedAt 为零值 = 本次未替换运行区（host 模式 / deploy 失败）：没有「新产物」可比，全部按承载处理
+// （沿用旧语义——此时跳过自启不构成假绿）。创建时刻不可读 = 无法取证，按承载处理（不误杀）。
+func splitHostsBySwitchTime(hosts []hostProcess, switchedAt time.Time) (fresh, stale []hostProcess) {
+	if switchedAt.IsZero() {
+		return hosts, nil
+	}
+	for _, host := range hosts {
+		if host.CreatedAt.IsZero() || !host.CreatedAt.Before(switchedAt) {
+			fresh = append(fresh, host)
+			continue
+		}
+		stale = append(stale, host)
+	}
+	return fresh, stale
+}
+
+// hostPIDsOf 取进程记录的 pid 列表（报告与清扫入参）。
+func hostPIDsOf(hosts []hostProcess) []int {
+	pids := make([]int, 0, len(hosts))
+	for _, host := range hosts {
+		pids = append(pids, host.PID)
+	}
+	return pids
+}
+
+// describeHostCreatedAt 承载实例的创建时刻描述（多实例取首个；不可读明示）。
+func describeHostCreatedAt(hosts []hostProcess) string {
+	if len(hosts) == 0 {
+		return "创建时刻未知"
+	}
+	if hosts[0].CreatedAt.IsZero() {
+		return "pid " + strconv.Itoa(hosts[0].PID) + " 创建时刻不可读"
+	}
+	return "pid " + strconv.Itoa(hosts[0].PID) + " 创建 " + hosts[0].CreatedAt.Format("15:04:05")
+}
+
+// verifyBootedFromNewArtifact 自启自检（段4d）——新实例创建时刻必须晚于切换完成时刻。
+//
+// 判据单向：早于切换 = 映射旧映像（不可能来自本次自启，出现即说明有外部实例混入）；
+// 只在实际起了新实例（pid > 0）且本次确实替换了运行区时判——其余形态没有「新产物」可对。
+func (r *deployRun) verifyBootedFromNewArtifact(pid int) {
+	if pid <= 0 || r.switchedAt.IsZero() {
+		return
+	}
+	created, err := queryProcessCreationTime(uint32(pid))
+	if err != nil {
+		r.add("自启自检", false, "pid "+strconv.Itoa(pid)+" 创建时刻不可读: "+err.Error())
+		return
+	}
+	ok := !created.Before(r.switchedAt)
+	detail := "pid " + strconv.Itoa(pid) + " 创建 " + created.Format("15:04:05") + " vs 切换 " +
+		r.switchedAt.Format("15:04:05") + "——"
+	if ok {
+		detail += "运行新产物"
+	} else {
+		detail += "创建早于切换，映射旧映像"
+	}
+	r.add("自启自检", ok, detail)
 }
 
 // reportDeployResult 把接力部署结论写进重启现场（relay 侧）——部署报告是唯一来源。
