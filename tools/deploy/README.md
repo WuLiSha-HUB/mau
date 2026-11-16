@@ -24,14 +24,17 @@
 ```
 [本地 Windows]
   1. git pull（保证源码最新）
-  2. dotnet publish CatHome4/CatHome4.csproj -c Debug -r linux-x64 --self-contained false -o <out>
-  3. tar -czf ch4-linux.tar.gz -C <out> .
-  4. scp ch4-linux.tar.gz cathome:/srv/inbox/
+  2. powershell -File tools\deploy\push-app.ps1
+     ├─ 调 SetUp publish-linux：build+test 门禁 → 18 组组翻译 → linux-x64 交叉发布 → public/app-linux
+     │    └─ 写 version.txt（props 现值，不自增）+ buildinfo.txt（commit / dirty=false）
+     ├─ tar 打包 → scp → cathome:/srv/inbox/ch4-app.tar.gz
+     └─ 只投递——不碰远端产物区
 
 [Linux（cathome-linux）]
-  5. ssh cathome "sudo bash /cathome4/mau/tools/deploy/apply.sh /tmp/ch4-linux.tar.gz"
-     └─ 解包 → Flows 继承 → 权限归一 → 完整性闸 → 停服 → 原子切换 → 启服 → 探活（15 s）
-        └─ 探活失败：整目录回滚到上一版本
+  3. sudo bash /cathome4/mau/tools/deploy/take-app.sh ch4-app.tar.gz
+     └─ 解包 → 结构闸（buildinfo.txt + CatHome4）→ 指纹闸（commit==仓库 HEAD）→ Flows 继承 → 权限归一 → 原子落位（旧 app 留 app.prev）→ 源包归档 _done/
+  4. restart-incr（猫会话）
+     └─ 产物区 → 运行区：前置探活 → 停服前搬运切换 → 自启交 systemd → 回执
 ```
 
 ## 二点五、`take-app.sh` —— 投放区取包（2026-11-16 增）
@@ -65,7 +68,7 @@
 | 绑定 | `CH4_HTTP_BIND=0.0.0.0`（unit 内已设）；探活走 `127.0.0.1:8080/api/v1/auth/status` |
 | 运行用户 | `cathome`；包内权限由脚本统一 `chown -R cathome:cathome` + `chmod -R g+rX` |
 | 首次部署 | 仍需在 Linux 上跑一次 `SetUp prepare`（生成 `Mau-public/` 与 `Flows/`），此后走本链路 |
-| 版本 | 本地 publish 用仓库 `Directory.Build.props` 的版本，Linux 侧不再自增 |
+| 版本 | **Linux 链不自增版本**——`SetUp publish-linux` 只读 `Directory.Build.props` 现值；代际（版本号）由本地 `prepare` 产生（唯一自增点）。理由：同一份源码产 Windows / Linux 两个形态，若两处都自增会给同一源码两个代际号 |
 | 回滚 | `mauout.old` 仅探活成功前保留；成功后删除 |
 | 数据 | 与产物完全分离（`CH4_DATA_ROOT=/cathome4/data`），切换不动数据 |
 
