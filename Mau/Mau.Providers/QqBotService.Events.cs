@@ -151,15 +151,17 @@ namespace Mau.Providers
             {
                 handled = PushMentionToCats(botKey, conn, m.GroupOpenId, m.SenderName, clean);
             }
-            // [段6] 无人接手才回提示——有猫接了这条消息就静默：由猫自己经 qqbot-send 说话，
-            //       机制不再插嘴（否则「猫正在回答」与「仅支持 / 指令」两条声音同时出现在群里）
+            // [段6] 回调路径收尾（A381）——两条路径互不掺杂：
+            //   ① `/` 开头 = 指令路径（段4 已直执并 return，永不进这里）
+            //   ② 非 `/` 开头 = 回调路径：推送成功即静默（由猫用 qqbot-send 回答），推送失败必须发声——
+            //      「没人接」这件事对群里的人是信息，不能藏（失败必须可见）
             if (handled)
             {
                 return;
             }
             if (isGroup)
             {
-                ReplyPassive(conn, true, m.GroupOpenId, m.MsgId, "**仅支持 / 指令**，使用 `/help` 查看指令集");
+                ReplyPassive(conn, true, m.GroupOpenId, m.MsgId, "**该推送无 Cat 接收**，请检查 CatHome");
             }
             else
             {
