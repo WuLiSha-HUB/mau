@@ -46,6 +46,6 @@
     /// <param name="groupTitle">群名称（官方 / 人工；未知为空串）</param>
     /// <param name="senderName">发送人显示名</param>
     /// <param name="text">消息正文（已清洗）</param>
-    /// <returns>空串=已处理（含无人订阅）；否则为失败说明（服务侧记日志出声）</returns>
+    /// <returns>空串=有猫受理（机制静默，由猫自己发言）· <c>NO_TARGET</c>=无人订阅（服务侧回指令提示）· 其余=失败说明（服务侧记日志出声）</returns>
     public delegate string QqBotCatPushHandler(string botKey, string groupOpenId, string groupAlias, string groupTitle, string senderName, string text);
 }

@@ -50,7 +50,7 @@ namespace CatHome4.Admin
         /// <param name="groupTitle">群名称（未知空串）</param>
         /// <param name="senderName">发送人显示名</param>
         /// <param name="text">消息正文</param>
-        /// <returns>空串=已处理（含无人订阅）；否则为失败说明</returns>
+        /// <returns>空串=有猫受理 · "NO_TARGET"=无人订阅 · 其余=失败说明</returns>
         internal static string PushQqMention(string botKey, string groupOpenId, string groupAlias, string groupTitle, string senderName, string text)
         {
             List<string> targets = new List<string>();
@@ -71,8 +71,8 @@ namespace CatHome4.Admin
             }
             if (targets.Count == 0)
             {
-                LogStore.Add("QQBot", 1, "QQBot | 群 @" + Truncate(GroupLabel(groupAlias, groupTitle, groupOpenId), 16) + " | 无猫订阅（绑定+群白名单）——仅留档", "QQBOT");
-                return "";
+                // 无人订阅不是失败——服务侧据此回「仅支持 / 指令」提示（A381：有猫接就静默）
+                return "NO_TARGET";
             }
             string label = GroupLabel(groupAlias, groupTitle, groupOpenId);
             string content = "[来自QQ:" + label + "]\n" + (senderName == null || senderName.Length == 0 ? "（未知发送人）" : senderName) + "：" + text;
