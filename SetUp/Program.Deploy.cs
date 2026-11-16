@@ -136,8 +136,8 @@ namespace SetUp
                 Console.WriteLine("[SetUp] ⚠ 音频资产复制失败：" + assetsDetail);
             }
 
-            // [段4] 版本落盘——version.txt（读取 Directory.Build.props 单点 Version；写新目录）
-            string version = ReadVersion(repoRoot);
+            // [段4] 版本落盘——version.txt（优先产物区自带的 version.txt，缺失才回落 Directory.Build.props 单点 Version；写新目录）
+            string version = ResolveDeployVersion(repoRoot, sourceDir);
             long verMs = Environment.TickCount64;
             bool verOk = true;
             try

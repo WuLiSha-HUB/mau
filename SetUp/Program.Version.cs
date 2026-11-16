@@ -138,5 +138,44 @@ namespace SetUp
             }
             return true;
         }
+
+        /// <summary>
+        /// 解析待部署版本的落盘口径——优先产物区自带的 version.txt（产物代际），缺失或为空才回落仓库单点 Version。
+        /// <para>
+        /// 动机（2026-11-16）：deploy / incr 的产物来自产物区（可由开发机 push-app 推送），其版本与本机仓库源码版本
+        /// 无必然关系。只读仓库源码会让 version.txt 与重启回执报旧版本（远端源码落后时显形），
+        /// 而实际运行的宿主已是新产物——报告面与实况面分叉，人只能看回执。
+        /// </para>
+        /// </summary>
+        /// <param name="repoRoot">仓库根（回落源）</param>
+        /// <param name="sourceDir">产物区目录（public/app；空 = 直接回落）</param>
+        /// <returns>版本号（产物区优先；都拿不到时回落 ReadVersion 的返回值，可能是 unknown）</returns>
+        private static string ResolveDeployVersion(string repoRoot, string sourceDir)
+        {
+            // [段1] 产物区 version.txt 优先——它就是即将被搬进运行区的那份产物自述的版本
+            if (sourceDir.Length > 0)
+            {
+                string artifactPath = Path.Combine(sourceDir, "version.txt");
+                try
+                {
+                    if (File.Exists(artifactPath))
+                    {
+                        string text = File.ReadAllText(artifactPath).Trim();
+                        if (text.Length > 0)
+                        {
+                            Console.WriteLine("[SetUp] 版本来源: 产物区 version.txt");
+                            return text;
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("[SetUp] 警告：产物区 version.txt 读取失败——回落仓库版本：" + ex.Message);
+                }
+            }
+            // [段2] 回落——仓库单点 Version（产物区没有版本自述时的唯一可用口径）
+            Console.WriteLine("[SetUp] 版本来源: 仓库 Directory.Build.props（产物区无 version.txt）");
+            return ReadVersion(repoRoot);
+        }
     }
 }

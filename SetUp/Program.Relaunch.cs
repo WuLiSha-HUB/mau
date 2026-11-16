@@ -143,7 +143,8 @@ namespace SetUp
             }
 
             // [段4] 拼回执注入串——由 SetUp 生成（非 LLM 自述），带模式 / 部署结论 / 产物时间戳 / 重启用时（A116）
-            string version = ReadVersion(repoRoot);
+            //       版本同源取产物区（ResolveDeployVersion）——只读仓库源码会在远端源码落后时报旧版本
+            string version = ResolveDeployVersion(repoRoot, Path.Combine(repoRoot, "public", "app"));
             string reportPath = ExtractOption(args, "--report");
 
             // [段4b] 前置报告落盘（A136）——自启前先落一版（Complete=false）：读者（含回执引导）任何时刻都能读到文件，
@@ -270,7 +271,8 @@ namespace SetUp
                 _steps.Add(new StepReport() { Step = 13, Name = "替换跳过（mode=host——原地重启）", Ok = true, Ms = Environment.TickCount64 - depMs });
             }
             // [段5] 回执落盘——新宿主由服务管理器无参启动，没有 --majordomopush 通道，改走数据根待注入文件（宿主启动读后即删）
-            string version = ReadVersion(repoRoot);
+            //       版本同源取产物区——与 version.txt 落盘口径一致（报告面与运行实物对齐）
+            string version = ResolveDeployVersion(repoRoot, Path.Combine(repoRoot, "public", "app"));
             string push = BuildPushText(mode, true, replaced, version, targetFull, pushIn, reportPath, Environment.TickCount64 - relaunchStartMs);
             push = push + Environment.NewLine + "说明: 托管环境——自启由服务管理器承担（重启链不亲自拉起宿主）";
             bool pushOk = WriteRestartPush(push);
