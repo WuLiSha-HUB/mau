@@ -52,6 +52,8 @@ const POOL = [
     // GroupCat 8（A306 / A309 / A322——群聊 / 派单回执 / 会话重建 / 组内配置面）
     'group-info', 'group-inbox', 'group-post', 'group-delegate', 'group-newsession',
     'group-catinfo', 'group-catcfg-get', 'group-catcfg-set',
+    // QqBotCat 4（A392——QQ 机器人通道：发言 / 通道自述 / 机器人详情 / 群目录）
+    'qqbot-send', 'qqbot-info', 'qqbot-botinfo', 'qqbot-groups',
     // 内置 11
     'info', 'Note', 'time', 'random', 'pack', 'host-reload', 'host-flows', 'sleep', 'timer', 'timeback-start', 'timeback-back'
 ].sort();
@@ -75,9 +77,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 97 件', () => {
+    it('落位表 = 工具池 101 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(97);
+        expect(POOL.length).toBe(101);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -689,5 +691,65 @@ describe('GroupCat——群聊 / 派单工具（A306）', () => {
         const err = window.buildToolBlock(card('group-delegate', { group: '猫窝施工大队', to: 'x', text: 'y' },
             'ERR|GROUP_NOT_MEMBER|调用者不是本组成员: k9'), 'toolcard');
         expect(err.textContent).toContain('GROUP_NOT_MEMBER');
+    });
+});
+
+describe('QqBotCat——QQ 机器人通道四件（A392）', () => {
+    it('qqbot-send——目标群进意图行，折叠行读投递结果，正文逐行', () => {
+        const res = '猫窝 · CCAEC46C | 主动消息已投递\n机器人: CatHome · 群内主动发言权限: 允许';
+        const node = window.buildToolBlock(card('qqbot-send', { text: '今天继续推进 A392', group: '猫窝' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('群 猫窝');
+        expect(text).toContain('正文 今天继续推进 A392');
+        expect(text).toContain('QQ 发言 猫窝 · 已投递');
+        expect(text).toContain('主动消息已投递');
+        expect(text).toContain('机器人: CatHome');
+    });
+
+    it('qqbot-send——失败态机器码可见（不静默成空白）', () => {
+        const res = 'ERR|QQBOT_NOT_BOUND|调用者猫无 QQ 绑定（cat1）——先在控制台「猫配置」里绑定机器人\n目标: 猫窝';
+        const node = window.buildToolBlock(card('qqbot-send', { text: 'hi', group: '猫窝' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('QQ 发言 猫窝 · 失败');
+        expect(text).toContain('QQBOT_NOT_BOUND');
+    });
+
+    it('qqbot-info——折叠行读绑定机器人，正文保留通道与开关行', () => {
+        const res = 'QQBot 通道 · 猫: cat1\n· 绑定 4f2a · 收信 开 · 发言 开 · 渠道 （不限制——目录内全部群）\n· CatHome（默认）· production · 已连接 · 群: 猫窝';
+        const node = window.buildToolBlock(card('qqbot-info', {}, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('QQBot 通道 · 绑定 4f2a');
+        expect(text).toContain('收信 开');
+        expect(text).toContain('已连接');
+    });
+
+    it('qqbot-botinfo——首行汇总进折叠行，逐群列条目', () => {
+        const res = 'QQBot | CatHome · AppID 1020xxxx · 群 2 个\n· 猫窝 · CCAEC46C · 角色: member · 收信: 全部 · 主动发言: 允许 · 最近: 2026-11-17\n· 测试群 · 11AA22BB · ⚠️ 未确认（刷新失败于 2026-11-16，可能已退群或接口无权限；可用 action=remove 清理） · 最近: —\n发言白名单: 未限制（目录内全部可发）';
+        const node = window.buildToolBlock(card('qqbot-botinfo', { bot: '' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('机器人详情 默认机器人 · 群 2 个');
+        expect(text).toContain('猫窝 · CCAEC46C');
+        expect(text).toContain('未确认');
+        expect(text).toContain('发言白名单');
+    });
+
+    it('qqbot-groups——alias 动作单行结果，折叠行标动作', () => {
+        const res = '别名已设置: 猫窝 → 窝';
+        const node = window.buildToolBlock(card('qqbot-groups', { action: 'alias', group: '猫窝', alias: '窝' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('动作 alias');
+        expect(text).toContain('群 猫窝');
+        expect(text).toContain('别名 窝');
+        expect(text).toContain('群目录 alias');
+        expect(text).toContain('别名已设置');
+    });
+
+    it('qqbot-groups——refresh 汇总进折叠行，逐群结果与成功行保留', () => {
+        const res = '刷新官方状态 · CatHome · 群 2 个\n· 猫窝 · CCAEC46C → 已刷新\n· 测试群 · 11AA22BB → 未确认（官方接口不可用——可能已退群或接口无权限；可用 action=remove 清理）\n成功 1 / 2';
+        const node = window.buildToolBlock(card('qqbot-groups', { action: 'refresh' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('群目录 refresh · 成功 1 / 2');
+        expect(text).toContain('已刷新');
+        expect(text).toContain('未确认');
     });
 });

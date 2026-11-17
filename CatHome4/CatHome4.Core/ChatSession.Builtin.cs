@@ -237,9 +237,9 @@ namespace CH4
         /// <summary>
         /// timer 执行体——登记延迟指令注入（design-ch4-delay §5.4）：本轮正常继续（不挂起、不阻塞），
         /// 到点由调度器注入登记内容。与 sleep 的差别 = 不因主干启动而销毁（闹钟语义）+ 不置工具主动 done（本轮照常自然收尾）。
-        /// 参数面：content（必填，非空）+ hours/minutes/seconds（合计 1..86400 秒）+ loop（可缺省=false，触发后按投递时刻 + 时长重排）。
+        /// 两条路径（互斥）：相对时长 hours/minutes/seconds（1..86400 秒，loop=true 为周期）+ 绝对时刻 at（HH:mm / yyyy-MM-dd HH:mm，repeat=daily 为按天循环）。
         /// </summary>
-        /// <param name="argsJson">参数 JSON（content 必填；hours/minutes/seconds/loop 可缺省）</param>
+        /// <param name="argsJson">参数 JSON（content 必填；hours/minutes/seconds/loop 或 at/repeat 二选一）</param>
         /// <returns>结构化结果（元数据头 + 正文；失败 ERR| 前缀）</returns>
         private string ExecuteTimer(string argsJson)
         {
@@ -248,7 +248,10 @@ namespace CH4
             long minutes = 0;
             long seconds = 0;
             bool loop = false;
-            // [段0] 参数面——content 必填 + 时长非负整数 + loop 布尔 + 未知参数拒绝
+            bool relativeSeen = false;
+            string atText = "";
+            string repeatText = "";
+            // [段0] 参数面——content 必填 + 时长非负整数 + loop 布尔 + at / repeat 字符串 + 未知参数拒绝
             if (argsJson != null && argsJson.Length > 0 && argsJson.StartsWith("{"))
             {
                 try
@@ -280,9 +283,27 @@ namespace CH4
                                 loop = property.Value.ValueKind == JsonValueKind.True;
                                 continue;
                             }
+                            if (property.Name == "at")
+                            {
+                                if (property.Value.ValueKind != JsonValueKind.String)
+                                {
+                                    return "ERR|BAD_ARGS|at 需为字符串（HH:mm 或 yyyy-MM-dd HH:mm）";
+                                }
+                                atText = property.Value.GetString() ?? "";
+                                continue;
+                            }
+                            if (property.Name == "repeat")
+                            {
+                                if (property.Value.ValueKind != JsonValueKind.String)
+                                {
+                                    return "ERR|BAD_ARGS|repeat 需为字符串（once|daily）";
+                                }
+                                repeatText = property.Value.GetString() ?? "";
+                                continue;
+                            }
                             if (property.Name != "hours" && property.Name != "minutes" && property.Name != "seconds")
                             {
-                                return "ERR|BAD_ARGS|未知参数: " + property.Name + "（支持 content / hours / minutes / seconds / loop）";
+                                return "ERR|BAD_ARGS|未知参数: " + property.Name + "（支持 content / at / repeat / hours / minutes / seconds / loop）";
                             }
                             if (property.Value.ValueKind != JsonValueKind.Number)
                             {
@@ -293,6 +314,7 @@ namespace CH4
                             {
                                 return "ERR|BAD_ARGS|" + property.Name + " 不能为负";
                             }
+                            relativeSeen = true;
                             if (property.Name == "hours")
                             {
                                 hours = value;
@@ -313,19 +335,62 @@ namespace CH4
                     return "ERR|BAD_ARGS|timer 参数解析失败: " + ex.Message;
                 }
             }
-            // [段1] 内容与时长校验——内容必填；合计 1..86400 秒
+            // [段1] 路径与内容校验——内容必填；at 与相对时长互斥；repeat 只随 at；at 不接 loop（按天循环走 repeat=daily）
             if (content.Trim().Length == 0)
             {
                 return "ERR|BAD_ARGS|timer 内容为空（content 必填——到点注入的指令文本）";
             }
-            long total = hours * 3600 + minutes * 60 + seconds;
-            if (total < DelayQueue.MinSleepSeconds || total > MaxTimerSeconds)
+            string pathError = ValidateTimerArgs(atText, relativeSeen, loop, repeatText);
+            if (pathError.Length > 0)
             {
-                return "ERR|BAD_ARGS|timer 时长需在 " + DelayQueue.MinSleepSeconds.ToString() + ".." + MaxTimerSeconds.ToString() + " 秒之间（当前 " + total.ToString() + " 秒）";
+                return pathError;
             }
-            // [段2] 登记——到点由调度器注入登记内容（本轮正常继续）
-            long dueAt = DelayQueue.Now() + total * 1000;
-            string added = DelayQueue.Add(_catKey, content, "timer", dueAt, total * 1000, loop);
+            // [段2] 换算——绝对时刻（at）或相对时长（hours/minutes/seconds）
+            long now = DelayQueue.Now();
+            long dueAt = 0;
+            long intervalMs = 0;
+            bool loopFlag = false;
+            string planText = "";
+            if (atText.Length > 0)
+            {
+                string atError = ResolveAtTime(atText, now, out dueAt);
+                if (atError.Length > 0)
+                {
+                    return atError;
+                }
+                if (repeatText == "daily")
+                {
+                    loopFlag = true;
+                    intervalMs = DayIntervalMs;
+                    planText = "每天 " + DelayQueue.FormatTime(dueAt).Substring(11, 5) + " · 循环";
+                }
+                else
+                {
+                    loopFlag = false;
+                    planText = DelayQueue.FormatTime(dueAt) + " · 单次";
+                }
+            }
+            else
+            {
+                long total = hours * 3600 + minutes * 60 + seconds;
+                if (total < DelayQueue.MinSleepSeconds || total > MaxTimerSeconds)
+                {
+                    return "ERR|BAD_ARGS|timer 时长需在 " + DelayQueue.MinSleepSeconds.ToString() + ".." + MaxTimerSeconds.ToString() + " 秒之间（当前 " + total.ToString() + " 秒；绝对时刻请用 at）";
+                }
+                dueAt = now + total * 1000;
+                intervalMs = total * 1000;
+                loopFlag = loop;
+                if (loop)
+                {
+                    planText = DelayQueue.FormatTime(dueAt) + "（" + total.ToString() + " 秒后 · 每 " + total.ToString() + " 秒循环）";
+                }
+                else
+                {
+                    planText = DelayQueue.FormatTime(dueAt) + "（" + total.ToString() + " 秒后 · 单次）";
+                }
+            }
+            // [段3] 登记——到点由调度器注入登记内容（本轮正常继续）
+            string added = DelayQueue.Add(_catKey, content, "timer", dueAt, intervalMs, loopFlag);
             if (added.StartsWith("ERR|", StringComparison.Ordinal))
             {
                 return added;
@@ -334,15 +399,95 @@ namespace CH4
             timerFields["hours"] = hours;
             timerFields["minutes"] = minutes;
             timerFields["seconds"] = seconds;
-            timerFields["loop"] = loop;
+            timerFields["loop"] = loopFlag;
             timerFields["dueAt"] = dueAt;
-            string loopText = "单次";
-            if (loop)
+            if (atText.Length > 0)
             {
-                loopText = "循环（每 " + total.ToString() + " 秒）";
+                timerFields["at"] = atText;
+                if (repeatText.Length > 0)
+                {
+                    timerFields["repeat"] = repeatText;
+                }
             }
-            string body = "排程 | " + DelayQueue.FormatTime(dueAt) + "（" + total.ToString() + " 秒后 · " + loopText + "）——到点自动注入本指令，本轮正常继续。";
+            string body = "排程 | " + planText + "——到点自动注入本指令，本轮正常继续。";
             return ToolMetaHead.With("timer", true, "", -1, timerFields, body);
+        }
+        /// <summary>一天的毫秒数——按天循环（repeat=daily）的固定周期；不做夏令时修正（本机无 DST）</summary>
+        internal const long DayIntervalMs = 86400000;
+        /// <summary>
+        /// 绝对时刻换算——把 at 参数（HH:mm 或 yyyy-MM-dd HH:mm）换算为 Unix 毫秒（本机时区）。
+        /// HH:mm 语义 = 今日该时刻，已过则顺延明日（闹钟直觉）；带日期形态必须是未来时刻。
+        /// </summary>
+        /// <param name="atText">时刻文本</param>
+        /// <param name="nowMs">当前时刻——Unix 毫秒</param>
+        /// <param name="dueAt">换算结果——Unix 毫秒（失败 = 0）</param>
+        /// <returns>空串 = 成功；否则为 ERR| 前缀错误文本</returns>
+        internal static string ResolveAtTime(string atText, long nowMs, out long dueAt)
+        {
+            dueAt = 0;
+            string text = atText == null ? "" : atText.Trim();
+            if (text.Length == 0)
+            {
+                return "ERR|BAD_ARGS|at 为空";
+            }
+            string[] formats = new string[]
+            {
+                        "HH:mm",
+                        "yyyy-MM-dd HH:mm"
+            };
+            DateTime parsed;
+            if (!DateTime.TryParseExact(text, formats, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out parsed))
+            {
+                return "ERR|BAD_ARGS|at 需为 HH:mm 或 yyyy-MM-dd HH:mm（当前 " + text + "）";
+            }
+            bool hasDate = text.Length > 5;
+            DateTime local = new DateTime(parsed.Year, parsed.Month, parsed.Day, parsed.Hour, parsed.Minute, 0, DateTimeKind.Local);
+            if (!hasDate)
+            {
+                DateTime today = DateTimeOffset.FromUnixTimeMilliseconds(nowMs).ToLocalTime().DateTime;
+                local = new DateTime(today.Year, today.Month, today.Day, parsed.Hour, parsed.Minute, 0, DateTimeKind.Local);
+            }
+            long millis = new DateTimeOffset(local).ToUnixTimeMilliseconds();
+            if (!hasDate && millis <= nowMs)
+            {
+                millis = millis + DayIntervalMs;
+            }
+            if (millis <= nowMs)
+            {
+                return "ERR|BAD_ARGS|at 需为未来时刻（" + text + " 已过）";
+            }
+            dueAt = millis;
+            return "";
+        }
+        /// <summary>
+        /// timer 路径校验——相对时长与绝对时刻两条路径互斥；repeat 只随 at 且值域受限；at 不接 loop。
+        /// </summary>
+        /// <param name="atText">at 参数原文（空 = 未给）</param>
+        /// <param name="relativeSeen">是否出现 hours/minutes/seconds 任一</param>
+        /// <param name="loop">loop 参数值</param>
+        /// <param name="repeatText">repeat 参数原文（空 = 未给）</param>
+        /// <returns>空串 = 通过；否则为 ERR| 前缀错误文本</returns>
+        internal static string ValidateTimerArgs(string atText, bool relativeSeen, bool loop, string repeatText)
+        {
+            string at = atText == null ? "" : atText;
+            string repeat = repeatText == null ? "" : repeatText;
+            if (at.Length > 0 && relativeSeen)
+            {
+                return "ERR|BAD_ARGS|at 与 hours/minutes/seconds 互斥——绝对时刻用 at，相对时长用 hours/minutes/seconds";
+            }
+            if (at.Length > 0 && loop)
+            {
+                return "ERR|BAD_ARGS|at 不支持 loop——按天循环请用 repeat=daily";
+            }
+            if (repeat.Length > 0 && at.Length == 0)
+            {
+                return "ERR|BAD_ARGS|repeat 需配合 at 使用（当前无绝对时刻起点）";
+            }
+            if (repeat.Length > 0 && repeat != "once" && repeat != "daily")
+            {
+                return "ERR|BAD_ARGS|repeat 只支持 once|daily（当前 " + repeat + "）";
+            }
+            return "";
         }
 
         /// <summary>

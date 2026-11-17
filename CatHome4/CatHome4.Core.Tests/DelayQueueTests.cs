@@ -245,7 +245,7 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 循环重排——loop 条目触发后不出表：按「投递时刻 + 时长」重排 + Fired 累计。
+        /// 循环重排——loop 条目触发后不出表：按「原预定点 + 周期」推进相位 + Fired 累计。
         /// </summary>
         [Fact]
         public void Pump_LoopReschedulesAndCountsFired()
@@ -269,16 +269,16 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 循环重排基准 = 投递时刻——停机期间到期的 loop 条目重启后只补一次（不留积压追赶）。
+        /// 循环重排按时间轴相位——停机期间错过的周期跳过不补，下一次落在「原预定点 + N 周期」的首个未来点（不按投递时刻重算）。
         /// </summary>
         [Fact]
-        public void Pump_LoopRescheduleUsesDeliveryTime()
+        public void Pump_LoopRescheduleKeepsWallClockPhase()
         {
             DelayQueue.Add("catA", "late", "timer", _now + 1000, 60000, true);
             _now = _now + 600000;
             int count = DelayQueue.Pump(delegate (string cat, string content, string source) { return true; });
             Assert.Equal(1, count);
-            Assert.Equal(_now + 60000, DelayQueue.List("catA")[0].DueAt);
+            Assert.Equal(_now + 1000, DelayQueue.List("catA")[0].DueAt);
         }
 
         /// <summary>
@@ -340,6 +340,100 @@ namespace CatHome4.Core.Tests
             Assert.True(loaded[0].Loop);
             Assert.Equal(7000, loaded[0].IntervalMs);
             Assert.Equal(1, loaded[0].Fired);
+        }
+
+        /// <summary>
+        /// at 解析——HH:mm 落在未来：时刻精确匹配，且触发点在一天之内。
+        /// </summary>
+        [Fact]
+        public void ResolveAtTime_HHmmResolvesWithinOneDay()
+        {
+            long now = _now;
+            DateTime localNow = DateTimeOffset.FromUnixTimeMilliseconds(now).ToLocalTime().DateTime;
+            DateTime want = localNow.AddHours(1);
+            string hm = want.ToString("HH:mm");
+            long due;
+            string err = CH4.ChatSession.ResolveAtTime(hm, now, out due);
+            Assert.Equal("", err);
+            Assert.True(due > now);
+            Assert.True(due <= now + CH4.ChatSession.DayIntervalMs);
+            DateTime dueLocal = DateTimeOffset.FromUnixTimeMilliseconds(due).ToLocalTime().DateTime;
+            Assert.Equal(want.Hour, dueLocal.Hour);
+            Assert.Equal(want.Minute, dueLocal.Minute);
+        }
+
+        /// <summary>
+        /// at 解析——HH:mm 今日已过：顺延到明日同一时刻（闹钟直觉）。
+        /// </summary>
+        [Fact]
+        public void ResolveAtTime_HHmmPastRollsToNextDay()
+        {
+            long now = _now;
+            DateTime localNow = DateTimeOffset.FromUnixTimeMilliseconds(now).ToLocalTime().DateTime;
+            DateTime want = localNow.AddHours(-2);
+            string hm = want.ToString("HH:mm");
+            long due;
+            string err = CH4.ChatSession.ResolveAtTime(hm, now, out due);
+            Assert.Equal("", err);
+            Assert.True(due > now);
+            Assert.True(due <= now + CH4.ChatSession.DayIntervalMs);
+            DateTime dueLocal = DateTimeOffset.FromUnixTimeMilliseconds(due).ToLocalTime().DateTime;
+            Assert.Equal(want.Hour, dueLocal.Hour);
+            Assert.Equal(want.Minute, dueLocal.Minute);
+        }
+
+        /// <summary>
+        /// at 解析——带日期形态必须是未来时刻，过去直接拒绝。
+        /// </summary>
+        [Fact]
+        public void ResolveAtTime_DateFormRejectsPast()
+        {
+            long now = _now;
+            DateTime localNow = DateTimeOffset.FromUnixTimeMilliseconds(now).ToLocalTime().DateTime;
+            string past = localNow.AddDays(-1).ToString("yyyy-MM-dd HH:mm");
+            long due;
+            string err = CH4.ChatSession.ResolveAtTime(past, now, out due);
+            Assert.StartsWith("ERR|BAD_ARGS", err);
+            Assert.Equal(0, due);
+        }
+
+        /// <summary>
+        /// at 解析——格式非法即拒绝（不做模糊猜测）。
+        /// </summary>
+        [Fact]
+        public void ResolveAtTime_RejectsBadFormat()
+        {
+            long due;
+            Assert.StartsWith("ERR|BAD_ARGS", CH4.ChatSession.ResolveAtTime("明天早上", _now, out due));
+            Assert.StartsWith("ERR|BAD_ARGS", CH4.ChatSession.ResolveAtTime("25:99", _now, out due));
+        }
+
+        /// <summary>
+        /// timer 参数面互斥——at 与相对时长 / loop 互斥，repeat 只随 at 且值域受限。
+        /// </summary>
+        [Fact]
+        public void ValidateTimerArgs_RejectsConflictingPaths()
+        {
+            Assert.StartsWith("ERR|BAD_ARGS", CH4.ChatSession.ValidateTimerArgs("09:00", true, false, ""));
+            Assert.StartsWith("ERR|BAD_ARGS", CH4.ChatSession.ValidateTimerArgs("09:00", false, true, ""));
+            Assert.StartsWith("ERR|BAD_ARGS", CH4.ChatSession.ValidateTimerArgs("", false, false, "daily"));
+            Assert.StartsWith("ERR|BAD_ARGS", CH4.ChatSession.ValidateTimerArgs("09:00", false, false, "weekly"));
+            Assert.Equal("", CH4.ChatSession.ValidateTimerArgs("09:00", false, false, "daily"));
+            Assert.Equal("", CH4.ChatSession.ValidateTimerArgs("", true, true, ""));
+        }
+
+        /// <summary>
+        /// daily 周期相位——隔三天再泵：错过的两天跳过不补，下一次仍落在原相位点。
+        /// </summary>
+        [Fact]
+        public void Pump_DailyLoopSkipsMissedDays()
+        {
+            long baseAt = _now + 1000;
+            DelayQueue.Add("catA", "日报", "timer", baseAt, CH4.ChatSession.DayIntervalMs, true);
+            _now = baseAt + CH4.ChatSession.DayIntervalMs * 3;
+            int count = DelayQueue.Pump(delegate (string cat, string content, string source) { return true; });
+            Assert.Equal(1, count);
+            Assert.Equal(baseAt + CH4.ChatSession.DayIntervalMs * 4, DelayQueue.List("catA")[0].DueAt);
         }
     }
 }

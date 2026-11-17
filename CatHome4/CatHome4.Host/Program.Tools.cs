@@ -131,17 +131,19 @@ namespace CH4
             tools[8] = new
             {
                 name = "timer",
-                description = "登记延迟指令注入（content + 时/分/秒 · 合计 1..86400 秒）——排程语义：到点把 content 原样注入本会话（闹钟必响，不因主干启动而销毁）；loop=true 时触发后按「投递时刻 + 时长」重排（周期巡检）。本轮正常继续，且不影响本轮收尾语义。适合「长任务中途自查 / 周期巡检」。",
+                description = "登记延迟指令注入——两条路径（互斥）：① 相对时长 hours/minutes/seconds（合计 1..86400 秒；loop=true 触发后按周期重排）；② 绝对时刻 at（HH:mm=今日该时刻、已过顺延明日；yyyy-MM-dd HH:mm=指定日期，须为未来），配 repeat=daily 即按天循环（每天该时刻响）。到点把 content 原样注入本会话（闹钟必响，不因主干启动而销毁）；周期条目按时间轴相位推进——错过的点跳过不补。本轮正常继续，不影响收尾语义。适合「定点提醒 / 每日巡检 / 长任务中途自查」。",
                 parameters = new
                 {
                     type = "object",
                     properties = new Dictionary<string, object>
                             {
                                 { "content", new { type = "string", description = "到点注入的指令文本（必填）" } },
+                                { "at", new { type = "string", description = "绝对时刻（HH:mm 或 yyyy-MM-dd HH:mm，本机时区）——与 hours/minutes/seconds 互斥" } },
+                                { "repeat", new { type = "string", description = "once（默认）| daily（每天同一时刻循环）——仅配合 at 使用" } },
                                 { "hours", new { type = "integer", description = "小时（可缺省=0）" } },
                                 { "minutes", new { type = "integer", description = "分钟（可缺省=0）" } },
                                 { "seconds", new { type = "integer", description = "秒（可缺省=0）" } },
-                                { "loop", new { type = "boolean", description = "true=周期重排（可缺省=false）" } }
+                                { "loop", new { type = "boolean", description = "true=相对时长按周期重排（可缺省=false；at 路径请用 repeat）" } }
                             },
                     required = new string[] { "content" }
                 }

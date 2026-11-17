@@ -150,6 +150,11 @@ var TOOL_SKELETONS = {
     'group-catinfo': 'text',
     'group-catcfg-get': 'text',
     'group-catcfg-set': 'text',
+    // qqbot——QQ 机器人通道（QqBotCat · A392）
+    'qqbot-send': 'text',
+    'qqbot-info': 'text',
+    'qqbot-botinfo': 'listing',
+    'qqbot-groups': 'listing',
     // ts——TypeScript 编码工具面（TsCat · A294）
     'ts-check': 'diagnostics',
     'ts-list': 'listing',

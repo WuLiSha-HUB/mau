@@ -31,10 +31,10 @@ namespace CH4
         /// <summary>来源标记——delay（人工定时）/ sleep（LLM 等待）/ timer（LLM 排程）/ restart（宿主重启回执）</summary>
         public string Source = "delay";
 
-        /// <summary>循环标记——true=触发后按「投递时刻 + 时长」重排回表（不出表）；false=一次性（触发即移除）</summary>
+        /// <summary>循环标记——true=触发后按「原预定时刻 + 周期」推进相位重排回表（不出表）；false=一次性（触发即移除）</summary>
         public bool Loop;
 
-        /// <summary>循环时长——Unix 毫秒（登记时的相对长度；重排基准 = 投递时刻 + 本值）</summary>
+        /// <summary>循环时长——Unix 毫秒（登记时的相对长度；重排基准 = 原预定时刻 + 本值，已错过的点跳过）</summary>
         public long IntervalMs;
 
         /// <summary>已触发次数——循环条目累计（观测面「已响 N 次」；一次性条目恒 0）</summary>
@@ -116,7 +116,7 @@ namespace CH4
         /// <param name="source">来源标记（delay/sleep/timer/restart）</param>
         /// <param name="dueAt">触发时刻——Unix 毫秒（UTC）</param>
         /// <param name="intervalMs">循环时长——Unix 毫秒（loop=true 时重排基准；0=不可循环）</param>
-        /// <param name="loop">循环标记——true=触发后按投递时刻 + 时长重排回表（不出表）</param>
+        /// <param name="loop">循环标记——true=触发后按「原预定时刻 + 周期」推进相位重排回表（不出表）</param>
         /// <returns>结果 JSON（ok/id/dueAt/loop/due；失败 ERR| 前缀）</returns>
         public static string Add(string catKey, string content, string source, long dueAt, long intervalMs = 0, bool loop = false)
         {
@@ -408,7 +408,7 @@ namespace CH4
         /// <summary>
         /// 帧泵——摘出到点条目 → 按序投递（锁外）→ 未受理的重新入表。
         /// 积压语义：多个到点条目按序一次性立即注入（不丢、不合并、不覆盖）。
-        /// loop 语义：投递成功且 Loop=true → 按「投递时刻 + IntervalMs」重排回表（不出表；Fired 累计）。
+        /// loop 语义：投递成功且 Loop=true → 按「原预定时刻 + IntervalMs」推进相位重排回表（不出表；Fired 累计；错过的周期跳过不补）。
         /// </summary>
         /// <param name="deliver">投递委托（catKey, content, source）→ true=已受理 / false=未受理（保留待重投）</param>
         /// <returns>本次投递条数</returns>
@@ -457,13 +457,13 @@ namespace CH4
                 {
                     delivered = delivered + 1;
                     LogStore.Add("CatHome4", 1, "延迟条目到点投递: id=#" + due[i].Id.ToString() + " | cat=" + due[i].CatKey + " | source=" + due[i].Source, "DELAY");
-                    // loop——触发后按「投递时刻 + 时长」重排回表（不出表；不留积压追赶）
+                    // loop——触发后按「原预定时刻 + 周期」推进到首个未来相位（不出表；错过的周期跳过不补）
                     if (due[i].Loop)
                     {
                         if (due[i].IntervalMs > 0)
                         {
                             due[i].Fired = due[i].Fired + 1;
-                            due[i].DueAt = NowProvider() + due[i].IntervalMs;
+                            due[i].DueAt = NextLoopDueAt(due[i].DueAt, due[i].IntervalMs, NowProvider());
                             repeated.Add(due[i]);
                             LogStore.Add("CatHome4", 1, "延迟条目循环重排: id=#" + due[i].Id.ToString() + " | next=" + FormatTime(due[i].DueAt) + " | 已响 " + due[i].Fired.ToString() + " 次", "DELAY");
                         }
@@ -494,6 +494,37 @@ namespace CH4
                 }
             }
             return delivered;
+        }
+
+        /// <summary>循环重排单次最多跳过的周期数——防超大跨度（长期停机）在重排时死循环</summary>
+        private const int MaxLoopSkipSteps = 100000;
+
+        /// <summary>
+        /// 循环条目的下一次触发时刻——按时间轴相位推进（原预定点 + 周期），已错过的点一次性跳过。
+        /// 不按「投递时刻 + 周期」重算：那样每轮都从此刻起算，周期条目会随帧泵粒度与投递延迟逐轮漂移（闹钟变成越走越晚）。
+        /// </summary>
+        /// <param name="dueAt">本轮预定的触发时刻——Unix 毫秒</param>
+        /// <param name="intervalMs">循环周期——Unix 毫秒</param>
+        /// <param name="now">当前时刻——Unix 毫秒</param>
+        /// <returns>首个晚于 now 的相位点；周期非法时返回首轮推算值</returns>
+        private static long NextLoopDueAt(long dueAt, long intervalMs, long now)
+        {
+            long next = dueAt + intervalMs;
+            if (intervalMs <= 0 || next > now)
+            {
+                return next;
+            }
+            long missed = (now - next) / intervalMs;
+            if (missed > MaxLoopSkipSteps)
+            {
+                missed = MaxLoopSkipSteps;
+            }
+            next = next + missed * intervalMs;
+            while (next <= now)
+            {
+                next = next + intervalMs;
+            }
+            return next;
         }
 
         /// <summary>

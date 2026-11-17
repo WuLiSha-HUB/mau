@@ -103,12 +103,20 @@ function delaySrcMark(source) {
     return '⏰';
 }
 
-/// 副列文本——到点时刻 + 循环 / 已响标记（渲染与测试共用单一出口）
+/// 副列文本——到点时刻 + 循环周期 / 已响标记（渲染与测试共用单一出口）
 function delayDueText(e) {
     var t = delayFmtDue(e.dueAt);
-    if (e.loop) { t = t + ' 🔁'; }
+    if (e.loop) { t = t + ' · ' + delayLoopText(e); }
     if (e.fired > 0) { t = t + ' 已响 ' + e.fired; }
     return t;
+}
+
+/// 循环周期文本——按天（intervalMs = 1 天）单独成词，其余间隔按剩余时长口径
+function delayLoopText(e) {
+    var iv = e.intervalMs || 0;
+    if (iv <= 0) { return '🔁'; }
+    if (iv === 86400000) { return '每天'; }
+    return '每 ' + delayFmtRemain(iv);
 }
 
 /// 即将触发判据——倒计时 ≤60 秒高亮

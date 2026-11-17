@@ -261,3 +261,15 @@ function ovPayload(r) {
     return null;
 }
 
+
+/// 非空行过滤——从 start 起保留内容非空的行（原始缩进与文本不变）
+function ovNonEmptyLines(lines, start) {
+    var out = [];
+    var from = (typeof start === 'number' && start > 0) ? start : 0;
+    for (var i = from; i < lines.length; i = i + 1) {
+        if (lines[i].replace(/\s/g, '').length > 0) {
+            out.push(lines[i]);
+        }
+    }
+    return out;
+}
