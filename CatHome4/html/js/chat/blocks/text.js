@@ -5,9 +5,8 @@
 //   item = { type:'text', ts, msgIndex, round, payload:{ text } }
 //   text = Markdown 原文（含图片包裹时先出缩略图组）
 //
-// 产出：.chat-row.assistant > .chat-bubble > (图片组?) + .md-block[.md-copy] + (.node-actions?)
-//   操作条（2026-10-06 复归）——`msgIndex ≥ 0` 时底部两按钮（⟲ 回滚 / ⧉ 分支）；指令走指令总线
-//   `postCommand`（出口面），投递回执走通知面 `warn`（信息位归 state 段独占——契约 §12.7）
+// 产出：.chat-row.assistant > .chat-bubble > (图片组?) + .md-block[.md-copy]
+//   操作条已迁至轮末统计块（A387——回滚锚 = 轮末，不再挂在任意回复节点）
 //
 // 来源：chat-view.js chatMdFill（第 714-726 行）+ chatAppendHistoryBlock「text」分支
 //       + chatAppendNodeActions（第 389-426 行）——操作条复归（旧版直写 fetch / chatInfo，本版改走总线与通知面）
@@ -25,28 +24,7 @@ function buildTextBlock(payload, item) {
     var bubble = el('div', bodyClass('text'));
     row.appendChild(bubble);
     fillMdBlock(bubble, p.text || '');
-    appendNodeActions(bubble, item);
     return row;
-}
-
-/// P6b 节点操作条——正式回复底部按钮（⟲ 回滚）
-/// 入口判据 = 块级 `msgIndex`（前文来源；独立块 -1 不挂）；指令走指令总线（出口面——本件不拼网络请求）
-/// 投递回执走通知面（桌宠气泡 `warn`）——信息位归 state 段独占（契约 §12.7）
-function appendNodeActions(bubble, item) {
-    var idx = item ? item.msgIndex : undefined;
-    if (typeof idx !== 'number' || idx < 0) {
-        return;
-    }
-    var bar = el('div', 'node-actions');
-    bar.appendChild(nodeActionBtn('⟲ 回滚', 'node-btn-rollback',
-        '从此处继续对话（回滚——该回复后的内容将截断，不可恢复）', function () {
-            if (!window.confirm('从此处继续对话？该回复之后的所有消息将被截断（不可恢复）。')) {
-                return;
-            }
-            postCommand('session.rollback ' + idx);
-            warn('回滚指令已投递——建议刷新页面');
-        }));
-    bubble.appendChild(bar);
 }
 
 /// 操作条按钮——文案（图标 + 标签）+ 悬浮提示 + 点击回调

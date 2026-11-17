@@ -101,9 +101,10 @@ describe('块型渲染——结构契约', () => {
         expect(card.getAttribute('data-type')).toBe('toolcard');
         expect(card.classList.contains('tool')).toBe(true);
         expect(card.querySelectorAll('.chat-bubble').length).toBe(1);
+        // A387：text 块不再挂节点操作条（回滚锚迁至 roundsum 块）——此段转为反向锁定新语义
         const txt = window.persistRender({ type: 'text', msgIndex: 3, payload: { text: 'hi' } });
         expect(txt.getAttribute('data-type')).toBe('text');
-        expect(txt.querySelector('.node-actions')).toBeTruthy();
+        expect(txt.querySelector('.node-actions')).toBeNull();
     });
 
     it('追加路（auto=true）工具卡仍带气泡——第三参是追加路标志、不是行身份（2026-11-14 回归锚）', () => {
@@ -255,32 +256,47 @@ describe('系统注入块（A219——systemautomessage）', () => {
     });
 });
 
-describe('text 块操作条（P6b 复归 · 2026-10-06）', () => {
-    it('带 msgIndex——挂操作条（回滚按钮 + 悬浮提示；分支已删——A326）', () => {
-        const node = window.buildTextBlock({ text: 'hi' }, { type: 'text', msgIndex: 7 });
+describe('轮末回滚按钮（A387 · 2026-11-17）', () => {
+    const payload = {
+        data: {
+            prompt: 100, completion: 10, cacheHit: 0, miss: 100,
+            toolCount: 0, requests: 1, elapsedMs: 1000, phases: {}, lastMsgTs: 1700000000000
+        }
+    };
+
+    it('轮末块挂回滚按钮（锚 = 块 ts；载荷带 lastMsgTs）', () => {
+        const node = window.buildRoundSumBlock(payload, { type: 'roundsum', ts: 1700000000500, msgIndex: -1 });
         const bar = node.querySelector('.node-actions');
         expect(bar).toBeTruthy();
         expect(node.querySelectorAll('.node-btn').length).toBe(1);
-        expect(node.querySelector('.node-btn-rollback').textContent).toBe('⟲ 回滚');
-        expect(node.querySelector('.node-btn-rollback').title).toContain('回滚');
-        expect(node.querySelector('.node-btn-fork')).toBe(null);
+        expect(node.querySelector('.node-btn-rollback').textContent).toBe('⟲ 回滚到此处');
+        expect(node.querySelector('.node-btn-rollback').title).toContain('回到这一轮结束');
     });
 
-    it('msgIndex 缺失 / -1——不挂操作条（独立块与旧块零回归）', () => {
-        expect(window.buildTextBlock({ text: 'hi' }, { type: 'text', msgIndex: -1 }).querySelector('.node-actions')).toBe(null);
-        expect(window.buildTextBlock({ text: 'hi' }, {}).querySelector('.node-actions')).toBe(null);
+    it('旧块缺 lastMsgTs——不挂按钮（不做迁移）', () => {
+        const node = window.buildRoundSumBlock({ data: { prompt: 0, phases: {} } }, { type: 'roundsum', ts: 1, msgIndex: -1 });
+        expect(node.querySelector('.node-actions')).toBe(null);
     });
 
-    it('回滚按钮——确认后经指令总线投递 session.rollback <msgIndex>', () => {
+    it('块 ts 缺失——不挂按钮', () => {
+        const node = window.buildRoundSumBlock(payload, { type: 'roundsum' });
+        expect(node.querySelector('.node-actions')).toBe(null);
+    });
+
+    it('回滚按钮——确认后经指令总线投递 session.rollback <块 ts>', () => {
         const sent = [];
         window.confirm = () => true;
         window.fetch = (url, opt) => {
             sent.push(JSON.parse(opt.body).text);
             return Promise.resolve({ json: () => Promise.resolve({ ok: true }) });
         };
-        const node = window.buildTextBlock({ text: 'hi' }, { type: 'text', msgIndex: 7 });
+        const node = window.buildRoundSumBlock(payload, { type: 'roundsum', ts: 1700000000500, msgIndex: -1 });
         node.querySelector('.node-btn-rollback').click();
-        expect(sent).toEqual(['session.rollback 7']);
+        expect(sent).toEqual(['session.rollback 1700000000500']);
+    });
+
+    it('text 块不再挂操作条（A387 迁移后）', () => {
+        expect(window.buildTextBlock({ text: 'hi' }, { type: 'text', msgIndex: 7 }).querySelector('.node-actions')).toBe(null);
     });
 });
 

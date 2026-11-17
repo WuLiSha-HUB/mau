@@ -2183,12 +2183,20 @@ namespace CH4
             {
                 doneKind = "tool";
             }
+            // A387 轮末锚——前文末条消息时间戳：回滚按它裁前文（视图侧用块自身 ts——两个坐标系各用各的锚）
+            LlmMessage[] tailMsgs = _context.GetMessages();
+            long lastMsgTs = 0;
+            if (tailMsgs.Length > 0)
+            {
+                lastMsgTs = tailMsgs[tailMsgs.Length - 1].CreatedAt;
+            }
             string dataJson = JsonUtil.Object(
                 ("prompt", _usagePrompt),
                 ("completion", _usageCompletion),
                 ("cacheHit", _usageCacheHit),
                 ("miss", miss),
                 ("done", doneKind),
+                ("lastMsgTs", lastMsgTs),
                 ("toolCount", _toolCallCount),
                 ("requests", requests),
                 ("elapsedMs", elapsedMs),
@@ -3306,51 +3314,76 @@ namespace CH4
             _toolCallCount = 0;
         }
 
-        /// <summary>
-        /// 回滚——从指定正式回复节点重新开始（P6b：裁剪唯一通道；该节点后消息全部丢弃）。
-        /// 校验：仅 Idle；msgIndex 指向 assistant 正式回复（Content>0——工具声明轮天然排除）。执行：截断上下文 → 落盘 → 统计/视图截断/Note 复位 → session_reset 推送。
-        /// </summary>
-        /// <param name="msgIndex">真实前文消息索引（指向 assistant 正式回复——前端 text 块 MsgIndex）</param>
+        /// <summary>回滚——回到某轮结束时的状态（A387：锚 = 该轮 roundsum 块；此后产生的内容全部丢弃）。校验：仅 Idle；锚须落在轮末边界（该位置是 assistant 正式回复且无工具声明）。执行：解析前文锚（载荷 lastMsgTs）→ 按时间戳截断上下文并落盘 → 统计复位 → 视图层按块 ts 截断（索引在前文结构变更后不可作判据）→ Note 复位 → session_reset 推送。</summary>
         /// <returns>ERR| 前缀失败 / 成功摘要</returns>
-        public string Rollback(int msgIndex)
+        /// <param name="anchorTs">轮末锚时间戳（roundsum 块的 ts——视图侧按它裁；前文侧用该块载荷 lastMsgTs，两个坐标系各用各的锚）</param>
+        public string RollbackToRound(long anchorTs)
         {
             if (_phase != ChatPhase.Idle)
             {
                 return "ERR|ROLLBACK_BUSY|会话忙——回滚仅空闲时执行";
             }
             LlmMessage[] all = _context.GetMessages();
-            if (msgIndex < 0 || msgIndex >= all.Length)
+            if (all.Length == 0)
             {
-                return "ERR|ROLLBACK_INDEX|节点索引越界: " + msgIndex.ToString();
+                return "ERR|ROLLBACK_EMPTY|前文为空——无可回滚";
             }
-            LlmMessage target = all[msgIndex];
-            if (target.Role != LlmRole.Assistant || target.Content == null || target.Content.Length == 0)
+            // [段1] 锚点解析——前文锚取自 roundsum 载荷（lastMsgTs，真实前文消息坐标系）；视图锚 = 块自身 ts
+            long msgAnchor = anchorTs;
+            long storedAnchor;
+            if (_viewStore.TryGetRoundSummaryAnchor(anchorTs, out storedAnchor))
             {
-                return "ERR|ROLLBACK_NODE|节点不是正式回复（仅 assistant 回复可作切点）";
+                msgAnchor = storedAnchor;
             }
-            // [段1] 截断前文到切点——共用实现（timeback 回卷同源；含落盘与轮级计数复位）
-            TruncateMessages(msgIndex + 1);
-            // [段2] 最近轮统计重置——新起点零统计起算（会话级累计不动：回滚属同会话延续；
-            //        原实现调 ResetStats() 会清会话级 token 累计——与 glossary「回滚不归零」口径冲突，2026-09-28 修正；
-            //        A202：轮级读面回落源与请求级前文长度一并归零）
+            else
+            {
+                // 旧块无 lastMsgTs——按块 ts 回落（出声，不静默）
+                LogStore.Add("CatHome4", 2, "回滚锚未命中 roundsum 载荷（按块 ts 回落）: " + anchorTs.ToString(), "CHAT");
+            }
+            // [段2] 前文裁剪点——保留 CreatedAt ≤ 前文锚的全部消息（不依赖绝对索引：timeback 收拢后索引已失对齐）
+            int keepCount = 0;
+            for (int i = 0; i < all.Length; i = i + 1)
+            {
+                if (all[i].CreatedAt <= msgAnchor)
+                {
+                    keepCount = i + 1;
+                }
+            }
+            if (keepCount <= 0)
+            {
+                return "ERR|ROLLBACK_ANCHOR|锚点早于全部前文——请刷新页面重试";
+            }
+            if (keepCount == all.Length)
+            {
+                return "ERR|ROLLBACK_NOOP|已是该轮之后的最新状态——无需回滚";
+            }
+            // [段2b] 边界校验——轮末边界必是正式回复（assistant 且无工具声明）
+            LlmMessage last = all[keepCount - 1];
+            bool hasTools = last.ToolCallsJson != null && last.ToolCallsJson.Length > 0;
+            bool isReply = last.Role == LlmRole.Assistant && last.Content != null && last.Content.Length > 0 && !hasTools;
+            if (!isReply)
+            {
+                return "ERR|ROLLBACK_ANCHOR|锚点未落在轮末边界（该位置不是正式回复）——请刷新页面重试";
+            }
+            // [段3] 截断前文到切点——共用实现（timeback 回卷同源；含落盘与轮级计数复位）
+            TruncateMessages(keepCount);
+            // [段4] 最近轮统计重置——新起点零统计起算（会话级累计不动：回滚属同会话延续）
             _lastRoundTokens = new SessionTokens();
-            // 前文长度——请求级实时值 + 落盘回落源同归零（读面不显示回滚点之前的旧值）
             _contextTokens = 0;
             _persistedContextTokens = 0;
-            // [段4] 视图层截断——与真实前文同批（视图层截断通道回归：此前「视图不动」使回滚在观感上无效——
-            //        帧轮重置后的全量帧取数源正是视图层，未截断即把已回滚的消息原样重发）
-            _viewStore.TruncateFrom(msgIndex);
-            // [段5] Note 任务清空——防旧任务自动拉起新轮
+            // [段5] 视图层截断——按块自身 ts（保留该轮 roundsum 及之前；索引在前文结构变更后不可作判据）
+            _viewStore.TruncateToTs(anchorTs);
+            // [段6] Note 任务清空——防旧任务自动拉起新轮
             _noteTasks = null;
             _noteCurrent = 0;
             _noteDone = 0;
             _noteJustCompleted = false;
             PushNoteState();
-            // [段6] 前端通知——session_reset（帧轮广播全量帧：前端持久区清空后按截断后的视图层整体重绘）
+            // [段7] 前端通知——session_reset（帧轮广播全量帧：前端持久区清空后按截断后的视图层整体重绘）
             PushSessionReset();
             SetChatState("idle");
-            LogStore.Add("CatHome4", 1, "已回滚到节点 " + msgIndex.ToString() + "（保留 " + (msgIndex + 1).ToString() + " 条消息）", "CHAT");
-            return "rollback | 已截断到节点 " + msgIndex.ToString() + "（保留 " + (msgIndex + 1).ToString() + " 条消息）";
+            LogStore.Add("CatHome4", 1, "已回滚到轮末锚 " + anchorTs.ToString() + "（保留 " + keepCount.ToString() + " 条消息）", "CHAT");
+            return "rollback | 已截断到轮末锚 " + anchorTs.ToString() + "（保留 " + keepCount.ToString() + " 条消息）";
         }
 
         /// <summary>

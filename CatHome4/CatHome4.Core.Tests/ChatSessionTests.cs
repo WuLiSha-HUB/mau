@@ -1742,6 +1742,8 @@ namespace CatHome4.Core.Tests
             // 两轮对话——user1+reply1+user2+reply2 = 4 条（测试环境无 system）
             session.PostUserMessage("第一轮问题");
             PumpUntilIdle(session);
+            // A387——前文锚按毫秒判定，两轮必须落在不同毫秒（否则锚会吞掉下一轮首条消息）
+            System.Threading.Thread.Sleep(5);
             llm.ReplyText = "第二轮回复";
             session.PostUserMessage("第二轮问题");
             PumpUntilIdle(session);
@@ -1749,8 +1751,19 @@ namespace CatHome4.Core.Tests
             Assert.Equal(4, before.Length);
             // 回滚前——请求级前文长度有值（末次请求 prompt；回滚后必须归零）
             Assert.Equal(900L, session.ContextTokensKnown);
-            // 回滚到第一个正式回复（索引 1）
-            string result = session.Rollback(1);
+            // 回滚到第一轮末（A387：锚 = 第一轮 roundsum 块 ts；前文锚由该块载荷 lastMsgTs 派生）
+            long roundTs = 0;
+            CH4.ViewBlock[] preBlocks = session.GetViewBlocks();
+            for (int i = 0; i < preBlocks.Length; i = i + 1)
+            {
+                if (preBlocks[i].RenderType == "roundsum")
+                {
+                    roundTs = preBlocks[i].Timestamp;
+                    break;
+                }
+            }
+            Assert.True(roundTs > 0);
+            string result = session.RollbackToRound(roundTs);
             Assert.StartsWith("rollback", result);
             LlmMessage[] after = session.Context.GetMessages();
             Assert.Equal(2, after.Length);
@@ -1805,36 +1818,43 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// P6b 回滚——非正式回复节点拒绝（user 消息/工具声明不可作切点——协议完整性）。
+        /// A387 回滚——非轮末边界拒绝（锚落在 user 消息处 → 边界不是正式回复；同毫秒吞入回复时退化为 NOOP）。
         /// </summary>
         [Fact]
-        public void Rollback_NonReplyNode_Rejected()
+        public void Rollback_NotRoundEnd_Rejected()
         {
             MockLlm llm = new MockLlm();
             llm.ReplyText = "回复";
             CH4.ChatSession session = CreateSession(llm);
             session.PostUserMessage("问题");
             PumpUntilIdle(session);
-            string result = session.Rollback(0); // user 消息
-            Assert.StartsWith("ERR|ROLLBACK_NODE", result);
-            Assert.Equal(2, session.Context.GetMessages().Length);
+            System.Threading.Thread.Sleep(5);
+            session.PostUserMessage("再问");
+            PumpUntilIdle(session);
+            LlmMessage[] msgs = session.Context.GetMessages();
+            Assert.Equal(4, msgs.Length);
+            // 锚 = 第二轮 user 的时间戳——该位置不是正式回复
+            string result = session.RollbackToRound(msgs[2].CreatedAt);
+            Assert.True(result.StartsWith("ERR|ROLLBACK_ANCHOR") || result.StartsWith("ERR|ROLLBACK_NOOP"), result);
+            // 两种拒绝都不截断前文
+            Assert.Equal(4, session.Context.GetMessages().Length);
         }
 
         /// <summary>
-        /// P6b 回滚——越界索引拒绝。
+        /// A387 回滚——锚越界拒绝（早于全部前文 → ANCHOR；晚于最新消息 → NOOP）。
         /// </summary>
         [Fact]
-        public void Rollback_OutOfRange_Rejected()
+        public void Rollback_AnchorOutOfRange_Rejected()
         {
             MockLlm llm = new MockLlm();
             llm.ReplyText = "回复";
             CH4.ChatSession session = CreateSession(llm);
             session.PostUserMessage("问题");
             PumpUntilIdle(session);
-            string result = session.Rollback(99);
-            Assert.StartsWith("ERR|ROLLBACK_INDEX", result);
-            result = session.Rollback(-1);
-            Assert.StartsWith("ERR|ROLLBACK_INDEX", result);
+            string result = session.RollbackToRound(99);
+            Assert.StartsWith("ERR|ROLLBACK_ANCHOR", result);
+            result = session.RollbackToRound(long.MaxValue);
+            Assert.StartsWith("ERR|ROLLBACK_NOOP", result);
             Assert.Equal(2, session.Context.GetMessages().Length);
         }
 

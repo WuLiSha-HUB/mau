@@ -462,7 +462,7 @@ namespace CH4
         }
 
         /// <summary>追加轮末统计条目——roundsum（Token 消耗 + 工具次数 + 总耗时 + 用时）。非真实前文派生；写入即落盘——宿主中断不丢。</summary>
-        /// <param name="payloadJson">roundsum 载荷 JSON（{"data":{...}}——载荷不带 type，条目型由块承载）</param>
+        /// <param name="payloadJson">roundsum 载荷 JSON（{"data":{...}}——载荷不带 type，条目型由块承载；A387 起 data 含 lastMsgTs = 该轮末条前文消息时间戳，回滚时作前文锚）</param>
         /// <param name="timestamp">创建时间戳（Unix 毫秒——与消息条目同坐标系，归并排序键）</param>
         public void AppendRoundSummary(string payloadJson, long timestamp)
         {
@@ -470,6 +470,81 @@ namespace CH4
             _roundSums.Add(block);
             AppendLine(BuildBlockLine(block));
             EmitBlock(block);
+        }
+        /// <summary>
+        /// 视图层截断——回滚到某轮末（轮末锚）：丢弃时间戳晚于锚的全部条目（五容器统一按时间戳判定）。
+        /// 不依赖前文索引——索引映射在 timeback 整段收拢后即失效（A387：视图层陈旧索引曾致历史卡成片误删）。
+        /// </summary>
+        /// <param name="cutoffTs">轮末锚时间戳（保留 ≤ 该值的条目）</param>
+        public void TruncateToTs(long cutoffTs)
+        {
+            DropBlocksFrom(_blocks, cutoffTs);
+            DropBlocksFrom(_gapTexts, cutoffTs);
+            DropBlocksFrom(_roundSums, cutoffTs);
+            DropBlocksFrom(_errors, cutoffTs);
+            DropBlocksFrom(_retries, cutoffTs);
+            _pendingTools.Clear();
+            Rewrite();
+        }
+        /// <summary>
+        /// 查轮末锚块的前文锚——按 roundsum 块时间戳找块，从其载荷取 `data.lastMsgTs`（A387：回滚裁前文用）。
+        /// 载荷缺字段（旧块）→ 返回 false，调用方自行回落并出声。
+        /// </summary>
+        /// <param name="blockTs">roundsum 块时间戳（前端条目 ts）</param>
+        /// <param name="lastMsgTs">前文末条消息时间戳（输出）</param>
+        /// <returns>是否命中</returns>
+        public bool TryGetRoundSummaryAnchor(long blockTs, out long lastMsgTs)
+        {
+            lastMsgTs = 0;
+            for (int i = 0; i < _roundSums.Count; i = i + 1)
+            {
+                if (_roundSums[i].Timestamp != blockTs)
+                {
+                    continue;
+                }
+                return TryReadLastMsgTs(_roundSums[i].Payload, out lastMsgTs);
+            }
+            return false;
+        }
+        /// <summary>从 roundsum 载荷解析 lastMsgTs——缺字段 / 解析失败返回 false（不静默造锚）。</summary>
+        /// <param name="payloadJson">载荷 JSON</param>
+        /// <param name="lastMsgTs">前文末条消息时间戳（输出）</param>
+        /// <returns>是否解析成功</returns>
+        private static bool TryReadLastMsgTs(string payloadJson, out long lastMsgTs)
+        {
+            lastMsgTs = 0;
+            if (payloadJson == null || payloadJson.Length == 0)
+            {
+                return false;
+            }
+            try
+            {
+                using (System.Text.Json.JsonDocument doc = JsonUtil.ParseStrict(payloadJson))
+                {
+                    System.Text.Json.JsonElement root = doc.RootElement;
+                    if (root.ValueKind != System.Text.Json.JsonValueKind.Object)
+                    {
+                        return false;
+                    }
+                    System.Text.Json.JsonElement data;
+                    if (!root.TryGetProperty("data", out data))
+                    {
+                        return false;
+                    }
+                    System.Text.Json.JsonElement ts;
+                    if (!data.TryGetProperty("lastMsgTs", out ts) || ts.ValueKind != System.Text.Json.JsonValueKind.Number)
+                    {
+                        return false;
+                    }
+                    lastMsgTs = ts.GetInt64();
+                    return lastMsgTs > 0;
+                }
+            }
+            catch (Exception ex)
+            {
+                LogStore.Add("SessionViewStore", 2, "roundsum 锚解析失败: " + ex.Message, "SYS");
+                return false;
+            }
         }
 
         /// <summary>追加轮末总结条目——roundsummary（LLMSimpleRequest 产出一句话总结）。与 roundsum 同属轮末条目族（同容器承载、type 区分——复用车、落盘、合并、补差全链）；写入即落盘——宿主中断不丢。音频字段（A265）为拼接后单文件名——仅供前端点播，无音频时缺省不写。</summary>
@@ -951,49 +1026,15 @@ namespace CH4
             // A248：清空同步落盘（原子重写为空）——否则旧行在载入时被读回，清空语义失效
             Rewrite();
         }
-        /// <summary>
-        /// 视图层截断——回滚（session.rollback）：丢弃前文索引大于切点的条目，与真实前文截断同批物化。
-        /// 判定：前文派生条目（MsgIndex ≥ 0）按索引；非前文派生条目（-1）按时间戳界限——时间戳单调化
-        /// 保证全局严格递增，故被截区间内产生的一切条目时间戳必不小于「被丢弃前文条目的最小时间戳」。
-        /// 保留面 = 切点及之前的全部条目（注入报告为普通块——MsgIndex=-1 不参与索引判定，天然保留）；写盘。
-        /// </summary>
-        /// <param name="msgIndex">切点前文索引（保留 ≤ 该索引的条目）</param>
-        public void TruncateFrom(int msgIndex)
-        {
-            // [段1] 前文派生条目——按索引判定（保留 ≤ msgIndex）
-            long dropMinTs = long.MaxValue;
-            for (int i = _blocks.Count - 1; i >= 0; i = i - 1)
-            {
-                if (_blocks[i].MsgIndex > msgIndex)
-                {
-                    if (_blocks[i].Timestamp < dropMinTs)
-                    {
-                        dropMinTs = _blocks[i].Timestamp;
-                    }
-                    _blocks.RemoveAt(i);
-                }
-            }
-            // [段2] 非前文派生条目——按时间戳界限丢弃（不早于被截区间起点者属于被截区间）
-            if (dropMinTs < long.MaxValue)
-            {
-                DropBlocksFrom(_gapTexts, dropMinTs);
-                DropBlocksFrom(_roundSums, dropMinTs);
-                DropBlocksFrom(_errors, dropMinTs);
-                DropBlocksFrom(_retries, dropMinTs);
-            }
-            // [段3] 待配对工具——被截区间内的工具声明不再配对（回滚仅空闲时执行，通常本就为空）
-            _pendingTools.Clear();
-            Rewrite();
-        }
 
-        /// <summary>丢弃时间戳不早于界限的条目——截断用（保留面 = 界限之前）。</summary>
+        /// <summary>丢弃时间戳晚于界限的条目——截断用（保留面 = 界限及之前；等于界限者保留——轮末锚自身必须留下）。</summary>
         /// <param name="list">条目容器（原地删）</param>
-        /// <param name="cutoff">界限（时间戳 ≥ 该值即丢弃）</param>
+        /// <param name="cutoff">界限（时间戳 &gt; 该值即丢弃；等于界限者保留）</param>
         private static void DropBlocksFrom(List<ViewBlock> list, long cutoff)
         {
             for (int i = list.Count - 1; i >= 0; i = i - 1)
             {
-                if (list[i].Timestamp >= cutoff)
+                if (list[i].Timestamp > cutoff)
                 {
                     list.RemoveAt(i);
                 }

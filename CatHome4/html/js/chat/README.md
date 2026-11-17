@@ -50,7 +50,7 @@
 **形态契约（2026-10-03 立 · 2026-10-05 改判 · 莎定）**——**persist 八类全部气泡**（`.chat-bubble`：底 + 描边 + 圆角 + 内边距）；**live 三件朴素**（`.chat-plain`——面板自身即泡，内部件不再套壳）。类别区分由**描边色**承担（色相 = 语义，与状态条 / 滚动带刻度同源）；底色四档不新增令牌：内容类 `--ch-bg-panel` · 过程类 `--ch-bg-sunken`（reason）· 系统类 `--ch-bg-faint`（retry / error）· 注入报告 `--ch-note-bg`；**`inject_report` 与 `roundsum` 描边同为淡紫**（`--ch-state-all`）。
 间隙文本（后端 type `gap_text`）与 `text` 视觉同形——前端收包即归一为 `text`（`persist.js::TYPE_ALIAS`）；后端保留该 type，供 QQ `/last` 与会话存档区分。
 
-**节点操作条（P6b · 2026-10-06 复归）**——`text` 块底部按钮（`⟲` 回滚：`session.rollback <msgIndex>`；`⧉` 分支已随 A326 删除）；入口判据 = 块级 `msgIndex ≥ 0`（独立块 / 旧块不挂）；指令走指令总线 `postCommand`（出口面），投递回执走桌宠气泡 `warn`（通知面）。渲染件**第二参 `item`** = 整条条目——块级字段取用口（挂载入口 `persist.js::persistRender`）。
+**轮末回滚按钮（A387 · 2026-11-17）**——挂在 `roundsum` 块底部（`⟲ 回滚到此处`：`session.rollback <块 ts>`）；语义 = 回到这一轮完全结束时的状态（roundsum 本身保留——统计是已发生事实）。入口判据 = 块 `ts` 与载荷 `data.lastMsgTs` 双齐（旧块缺字段即不挂——不做迁移）；指令走指令总线 `postCommand`（出口面），投递回执走桌宠气泡 `warn`（通知面）。`text` 块不再挂操作条（同轮迁移）。渲染件**第二参 `item`** = 整条条目——块级字段取用口（挂载入口 `persist.js::persistRender`）。
 
 ---
 

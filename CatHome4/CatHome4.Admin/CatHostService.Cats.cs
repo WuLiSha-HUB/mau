@@ -910,19 +910,19 @@ namespace CatHome4.Admin
         /// 会话指令执行——session.rollback 入口（P6b；仅主线程调用）。
         /// </summary>
         /// <param name="session">目标会话</param>
-        /// <param name="line">指令行（session.rollback &lt;msgIndex&gt;）</param>
+        /// <param name="line">指令行（session.rollback &lt;anchorTs&gt;——轮末锚时间戳）</param>
         /// <returns>结果文本</returns>
         internal static string ExecuteSessionCmd(ChatSession session, string line)
         {
             if (line.StartsWith("session.rollback ", StringComparison.Ordinal))
             {
                 string arg = line.Substring(17).Trim();
-                int idx;
-                if (!int.TryParse(arg, out idx))
+                long anchorTs;
+                if (!long.TryParse(arg, out anchorTs) || anchorTs <= 0)
                 {
-                    return "session.rollback | 参数非法: " + arg + "（需要消息索引）";
+                    return "session.rollback | 参数非法: " + arg + "（需要轮末锚时间戳）";
                 }
-                return session.Rollback(idx);
+                return session.RollbackToRound(anchorTs);
             }
             return "session.* 指令未识别: " + line;
         }

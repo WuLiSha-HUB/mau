@@ -67,11 +67,36 @@ function roundsumHtml(payload) {
     return html;
 }
 
-function buildRoundSumBlock(payload) {
+function buildRoundSumBlock(payload, item) {
     // 轮末统计气泡——弱化系统样式；历史重建与实时推送共用同一渲染面
     var row = blockRow('roundsum');
     var bubble = el('div', bodyClass('roundsum'));
     bubble.innerHTML = roundsumHtml(payload);
+    appendRoundRollback(bubble, payload, item);
     row.appendChild(bubble);
     return row;
+}
+
+/// A387 轮末回滚——按钮挂在轮末统计块上：回滚 = 回到这一轮完全结束时的状态
+/// 判据 = 块 ts（视图锚）+ 载荷 lastMsgTs（前文锚）双齐——旧块缺 lastMsgTs 即不挂（不做迁移）
+/// 指令走指令总线（出口面），投递回执走通知面 `warn`（信息位归 state 段独占）
+function appendRoundRollback(bubble, payload, item) {
+    var ts = item ? item.ts : undefined;
+    var data = (payload && payload.data) || {};
+    if (typeof ts !== 'number' || ts <= 0) {
+        return;
+    }
+    if (typeof data.lastMsgTs !== 'number' || data.lastMsgTs <= 0) {
+        return;
+    }
+    var bar = el('div', 'node-actions');
+    bar.appendChild(nodeActionBtn('⟲ 回滚到此处', 'node-btn-rollback',
+        '回到这一轮结束时的状态（此后产生的全部内容将被截断，不可恢复）', function () {
+            if (!window.confirm('回到这一轮结束时的状态？此后产生的内容将被截断（不可恢复）。')) {
+                return;
+            }
+            postCommand('session.rollback ' + ts);
+            warn('回滚指令已投递——建议刷新页面');
+        }));
+    bubble.appendChild(bar);
 }

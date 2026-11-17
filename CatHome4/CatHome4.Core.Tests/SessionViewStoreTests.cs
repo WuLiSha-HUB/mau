@@ -671,10 +671,10 @@ namespace CatHome4.Core.Tests
             Assert.StartsWith("cat_d_", Path.GetFileName(path));
         }
         /// <summary>
-        /// 视图层截断——回滚：前文派生条目按索引裁掉切点之后者，非前文派生条目按时间戳界限同批裁掉。
+        /// 视图层截断——回滚到轮末锚：五容器统一按时间戳裁掉锚之后者（A387：索引判据退役）。
         /// </summary>
         [Fact]
-        public void TruncateFrom_DropsAfterCutPoint()
+        public void TruncateToTs_DropsAfterAnchor()
         {
             LlmMessage[] msgs = new LlmMessage[]
             {
@@ -690,7 +690,7 @@ namespace CatHome4.Core.Tests
             _store.OnUserMessage(msgs[2], 2);
             _store.OnAssistantText(msgs[3], 3);
             _store.AppendRoundSummary("{}", 2500);
-            _store.TruncateFrom(1);
+            _store.TruncateToTs(1500);
             CH4.ViewBlock[] blocks = _store.GetBlocks();
             int front = 0;
             int sums = 0;
