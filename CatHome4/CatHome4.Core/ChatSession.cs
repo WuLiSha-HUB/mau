@@ -269,6 +269,15 @@ namespace CH4
         /// <summary>已投截断提示请求号——同一请求只投一次（比对 _requestCount；0 为起点哨兵，请求号自 1 起）</summary>
         private int _lastTruncationAlertReq;
 
+        /// <summary>本次请求 token 基线——prompt（LaunchLlm 记起点，流末差分出本次请求真实消耗；A388）</summary>
+        private long _reqBasePrompt;
+
+        /// <summary>本次请求 token 基线——completion（A388）</summary>
+        private long _reqBaseCompletion;
+
+        /// <summary>本次请求 token 基线——cache hit（A388）</summary>
+        private long _reqBaseCacheHit;
+
         /// <summary>本轮开始时间戳——Stopwatch.GetTimestamp（roundsum 总耗时）</summary>
         private long _roundStartTick;
 
@@ -1454,6 +1463,10 @@ namespace CH4
             _llmToolCallsJson = "";
             _llmError = false;
             _llmErrorText = "";
+            // A388 Token 用量流水——记本次请求起点（流末差分出本次请求真实消耗）
+            _reqBasePrompt = _usagePrompt;
+            _reqBaseCompletion = _usageCompletion;
+            _reqBaseCacheHit = _usageCacheHit;
             System.Threading.Tasks.Task.Run(delegate
             {
                 _ = ConsumeLlmStream(messages);
@@ -1735,6 +1748,8 @@ namespace CH4
             }
             finally
             {
+                // A388 Token 用量流水——流结束即落本次请求一行（含重试重发 / 空回复续传各算一次请求）
+                AppendTokenUsage();
                 _llmBusy = false;
             }
         }
@@ -2183,6 +2198,27 @@ namespace CH4
                 // 解析失败静默——观测面不受单帧畸形影响
                 LogStore.Add("ChatSession", 2, "usage 帧解析失败，累计跳过: " + ex.Message, "SYS");
             }
+        }
+
+        /// <summary>
+        /// 本次请求用量落盘（A388）——流末按请求基线差分出本次请求真实消耗，追加一行到用量流水（多 usage 帧自然合并为同一行的合计）。
+        /// 无增量（请求未发出 / 无 usage 帧）不落行；负增量（基线被轮首复位扰乱）记 L2 出声后跳过，不静默。
+        /// </summary>
+        private void AppendTokenUsage()
+        {
+            long prompt = _usagePrompt - _reqBasePrompt;
+            long completion = _usageCompletion - _reqBaseCompletion;
+            long cacheHit = _usageCacheHit - _reqBaseCacheHit;
+            if (prompt < 0 || completion < 0 || cacheHit < 0)
+            {
+                LogStore.Add("ChatSession", 2, "Token 用量增量为负，跳过落盘: cat=" + _catKey + " | prompt=" + prompt.ToString() + " completion=" + completion.ToString() + " cacheHit=" + cacheHit.ToString(), "TOKEN");
+                return;
+            }
+            if (prompt == 0 && completion == 0 && cacheHit == 0)
+            {
+                return;
+            }
+            TokenUsageStore.Append(_catKey, _round, _requestCount, prompt, completion, cacheHit, ViewTimestamp());
         }
 
         /// <summary>

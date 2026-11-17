@@ -11,7 +11,7 @@ namespace CatHome4.Admin
     internal static class AdminRoutes
     {
         /// <summary>
-        /// 管理路由注册——35 端点全量（llm-apis / cat-config / cat-default / workspace / appearance-apis / packs / open-data-dir / chat-images / audio / db / groups）。
+        /// 管理路由注册——37 端点全量（llm-apis / cat-config / cat-default / workspace / appearance-apis / packs / open-data-dir / chat-images / audio / db / groups / token-stats）。
         /// </summary>
         /// <param name="sink">HTTP 路由注册面（HttpHost 实现）</param>
         public static void Register(IHttpRouteSink sink)
@@ -85,6 +85,10 @@ namespace CatHome4.Admin
             sink.MapGet("/api/v1/groups/{name}/messages", (Delegate)AdminService.HandleGroupsMessagesGet);
             sink.MapPost("/api/v1/groups/messages", (Delegate)AdminService.HandleGroupsMessagesPost);
             sink.MapGet("/api/v1/groups/host", (Delegate)AdminService.HandleGroupsHostGet);
+
+            // [段13] Token 用量统计面——A389（快照读取 + 手动刷新；数据源 Data/tokennumber/，后台每分钟自动重算）
+            sink.MapGet("/api/v1/token-stats", (Delegate)AdminService.HandleTokenStatsGet);
+            sink.MapPost("/api/v1/token-stats/refresh", (Delegate)AdminService.HandleTokenStatsRefresh);
         }
     }
 }

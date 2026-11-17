@@ -600,6 +600,8 @@ namespace CH4
             ChatSession.TimebackArchiveDirProvider = CatHostService.ResolveTimebackArchiveDir;
             // A201 会话元数据落点接线——Data/sessions/<id>/<id>.session.json（会话自身参数持久化；design-ch4-protocol §十三）
             ChatSession.SessionMetaPathProvider = CatHostService.ResolveSessionMetaPath;
+            // A388 Token 用量流水落点接线——Data/tokennumber/<id>/<yyyyMMdd>.jsonl（每次 LLM 请求一行，追加写）
+            TokenUsageStore.DirProvider = CatHostService.ResolveTokenUsageDir;
             // A201 显示名解析接线——session.new 时按 cat.cfg 现值刷新（新会话取最新）
             ChatSession.DisplayNameProvider = CatHostService.ResolveCatDisplayName;
             // timeback 归档现场记录接线——回收时采集本猫 info 快照（归档文件第二行）
@@ -836,6 +838,8 @@ namespace CH4
                 RouteRegistrar = AdminRoutes.Register,
                 DepsRefresh = DependencyProbe.Refresh,
                 LlmProbe = LlmEndpointProbe.ProbeAsync,
+                // A389 Token 用量快照——后台每分钟重算一次（主端口唯一注入；手动刷新走 /api/v1/token-stats/refresh）
+                PeriodicTask = AdminService.RefreshTokenUsageStats,
                 HtmlRootProvider = new HtmlRootProvider(),
                 // A328——console 口令校验：仅主端口注入（每猫对话端口 / 组端口不注入 = 不校验）
                 ConsoleAuth = new CatHome4.Http.ConsoleAuth()

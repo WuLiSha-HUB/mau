@@ -16,7 +16,8 @@ var CONSOLE_SCRIPT_LIST = [
     'js/panel-deps.js',
     'js/panel-res.js',
     'js/panel-boot.js',
-    'js/panel-db.js'
+    'js/panel-db.js',
+    'js/panel-token.js'
 ];
 
 // [段1] 资源版本号——取自本脚本 src 的 ?v=（宿主对 index.html 注入 __V__ 后由浏览器带回）

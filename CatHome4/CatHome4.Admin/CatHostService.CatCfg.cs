@@ -380,6 +380,19 @@ namespace CatHome4.Admin
             return Path.Combine(_dataRoot, "Data", "sessions", id, id + ".session.json");
         }
 
+        /// <summary>Token 用量流水目录——Data/tokennumber/&lt;id&gt;（A388；按日分文件由存储层追加）。接线：TokenUsageStore.DirProvider（Core 零配置面依赖）。</summary>
+        /// <param name="catKey">猫 key</param>
+        /// <returns>目录绝对路径（猫 key 空 = 空串，调用方不落盘）</returns>
+        public static string ResolveTokenUsageDir(string catKey)
+        {
+            string id = catKey == null ? "" : catKey;
+            if (id.Length == 0)
+            {
+                return "";
+            }
+            return Path.Combine(_dataRoot, "Data", "tokennumber", id);
+        }
+
         /// <summary>猫显示名现值——cat.cfg 的 displayName（A201：session.new 时刷新会话显示名）。接线：ChatSession.DisplayNameProvider。</summary>
         /// <param name="catKey">猫 key</param>
         /// <returns>显示名（猫 key 空 / 配置缺失 = 空串，调用方保持原值）</returns>

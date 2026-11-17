@@ -19,11 +19,12 @@ namespace CatHome4.Http
     public sealed partial class HttpHost
     {
         /// <summary>
-        /// 后台推送循环——每 250ms 推全量快照 + LogStore 增量（协议 §4.2）。
+        /// 后台推送循环——每 250ms 推全量快照 + LogStore 增量（协议 §4.2）；每满一分钟调用一次周期任务（A389）。
         /// </summary>
         /// <param name="token">取消令牌</param>
         private void PumpLoop(CancellationToken token)
         {
+            int periodicElapsedMs = 0;
             while (!token.IsCancellationRequested)
             {
                 try
@@ -32,6 +33,23 @@ namespace CatHome4.Http
                     // 快照构建归主线程（ThreadGuard——OA.GetSnapshot 仅宿主主线程）——后台只置标志，主线程 PumpMainThread 消费
                     _snapshotPending = true;
                     PushLogIncrements();
+                    // A389 周期任务——每满一分钟跑一次（可空；异常出声后继续，不炸推送循环）
+                    if (_periodicTask != null)
+                    {
+                        periodicElapsedMs = periodicElapsedMs + SnapshotIntervalMs;
+                        if (periodicElapsedMs >= PeriodicTaskIntervalMs)
+                        {
+                            periodicElapsedMs = 0;
+                            try
+                            {
+                                _periodicTask();
+                            }
+                            catch (Exception pex)
+                            {
+                                LogStore.Add("HttpHost", 2, "周期任务异常，跳过本轮: " + pex.Message, "SYS");
+                            }
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {

@@ -19,6 +19,7 @@
             <button data-tab="res">资源</button>
             <button data-tab="boot">启动</button>
             <button data-tab="db">数据</button>
+            <button data-tab="token">用量</button>
             <button data-tab="raw">原始</button>
             <!-- 前端版本标记——每次改动前端递增；刷新后数字变化 = 拿到新版（人眼 cache-busting） -->
             <div style="margin-top:auto;color:var(--ch-fg-faint);font-size:var(--ch-fs-tag);writing-mode:vertical-rl" data-version>UI v?</div>
@@ -136,6 +137,18 @@
                 <div id="dbScroll" style="flex:1;overflow-y:auto">
                     <div id="dbList"></div>
                     <div id="dbPreview" style="padding:10px 12px;border-top:1px solid var(--ch-line)"></div>
+                </div>
+            </section>
+            <!-- A390 Token 用量统计区——读 GET /api/v1/token-stats（后端每分钟重算）；「立即重算」走 POST /api/v1/token-stats/refresh -->
+            <section id="tab-token" class="tab">
+                <div id="tokenbar" style="display:flex;gap:6px;padding:8px 12px;border-bottom:1px solid var(--ch-line-faint);align-items:center;flex-wrap:wrap">
+                    <span id="tokenInfo" style="color:var(--ch-fg-weak);font-size:var(--ch-fs-tag)">Token 用量——按猫按日汇总（数据源 Data/tokennumber；后端每分钟重算）</span>
+                    <span style="flex:1"></span>
+                    <button id="tokenRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-bg-accent);color:var(--ch-ok);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">立即重算</button>
+                </div>
+                <div id="tokenScroll" style="flex:1;overflow-y:auto">
+                    <div id="tokenTotals" style="display:flex;gap:18px;padding:10px 12px;border-bottom:1px solid var(--ch-line);flex-wrap:wrap"></div>
+                    <div id="tokenCats"></div>
                 </div>
             </section>
             <!-- 配置区 -->

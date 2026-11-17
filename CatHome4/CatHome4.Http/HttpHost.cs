@@ -80,6 +80,9 @@ namespace CatHome4.Http
         /// <summary>LLM 端点池探活回调（可空=不注册 /api/v1/llm/probe）——宿主侧注入 LlmEndpointProbe.ProbeAsync（A253 扩展）</summary>
         public Func<Task<string>> LlmProbe { get; set; }
 
+        /// <summary>周期任务回调（可空=不挂）——后台推送循环每满一分钟调用一次（A389 Token 用量快照重算；仅主端口注入）</summary>
+        public Action PeriodicTask { get; set; }
+
         /// <summary>Console 口令校验实例（可空=不启用认证）——仅主端口注入；每猫对话端口与组端口不注入（A328）</summary>
         public ConsoleAuth ConsoleAuth { get; set; }
 
@@ -122,6 +125,9 @@ namespace CatHome4.Http
 
         /// <summary>LLM 端点池探活回调——宿主侧注入（LlmEndpointProbe.ProbeAsync；可空=不注册探活端点）</summary>
         private Func<Task<string>> _llmProbe;
+
+        /// <summary>周期任务回调——后台循环每满一分钟调用一次（可空=不挂；仅主端口注入，A389）</summary>
+        private Action _periodicTask;
 
         /// <summary>Console 口令校验实例（可空=不启用认证——仅主端口注入，A328）</summary>
         private ConsoleAuth _consoleAuth;
@@ -206,6 +212,8 @@ namespace CatHome4.Http
 
         /// <summary>快照推送间隔毫秒——250ms（协议 §4.2 snapshot 事件）</summary>
         private const int SnapshotIntervalMs = 250;
+        /// <summary>周期任务间隔毫秒——60000（后台循环累计到点调用 PeriodicTask；A389）</summary>
+        private const int PeriodicTaskIntervalMs = 60000;
         /// <summary>前端测试代理客户端——静态复用（R6-P3-01；Timeout 仅初始化可设，故用工厂构造）</summary>
         private static readonly System.Net.Http.HttpClient FrontendTestHttp = CreateFrontendTestHttp();
 
@@ -224,6 +232,7 @@ namespace CatHome4.Http
             host._dispatcher = options.Dispatcher;
             host._depsRefresh = options.DepsRefresh;
             host._llmProbe = options.LlmProbe;
+            host._periodicTask = options.PeriodicTask;
             host._consoleAuth = options.ConsoleAuth;
             // A328 端口面——未声明 = console（主端口全量）；chat / group 各自最小集
             host._surfaceConsole = true;
