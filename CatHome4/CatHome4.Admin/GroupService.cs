@@ -770,6 +770,63 @@ namespace CatHome4.Admin
             return BuildReply("group-catcfg-set", group, -1, extras, "配置已写入：" + target + " / " + field, body);
         }
         /// <summary>
+        /// group-clear——清空组消息流（仅组管理员）：旧流原地归档为 .bak 后重建空流，统计与订阅游标归零。
+        /// 与面板清空按钮共用同一单点（GroupStore.ClearMessages），工具面只加权限层与 A214 回执。
+        /// </summary>
+        /// <param name="argsJson">工具参数 JSON（group 必填；catId 为宿主注入保留键）</param>
+        /// <returns>A214 回执；失败为 ERR| 前缀</returns>
+        public string Clear(string argsJson)
+        {
+            string group = "";
+            string catId = "";
+            string err = ReadCommon(argsJson, out group, out catId);
+            if (err.Length > 0)
+            {
+                return err;
+            }
+            GroupSummary g = GroupStore.GetGroup(group);
+            if (g == null)
+            {
+                return "ERR|GROUP_NOT_FOUND|组不存在: " + group;
+            }
+            if (!IsMember(g, catId))
+            {
+                return "ERR|GROUP_NOT_MEMBER|调用者不是本组成员: " + catId;
+            }
+            if (!g.Running)
+            {
+                return "ERR|GROUP_NOT_RUNNING|组未启用: " + group;
+            }
+            // [段1] 权限——清空是破坏性写面，只认 adminKeys 名单（组成员不足）
+            if (!IsAdmin(g, catId))
+            {
+                return "ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: " + catId;
+            }
+            long beforeSeq = g.LastSeq;
+            int beforeCount = g.MsgCount;
+            // [段2] 执行——同一单点：归档 .bak + 统计与订阅游标归零（新流从 #1 起）
+            string result = GroupStore.ClearMessages(g.Name);
+            if (!result.StartsWith("ok|", StringComparison.Ordinal))
+            {
+                return result;
+            }
+            string[] parts = result.Split(new char[] { '|' });
+            string archived = "";
+            if (parts.Length >= 3)
+            {
+                archived = parts[2];
+            }
+            string archiveText = archived.Length == 0 ? "（无消息文件）" : archived;
+            Dictionary<string, object> extras = new Dictionary<string, object>();
+            extras["archived"] = archived;
+            extras["clearedCount"] = beforeCount;
+            extras["clearedSeq"] = beforeSeq;
+            List<string> body = new List<string>();
+            body.Add("旧流 " + beforeCount.ToString() + " 条（最新 #" + beforeSeq.ToString() + "）已归档：" + archiveText);
+            body.Add("新流从 #1 起；订阅游标已归零（归档文件保留在同组目录）");
+            return BuildReply("group-clear", g.Name, beforeCount, extras, g.Name + " | 已清空 " + beforeCount.ToString() + " 条 · 归档 " + archiveText, body);
+        }
+        /// <summary>
         /// 目标猫解析——组内成员**精确**匹配（不把组 key 直接喂给 cat.cfg 寻址，防 id 前缀误配）。
         /// </summary>
         /// <param name="argsJson">工具参数 JSON（cat 必填）</param>

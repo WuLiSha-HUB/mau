@@ -47,5 +47,10 @@
         /// <param name="argsJson">工具参数 JSON（group / cat / field / value 必填；catId 为宿主注入保留键）</param>
         /// <returns>落盘实况文本；失败为 ERR| 前缀</returns>
         string CatCfgSet(string argsJson);
+
+        /// <summary>清空消息流（group-clear）——旧流原地归档为 .bak 后重建空流（统计与订阅游标归零），仅组管理员发起。</summary>
+        /// <param name="argsJson">工具参数 JSON（group 必填；catId 为宿主注入保留键）</param>
+        /// <returns>JSON 文本；失败为 ERR| 前缀</returns>
+        string Clear(string argsJson);
     }
 }

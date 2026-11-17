@@ -1,6 +1,6 @@
-﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 八件独立 Flow）
-// 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-post / group-delegate / group-newsession / group-catinfo / group-catcfg-get / group-catcfg-set
-// 权限：读面（info / inbox / post / catinfo / catcfg-get）须组成员，可查组内任一成员；写面（delegate / newsession / catcfg-set）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
+﻿// group_cat.mau —— GroupCat 语料（群组工具组——group-* 九件独立 Flow）
+// 角色：工具组 Flow——认领 TOOL 域 group-info / group-inbox / group-post / group-delegate / group-newsession / group-catinfo / group-catcfg-get / group-catcfg-set / group-clear
+// 权限：读面（info / inbox / post / catinfo / catcfg-get）须组成员，可查组内任一成员；写面（delegate / newsession / catcfg-set / clear）另需组管理员 group.json adminKeys——校验在宿主实现（IGroupService）
 // 受限工具名单（硬编码，莎 2026-11-09）：group-catcfg-set / group-newsession 不可经任何工具写入 toolNames（公共层 ValidateToolNames 拦，只拦新增）
 // 命名（2026-11-05 莎裁 β）：group-post 只写组流不唤醒、无 @ 目标参数；group-delegate 才派活并唤醒目标猫（积木名 group.say / group.send 为内部实现名，不改）
 // 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 5 线认领执行 → complete_str 回执
@@ -8,7 +8,7 @@
 // 线程模型：全部主线程同步——投递触碰会话面（ThreadGuard 主线程守卫），不得 par 化
 // 服务面：积木经 DataBox.TryResolve<IGroupService>（宿主 S1 段绑定；未注入即 ERR|GROUP_NO_SERVICE）
 
-// ── 状态机（5 线——每线独立生命周期）──
+// ── 状态机（9 线——每线独立生命周期）──
 § 'S_Info' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_Inbox' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_Post' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
@@ -17,8 +17,9 @@
 § 'S_CatInfo' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_CfgGet' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 § 'S_CfgSet' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Clear' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
 
-// ── 主动传感器壳——5 线各自探测（纯只读判断积木 → bool 落盒）──
+// ── 主动传感器壳——9 线各自探测（纯只读判断积木 → bool 落盒）──
 § 'P_InfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-info"] > @giOpen
 § 'P_InboxOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-inbox"] > @gxOpen
 § 'P_PostOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-post"] > @gsOpen
@@ -27,6 +28,7 @@
 § 'P_CatInfoOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-catinfo"] > @ciOpen
 § 'P_CfgGetOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-catcfg-get"] > @cgOpen
 § 'P_CfgSetOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-catcfg-set"] > @cwOpen
+§ 'P_ClearOpen' ↻ [1]: 'oa.is_open'["TOOL", "group-clear"] > @gcOpen
 
 // ══════════════ group-info 线 ══════════════
 § 'T_InfoClaim' : @giOpen & 'S_Info' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-info"] > @giOffice | 'S_Info' = 'Claimed' | 'S_Info' = 'Idle'
@@ -83,3 +85,10 @@
 § 'T_CfgSetExec' : 'S_CfgSet' = 'Ready' → 'group.catcfg_set'[@cwArgs] > @cwRes | 'S_CfgSet' = 'Done' | 'S_CfgSet' = 'Failed'
 § 'T_CfgSetReply' : 'S_CfgSet' = 'Done' → 'oa.complete_str'[@cwOffice, @cwRes] | 'self.desc'["空闲待命", "", ""] | 'S_CfgSet' = 'Idle' | 'S_CfgSet' = 'Idle'
 § 'T_CfgSetAbort' : 'S_CfgSet' = 'Failed' → 'oa.complete_str'[@cwOffice, @cwRes] | 'S_CfgSet' = 'Idle' | 'S_CfgSet' = 'Idle'
+
+// ══════════════ group-clear 线（清空组消息：仅组管理员 + 旧流归档可恢复）══════════════
+§ 'T_ClearClaim' : @gcOpen & 'S_Clear' = 'Idle' → 'oa.claim_next_simple'["TOOL", "group-clear"] > @gcOffice | 'S_Clear' = 'Claimed' | 'S_Clear' = 'Idle'
+§ 'T_ClearArgs' : 'S_Clear' = 'Claimed' → 'oa.get_str'[@gcOffice, "args"] > @gcArgs | 'self.desc'["group-clear 执行中", "", ""] | 'S_Clear' = 'Ready' | 'S_Clear' = 'Failed'
+§ 'T_ClearExec' : 'S_Clear' = 'Ready' → 'group.clear'[@gcArgs] > @gcRes | 'S_Clear' = 'Done' | 'S_Clear' = 'Failed'
+§ 'T_ClearReply' : 'S_Clear' = 'Done' → 'oa.complete_str'[@gcOffice, @gcRes] | 'self.desc'["空闲待命", "", ""] | 'S_Clear' = 'Idle' | 'S_Clear' = 'Idle'
+§ 'T_ClearAbort' : 'S_Clear' = 'Failed' → 'oa.complete_str'[@gcOffice, @gcRes] | 'S_Clear' = 'Idle' | 'S_Clear' = 'Idle'

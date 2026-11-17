@@ -150,6 +150,8 @@ var TOOL_SKELETONS = {
     'group-catinfo': 'text',
     'group-catcfg-get': 'text',
     'group-catcfg-set': 'text',
+    // group 清空面——清空组消息流（A396）
+    'group-clear': 'text',
     // qqbot——QQ 机器人通道（QqBotCat · A392）
     'qqbot-send': 'text',
     'qqbot-info': 'text',

@@ -49,9 +49,9 @@ const POOL = [
     // TsCat 9（A294 五件 + A332 工程质量面四件）
     'ts-check', 'ts-list', 'ts-read', 'ts-find-ref', 'ts-patch',
     'ts-info', 'ts-lint', 'ts-test', 'ts-format',
-    // GroupCat 8（A306 / A309 / A322——群聊 / 派单回执 / 会话重建 / 组内配置面）
+    // GroupCat 9（A306 / A309 / A322 / A396——群聊 / 派单回执 / 会话重建 / 组内配置面 / 清空消息）
     'group-info', 'group-inbox', 'group-post', 'group-delegate', 'group-newsession',
-    'group-catinfo', 'group-catcfg-get', 'group-catcfg-set',
+    'group-catinfo', 'group-catcfg-get', 'group-catcfg-set', 'group-clear',
     // QqBotCat 4（A392——QQ 机器人通道：发言 / 通道自述 / 机器人详情 / 群目录）
     'qqbot-send', 'qqbot-info', 'qqbot-botinfo', 'qqbot-groups',
     // 内置 11
@@ -77,9 +77,9 @@ function summaryOf(payload) {
 }
 
 describe('声明层——覆盖与注册', () => {
-    it('落位表 = 工具池 101 件', () => {
+    it('落位表 = 工具池 102 件', () => {
         expect(Object.keys(window.TOOL_SKELETONS).sort()).toEqual(POOL);
-        expect(POOL.length).toBe(101);
+        expect(POOL.length).toBe(102);
     });
 
     it('声明件与落位表键集一致（有落位必有件，防「有壳无肉」）', () => {
@@ -367,6 +367,28 @@ describe('组内配置面（A322）', () => {
         const text = node.textContent;
         expect(text).toContain('写入配置 cat2 · themeColor = 3');
         expect(text).toContain('配置 cat2 · themeColor 已写入');
+    });
+});
+
+describe('组消息清空（A396）', () => {
+    it('group-clear——折叠行读清空条数，正文给归档文件名与游标说明', () => {
+        const head = '{"ok":true,"tool":"group-clear","target":"g1","items":3,"archived":"messages.20261117_174500.jsonl.bak","clearedCount":3,"clearedSeq":7}';
+        const body = 'g1 | 已清空 3 条 · 归档 messages.20261117_174500.jsonl.bak'
+            + '\n旧流 3 条（最新 #7）已归档：messages.20261117_174500.jsonl.bak'
+            + '\n新流从 #1 起；订阅游标已归零（归档文件保留在同组目录）';
+        const node = window.buildToolBlock(card('group-clear', { group: 'g1' }, head + '\n' + body), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('清空 g1 消息流');
+        expect(text).toContain('3 条');
+        expect(text).toContain('messages.20261117_174500.jsonl.bak');
+        expect(text).toContain('订阅游标已归零');
+    });
+
+    it('group-clear——失败态走错误渲染，不拼成功文案', () => {
+        const res = 'ERR|GROUP_NOT_ADMIN|调用者不是本组管理员: cat9';
+        const node = window.buildToolBlock(card('group-clear', { group: 'g1' }, res), 'toolcard');
+        const text = node.textContent;
+        expect(text).toContain('GROUP_NOT_ADMIN');
     });
 });
 
