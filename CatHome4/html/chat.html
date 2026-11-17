@@ -96,7 +96,7 @@
         <div id="chatLivePanel" class="chat-live" style="display:none"></div>
         <!-- 输入区动作列——停止 / 继续 / 发送（竖排同列、同款实心；底色区分语义） -->
         <div id="chatActions">
-            <button id="chatPause" class="ch-iabtn ch-iabtn-stop" title="停止本轮（cat.pause——已生成内容保留，前文格式修复）" disabled>停止</button>
+            <button id="chatPause" class="ch-iabtn ch-iabtn-stop" title="停止自动续推（cat.pause——在途请求跑完后收尾，不再发下一次请求；可用继续按钮续推）" disabled>停止</button>
             <button id="chatContinue" class="ch-iabtn ch-iabtn-continue" title="继续——用当前前文直接发一次 LLM 请求（cat.continue：不追加消息，模型续写）" disabled>继续</button>
             <button id="chatSendBtn" class="ch-iabtn ch-iabtn-send">发送</button>
         </div>
@@ -256,6 +256,7 @@
     <script src="js/chat/blocks/toolcard.js?v=__V__"></script>
     <script src="js/chat/blocks/retry.js?v=__V__"></script>
     <script src="js/chat/blocks/error.js?v=__V__"></script>
+    <script src="js/chat/blocks/notice.js?v=__V__"></script>
     <script src="js/chat/blocks/inject-report.js?v=__V__"></script>
     <script src="js/chat/blocks/roundsum.js?v=__V__"></script>
     <script src="js/chat/blocks/roundsummary.js?v=__V__"></script>

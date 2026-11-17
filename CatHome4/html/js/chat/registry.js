@@ -36,6 +36,7 @@ var BLOCK_DECL = {
     'toolcard': { form: 'bubble', row: 'assistant tool', tick: 'tool' },
     'retry': { form: 'bubble', row: 'assistant', tick: 'reply', body: 'retry' },
     'error': { form: 'bubble', row: 'assistant', tick: 'reply', body: 'error' },
+    'notice': { form: 'bubble', row: 'assistant', tick: 'reply', body: 'notice' },
     'inject_report': { form: 'bubble', row: 'assistant inject', tick: 'reply', body: 'inject' },
     'roundsum': { form: 'bubble', row: 'assistant roundsum', tick: 'sum', body: 'roundsum' },
     'roundsummary': { form: 'bubble', row: 'assistant summary', tick: 'sum', body: 'roundsummary' },
@@ -95,6 +96,7 @@ var PERSIST_RENDERERS = {
     'toolcard': buildToolBlock,
     'retry': buildRetryBlock,
     'error': buildErrorBlock,
+    'notice': buildNoticeBlock,
     'inject_report': buildInjectReportBlock,
     'roundsum': buildRoundSumBlock,
     'roundsummary': buildRoundSummaryNoteBlock

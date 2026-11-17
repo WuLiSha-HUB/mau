@@ -68,11 +68,8 @@ namespace CatHome4.Core.Tests
             /// <summary>运行态连续计时验证——增量块间隔毫秒（ChunkCount &gt; 1 时生效）</summary>
             public int ChunkSleepMs = 0;
 
-            /// <summary>P6 中止模拟——产 Text 后挂起等待此事件（Pause 时 cts.Cancel → WaitOne 抛 OCE；null=不挂起）</summary>
+            /// <summary>流式窗口模拟——产 Text 后挂起等待此事件（A393 起无用户取消通道，放行只由测试置位；null=不挂起）</summary>
             public AutoResetEvent HoldStream;
-
-            /// <summary>P6 中止模拟——产 Retrying 前挂起等待取消（Runtime 取消识别后路径：取消 → OCE 冒泡，不产 Retrying）</summary>
-            public bool EmitRetryThenCancel;
 
             /// <summary>
             /// 流式对话——按队列返回工具调用或纯文本。
@@ -125,14 +122,6 @@ namespace CatHome4.Core.Tests
                     // 运行态七态——退避结束、重发开始（真实 Runtime：退避后重发前产 RetryResume；2026-09-16）
                     yield return new LlmStreamEvent(LlmStreamKind.RetryResume, "");
                 }
-                // P6 中止——取消识别路径：产 Retrying 前挂起（Pause → cts.Cancel → OCE 冒泡——不产 retry 气泡；Runtime catch OCE throw 语义模拟）
-                if (EmitRetryThenCancel)
-                {
-                    while (!HoldStream.WaitOne(50))
-                    {
-                        ct.ThrowIfCancellationRequested();
-                    }
-                }
                 if (ToolCallsQueue.Count > 0)
                 {
                     // A78——思考先于工具决策流（真实链路帧序：reasoning 增量帧 → tool_calls 增量帧）
@@ -168,12 +157,12 @@ namespace CatHome4.Core.Tests
                 }
                 yield return new LlmStreamEvent(LlmStreamKind.Text, ReplyText);
                 await Task.Yield();
-                // P6 中止模拟——挂起流等待用户暂停（Pause → cts.Cancel → ThrowIfCancellationRequested 抛 OCE——Runtime 取消路径；AutoResetEvent 无 CancellationToken 重载——轮询）
+                // 流式窗口模拟——挂起直到测试放行（A393 起无用户取消通道：不再有 ct 抛出路径）
                 if (HoldStream != null)
                 {
                     while (!HoldStream.WaitOne(50))
                     {
-                        ct.ThrowIfCancellationRequested();
+                        // 轮询等待（AutoResetEvent 无 CancellationToken 重载）
                     }
                 }
                 yield return new LlmStreamEvent(LlmStreamKind.Done, "");
@@ -1065,26 +1054,26 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
-        /// 工具区中止（A196 更新）——工具批进行中（OA 工具无消费者）Pause 中止：临时区写空态（未完成工具不在面板残留）；
-        /// 中止前在途卡如实可见（toolrun 段带该工具）。
+        /// A393 停止续推——工具批进行中点停止：在途工具不打断（结果照常回填前文），
+        /// 批收口后不再发起下一次 LLM 请求，本轮自然收尾并推 notice 气泡。
         /// </summary>
         [Fact]
-        public void ToolCard_PendingAbortedOnPause()
+        public void Pause_SuppressesNextRequest_NoticeShown()
         {
             MockLlm llm = new MockLlm();
-            // OA 工具（声明面内、非内置）——无消费者 → 工具批停留进行中
-            string tc = "[{\"id\":\"o1\",\"function\":{\"name\":\"text-read\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\"}\"}}]";
+            // sleep 内置工具——同轮等待保持工具单未闭合（提供「工具批进行中」窗口）
+            string tc = "[{\"id\":\"s1\",\"function\":{\"name\":\"sleep\",\"arguments\":\"{\\\"seconds\\\":1}\"}}]";
             llm.ToolCallsQueue.Enqueue(tc);
             MockHost host = new MockHost();
             ToolSpec[] declared = new ToolSpec[]
             {
-                new ToolSpec("text-read", "读取文本", "{}")
+                new ToolSpec("sleep", "等待", "{}")
             };
             CH4.ChatSession session = CreateSession(llm, declared);
             session.AttachHost(host);
             host.Session = session;
-            session.PostUserMessage("调用 OA 工具");
-            // 泵帧直到先行卡出现（工具批已进入）
+            session.PostUserMessage("调用 sleep 工具");
+            // 泵帧直到工具卡出现（工具批已进入）
             for (int i = 0; i < 200; i = i + 1)
             {
                 session.Pump();
@@ -1096,13 +1085,16 @@ namespace CatHome4.Core.Tests
                 }
             }
             Assert.False(session.IsIdle);
-            // 中止——临时区覆盖为空态（面板清空；未落前文的内容随覆盖消失）
+            // 停止续推——在途工具不打断
             session.Pause();
             PumpUntilIdle(session);
             Assert.True(session.IsIdle);
-            Assert.Equal("empty", host.LastLiveType);
-            Assert.Equal("", host.LastLiveContext);
-            Assert.Contains("text-read", string.Join("|", host.ViewEvents["toolrun"]));
+            // 只发过一次请求——下一次请求被抑制
+            Assert.Equal(1, llm.CallCount);
+            // 工具结果照常回填前文（user + assistant 工具声明 + tool 结果）
+            Assert.True(session.Context.GetMessages().Length >= 3);
+            // notice 提示上屏
+            Assert.True(host.ViewEvents.ContainsKey("notice"));
         }        /// <summary>
                  /// 分批调度的观测面（A165 改写 · A196 更新）——声明序 [text-write(order 1), host-flows(order -1)]：
                  /// 执行按 order 分桶（host-flows 批先、text-write 批后，OA 无消费者 → 停留）。
@@ -1607,73 +1599,44 @@ namespace CatHome4.Core.Tests
             Assert.Equal(2, llm.CallCount);
         }
         /// <summary>
-        /// P6 中止——LLM 流中暂停：后台流挂起 → Pause() 取消 → 上下文保留用户消息（半截文本不入上下文——不裁剪、不写半截）→ 复位 Idle + paused 事件（无 chatdone）。
+        /// A393 停止续推——LLM 流中点停止：不打断在途流（跑完当前请求后再停），
+        /// 下一次请求不再发起，本轮自然收尾并推 notice；回复照常入前文。
         /// </summary>
         [Fact]
-        public void Pause_WhileLlmStreaming_KeepsContextAndPushesPaused()
+        public void Pause_WhileLlmStreaming_LetsStreamFinishAndSuppressesNextRequest()
         {
             MockLlm llm = new MockLlm();
-            llm.ReplyText = "半截回复";
+            llm.ReplyText = "本轮回复";
             llm.HoldStream = new AutoResetEvent(false);
             MockHost host = new MockHost();
             CH4.ChatSession session = CreateSession(llm);
             session.AttachHost(host);
             host.Session = session;
-            session.PostUserMessage("测试暂停");
+            session.PostUserMessage("测试停止续推");
             // 泵帧直到进入活跃相位（后台流挂起在 HoldStream——保证 Pause 时 LlmRunning）
-            for (int i = 0; i < 100 && session.IsIdle; i++)
+            for (int i = 0; i < 100 && session.IsIdle; i = i + 1)
             {
                 session.Pump();
                 Thread.Sleep(5);
             }
             Assert.False(session.IsIdle);
-            // 中止——取消令牌 → 后台 WaitOne 抛 OCE → 主线程 Pump 消费收尾
+            // 停止续推——在途流不打断
             session.Pause();
+            // 放行流——当前请求照常跑完
+            llm.HoldStream.Set();
             PumpUntilIdle(session);
             Assert.True(session.IsIdle);
-            // 上下文保留用户消息——半截文本不入上下文（不裁剪、不写半截；测试会话无 system 提示词——仅 user）
-            LlmMessage[] msgs = session.Context.GetMessages();
-            Assert.Single(msgs); // user（半截丢弃）
-            Assert.Equal(LlmRole.User, msgs[0].Role);
-            // 运行态回归 idle（A165：原 paused 控制事件整体并入 state 段 runState）——中止非正常完成语义
+            // 回复照常入前文（不再丢弃半截文本）
+            Assert.Equal("本轮回复", GetLastAssistantText(session));
+            // 只发过一次请求
+            Assert.Equal(1, llm.CallCount);
+            // notice 提示上屏
+            Assert.True(host.ViewEvents.ContainsKey("notice"));
+            // 运行态回归 idle
             List<string> runStates;
             Assert.True(host.ViewEvents.TryGetValue("runState", out runStates));
             Assert.True(runStates.Count > 0);
             Assert.Equal("idle", runStates[runStates.Count - 1]);
-        }
-        /// <summary>
-        /// P6 中止——取消识别：Runtime 取消路径不产 Retrying（挂起在 Retrying 前）→ Pause 后无 retry 气泡 + paused 气泡 + user 保留。
-        /// </summary>
-        [Fact]
-        public void Pause_CancelBeforeRetry_NoRetryBubble()
-        {
-            MockLlm llm = new MockLlm();
-            llm.EmitRetryThenCancel = true;
-            llm.HoldStream = new AutoResetEvent(false);
-            MockHost host = new MockHost();
-            CH4.ChatSession session = CreateSession(llm);
-            session.AttachHost(host);
-            host.Session = session;
-            session.PostUserMessage("暂停重试测试");
-            // 泵帧直到活跃（后台流挂起在 Retrying 前——等待取消）
-            for (int i = 0; i < 100 && session.IsIdle; i++)
-            {
-                session.Pump();
-                Thread.Sleep(5);
-            }
-            Assert.False(session.IsIdle);
-            session.Pause();
-            PumpUntilIdle(session);
-            Assert.True(session.IsIdle);
-            // 无 retry 视图气泡（取消不产重试）
-            Assert.False(host.ViewEvents.ContainsKey("retry"));
-            // 运行态回归 idle（A165：原 paused 控制事件并入 state 段 runState）
-            List<string> runStates;
-            Assert.True(host.ViewEvents.TryGetValue("runState", out runStates));
-            Assert.True(runStates.Count > 0);
-            Assert.Equal("idle", runStates[runStates.Count - 1]);
-            // 用户消息保留（不裁剪）
-            Assert.Single(session.Context.GetMessages());
         }
         /// <summary>
         /// P10 roundsum 重建归并——多轮会话重建后 GetBlocks 顺序：roundsum 位于所属轮末块之后、下一轮块之前

@@ -32,6 +32,9 @@ namespace CH4
     /// </summary>
     internal sealed partial class ChatSession
     {
+        /// <summary>停止续推提示语——notice 气泡正文（A393：停止按钮只停自动续推，本轮自然收尾）</summary>
+        public const string StopNoticeText = "已终止续推，可用继续按钮续推";
+
         /// <summary>LLM 超时帧上限——同原 WaitForLlm MaxFramesPerRun 语义（30000 帧 ≈ 50 分钟空转上限，100ms/帧）</summary>
         private const long LlmTimeoutFrames = 30000;
 
@@ -225,16 +228,13 @@ namespace CH4
         /// <summary>STREAM_CLOSED 续传标志——SSE 流未以 [DONE] 结束时置位（PumpLlm 检查；续传后复位）</summary>
         private bool _streamClosedRetry;
 
-        // [段2b] P6 中止——暂停标志与取消令牌（LLM 流物理取消面）
-        /// <summary>中止请求标志——HTTP 线程置位（volatile 跨线程可见），主线程 Pump 消费执行收尾</summary>
-        private volatile bool _pauseRequested;
+        // [段2b] 停止续推——抑制标志（A393：不再物理取消在途流，只在下次请求前拦下）
+        /// <summary>停止续推标志——HTTP 线程置位（volatile 跨线程可见）；主线程在下次发起 LLM 请求前消费：不发请求，本轮自然收尾并推 notice 气泡</summary>
+        private volatile bool _stopRequested;
         /// <summary>
         /// 继续请求标志——HTTP 线程置位（volatile 跨线程可见），主线程 Pump 消费（Idle 时启动继续轮）。
         /// </summary>
         volatile bool _continueRequested;
-
-        /// <summary>本轮 LLM 流取消令牌——LaunchLlm 创建；Pause 时 Cancel（下一轮重建——取消不跨轮）</summary>
-        private System.Threading.CancellationTokenSource _pauseCts;
 
         /// <summary>Token 用量整轮累计——prompt（含 cache hit）</summary>
         private long _usagePrompt;
@@ -1030,8 +1030,8 @@ namespace CH4
         }
 
         /// <summary>
-        /// 中止当前轮次——取消 LLM 流（后台 Task 取消）/ 放弃未完成工具批；已完成内容保留 + 前文格式修复（不裁剪——裁剪唯一通道是回滚）。
-        /// 线程安全：仅置位 + Cancel（volatile 标志跨线程可见）；相位推进在主线程 Pump 消费。
+        /// 停止续推——不打断在途请求与工具批，只抑制下一次 LLM 请求发起；本轮自然收尾并推 notice 气泡（A393）。
+        /// 线程安全：仅置位（volatile 标志跨线程可见）；消费在续推点（LaunchLlm 闸门）与轮末。
         /// </summary>
         public void Pause()
         {
@@ -1040,12 +1040,8 @@ namespace CH4
                 // 无进行中对话——前端按钮 idle 态禁用；防御性返回
                 return;
             }
-            _pauseRequested = true;
-            if (_pauseCts != null)
-            {
-                _pauseCts.Cancel();
-            }
-            LogStore.Add("CatHome4", 1, "收到中止指令——正在停止本轮（已完成内容保留）", "CHAT");
+            _stopRequested = true;
+            LogStore.Add("CatHome4", 1, "收到停止指令——本轮跑完后不再自动续推（可用继续按钮续推）", "CHAT");
         }
         /// <summary>
         /// 继续——不追加任何用户消息，直接用当前前文发起一次 LLM 请求（模型续写；空回复续传同上下文语义的显式入口）。
@@ -1063,62 +1059,6 @@ namespace CH4
             // 轮次启动归主线程 Pump Idle 分支消费（Idle 才启动，忙时等同排队）。
             _continueRequested = true;
             LogStore.Add("CatHome4", 1, "收到继续指令——本轮结束后启动继续轮（不追加消息，用当前前文再发一次请求）", "CHAT");
-        }
-
-        /// <summary>中止收尾——主线程 Pump 消费（相位串行）。已完成工具结果保留（不丢信息）/未完成放弃+格式修复/前文落盘/复位 Idle + paused 事件；实现委托 FinalizeInterrupted（中断收尾公共实现）。</summary>
-        private void PauseFinalize()
-        {
-            _pauseRequested = false;
-            FinalizeInterrupted("本轮已中止——前文保留 + 格式修复");
-        }
-        /// <summary>
-        /// 中断收尾公共实现——已完成工具结果保留 + 上下文格式修复 + 截断落盘 + 序号复位 + 状态复位 Idle + 状态段推送。
-        /// 调用面：PauseFinalize（用户中止）——宿主重启不再走强制中断（A72：本轮常规结束，见 RestartRequest）。
-        /// </summary>
-        /// <param name="logPrefix">日志前缀（实现追加落盘条数）</param>
-        private void FinalizeInterrupted(string logPrefix)
-        {
-            // [段0] 已完成工具结果保留——未完成放弃（ReplaceMessages 对未配对声明补占位）+ 先行卡补终态（完成/已中止）
-            for (int i = 0; i < _dogs.Count; i = i + 1)
-            {
-                ToolOrderDog dog = _dogs[i];
-                bool done = dog.IsClosed && dog.Result != null && dog.Result.Length > 0;
-                if (done)
-                {
-                    AppendMessage(_context.AddToolResult(dog.ToolCallId, dog.Name, dog.Result));
-                    NoteTimebackEvent();
-                    NoteTimebackWrite(dog.Name, dog.ArgsJson, dog.Result);
-                }
-            }
-            _dogs.Clear();
-            _hostDogs.Clear();
-            _batches.Clear();
-            _batchIndex = -1;
-            _toolBatchActive = false;
-            // [段1] 上下文格式修复——S3 ReplaceMessages 原地（幂等；孤儿 tool_calls 补占位/孤立结果丢弃）
-            _context.ReplaceMessages(_context.GetMessages());
-            // [段2] 前文落盘——落盘保真（消息行随追加即落盘；A202 起元数据行不再承载统计）
-            // [段2b] 运行态——中断结算（失败/中止轮同出统计：L2 摘要留档——design-ch4-llm §2.1 终止语义）
-            PhaseSettle();
-            LogStore.Add("LLM", 2, "本轮运行态统计（中断）: " + BuildRunStateSummary(), "LLM");
-            // [段3] 临时区写空态（A196：live 是状态投影——未落持久块的内容随覆盖而消失，不进前文 / 存档）
-            SealReasonStream();
-            ResetRetryView();
-            // [段4] 状态复位——Idle（不推 roundsum/Note 拉起——中断非正常完成语义）
-            _round = 0;
-            _phase = ChatPhase.Idle;
-            _phaseFrames = 0;
-            _llmBusy = false;
-            _llmError = false;
-            _llmErrorText = "";
-            _llmResultText = "";
-            _llmReasoning = "";
-            _llmToolCallsJson = "";
-            _emptyReplyRetry = 0;
-            _streamClosedRetry = false;
-            SetChatState("idle");
-            // [段5] 状态段推送——按钮复位与运行态就位（v2：状态段承载业务态，无独立事件）
-            PushState();
         }
 
         /// <summary>
@@ -1290,6 +1230,11 @@ namespace CH4
             msg.Seq = _pendingSeq;
             _pendingSeq = _pendingSeq + 1;
             _pending.Enqueue(msg);
+            // A393 人工输入 = 用户主动开口，解除停止续推抑制（系统注入不解除——排程不是人的意图）
+            if (string.Equals(source, "user", StringComparison.Ordinal))
+            {
+                _stopRequested = false;
+            }
             // A232——入队即物化（跨宿主重启保留）
             SavePendingToDisk();
             return true;
@@ -1305,14 +1250,6 @@ namespace CH4
             // RoundSummary——在途总结工单回收（每帧；无在途零成本返回）
             PumpRoundSummary();
             LoopTiming.Accumulate("cs.summary", ElapsedMsSince(segTicks));
-            // P6 中止——暂停请求消费（任何相位统一收尾：LLM 流取消/工具批放弃/已完成保留）
-            if (_pauseRequested)
-            {
-                segTicks = Stopwatch.GetTimestamp();
-                PauseFinalize();
-                LoopTiming.Accumulate("cs.pause", ElapsedMsSince(segTicks));
-                return;
-            }
             if (_phase == ChatPhase.Idle)
             {
                 segTicks = Stopwatch.GetTimestamp();
@@ -1393,6 +1330,8 @@ namespace CH4
             _roundSummaryUserBuf.Clear();
             _roundSummaryTextBuf.Clear();
             _roundStartTick = System.Diagnostics.Stopwatch.GetTimestamp();
+            // A393 新一轮开始 = 用户主动发起（继续 / 新消息），解除停止续推抑制
+            _stopRequested = false;
             lock (_phaseLock)
             {
                 _phaseAccumMs = new long[PhaseCount];
@@ -1497,8 +1436,14 @@ namespace CH4
         /// </summary>
         private void LaunchLlm()
         {
-            // P6 中止——每轮新取消令牌（上一轮取消不跨轮；Pause 时 Cancel 后台流）
-            _pauseCts = new System.Threading.CancellationTokenSource();
+            // A393 停止续推——抑制本次请求：不发请求，本轮转入收尾（notice 气泡由 CloseRound 推）
+            if (_stopRequested)
+            {
+                LogStore.Add("CatHome4", 1, "停止续推已生效——本次请求未发出，本轮转入收尾: cat=" + _catKey, "CHAT");
+                _phase = ChatPhase.Done;
+                _phaseFrames = 0;
+                return;
+            }
             LlmMessage[] messages = _context.GetMessages();
             _llmBusy = true;
             _llmResultText = "";
@@ -1511,7 +1456,7 @@ namespace CH4
             _llmErrorText = "";
             System.Threading.Tasks.Task.Run(delegate
             {
-                _ = ConsumeLlmStream(messages, _pauseCts.Token);
+                _ = ConsumeLlmStream(messages);
             });
             _phase = ChatPhase.LlmRunning;
             _phaseFrames = 0;
@@ -1527,6 +1472,12 @@ namespace CH4
         /// <param name="reason">续传原因——日志 + retry 视图展示</param>
         private void RetryEmptyReply(string reason)
         {
+            // A393 停止续推——已点停止：不再续传（不推 retry 气泡），交由 LaunchLlm 闸门转入本轮收尾
+            if (_stopRequested)
+            {
+                LaunchLlm();
+                return;
+            }
             _emptyReplyRetry = _emptyReplyRetry + 1;
             _streamClosedRetry = false;
             LogStore.Add("LLM", 2, "空回复续传 第" + _emptyReplyRetry.ToString() + "/∞ 次（" + reason + "）——同上下文重发", "LLM");
@@ -1576,9 +1527,10 @@ namespace CH4
 
         /// <summary>
         /// 后台消费 LLM 流——写会话槽 + SSE 转发 + 结算行。Task.Run 执行——异常全兜底（错误可见性）。
+        /// A393 起**无外部取消通道**（用户中断路径退役）：令牌恒为 None，流只能自然结束或由 Runtime 超时/物理中断收场。
         /// </summary>
         /// <param name="messages">消息序列</param>
-        private async System.Threading.Tasks.Task ConsumeLlmStream(LlmMessage[] messages, System.Threading.CancellationToken ct)
+        private async System.Threading.Tasks.Task ConsumeLlmStream(LlmMessage[] messages)
         {
             try
             {
@@ -1586,7 +1538,7 @@ namespace CH4
                 StringBuilder text = new StringBuilder();
                 string toolCalls = "";
                 _finishReason = "";
-                await foreach (LlmStreamEvent ev in _llmRuntime.ChatStream(messages, _tools, ResolveCacheIsolationKey(), ct))
+                await foreach (LlmStreamEvent ev in _llmRuntime.ChatStream(messages, _tools, ResolveCacheIsolationKey(), System.Threading.CancellationToken.None))
                 {
                     if (ev.Kind == LlmStreamKind.Text)
                     {
@@ -1641,11 +1593,6 @@ namespace CH4
                     }
                     else if (ev.Kind == LlmStreamKind.Retrying)
                     {
-                        // P6 中止——暂停中忽略重试事件（取消被误判为传输错误的防御：不推 retry 气泡——根治在 Runtime catch OCE 冒泡）
-                        if (_pauseRequested)
-                        {
-                            continue;
-                        }
                         // 运行态——重试退避开始：link → wait（长度由本地决定——退避时长）
                         PhaseEnter(PhaseWait);
                         // S2 §8.4——重试可见性：独立视图条目（retry renderType）——不入会话槽/上下文/日志（Runtime 已记 L2）
@@ -1720,11 +1667,6 @@ namespace CH4
                     }
                     else if (ev.Kind == LlmStreamKind.Error)
                     {
-                        // P6 中止——暂停中忽略错误事件（取消引发的 TaskCanceled 转 Error 不推前端/不置错误）
-                        if (_pauseRequested)
-                        {
-                            continue;
-                        }
                         _llmError = true;
                         _llmErrorText = ev.Text;
                         // 空回复续传——STREAM_CLOSED（SSE 流未以 [DONE] 结束）：置位续传标志（PumpLlm 走续传），不推前端 error（无上限——LLM 兜底）
@@ -1772,31 +1714,23 @@ namespace CH4
             }
             catch (System.OperationCanceledException ex)
             {
-                // P6 中止——用户暂停取消流：不置错误（PumpLlm 检查 _pauseRequested 走收尾）
-                // 超时兜底——HttpClient.Timeout（60s）抛 TaskCanceledException（OCE 子类）也走此分支：非暂停请求的取消 = 超时/物理中断 → 置位续传（不静默吞并）
-                if (!_pauseRequested)
-                {
-                    _llmError = true;
-                    _streamClosedRetry = true;
-                    _llmErrorText = "ERR|STREAM_CLOSED|SSE 流请求取消（超时/物理中断）: " + ex.GetType().Name;
-                }
+                // 超时兜底——HttpClient.Timeout（60s）抛 TaskCanceledException（OCE 子类）：取消 = 超时/物理中断 → 置位续传（不静默吞并）
+                _llmError = true;
+                _streamClosedRetry = true;
+                _llmErrorText = "ERR|STREAM_CLOSED|SSE 流请求取消（超时/物理中断）: " + ex.GetType().Name;
             }
             catch (Exception ex)
             {
-                // P6 中止——暂停中异常忽略（取消竞态窗口——取消标志未及读取时异常已抛）
-                if (!_pauseRequested)
+                _llmError = true;
+                // 空回复续传——网络物理中断（连接重置/代理断连/IO 抖动）与优雅断流（EOF 无 [DONE]）同语义：置位续传（TranslateSse 迭代器内异常无法事件化——消费层兜底）
+                if (ex is System.Net.Http.HttpRequestException || ex is System.IO.IOException || ex is System.Net.Sockets.SocketException)
                 {
-                    _llmError = true;
-                    // 空回复续传——网络物理中断（连接重置/代理断连/IO 抖动）与优雅断流（EOF 无 [DONE]）同语义：置位续传（TranslateSse 迭代器内异常无法事件化——消费层兜底）
-                    if (ex is System.Net.Http.HttpRequestException || ex is System.IO.IOException || ex is System.Net.Sockets.SocketException)
-                    {
-                        _streamClosedRetry = true;
-                        _llmErrorText = "ERR|STREAM_CLOSED|SSE 流物理中断: " + ex.GetType().Name + "|" + ex.Message;
-                    }
-                    else
-                    {
-                        _llmErrorText = "ERR|" + ex.GetType().Name + "|" + ex.Message;
-                    }
+                    _streamClosedRetry = true;
+                    _llmErrorText = "ERR|STREAM_CLOSED|SSE 流物理中断: " + ex.GetType().Name + "|" + ex.Message;
+                }
+                else
+                {
+                    _llmErrorText = "ERR|" + ex.GetType().Name + "|" + ex.Message;
                 }
             }
             finally
@@ -3038,11 +2972,20 @@ namespace CH4
         /// </summary>
         private void CloseRound()
         {
+            // A393 停止续推——本轮因停止而收尾：notice 气泡 + 让位 timeback / Note 自动拉起（不再发起请求）
+            bool stopRequested = _stopRequested;
+            if (stopRequested)
+            {
+                _stopRequested = false;
+                _viewStore.AppendNotice(StopNoticeText, ViewTimestamp());
+                _timebackPullCount = 0;
+                LogStore.Add("CatHome4", 0, "停止续推生效——本轮自然收尾，未再发起请求: cat=" + _catKey, "CHAT");
+            }
             // A202 落盘时机——元数据面只在每次 API 请求结算后落盘（usage 处置点）；
             // 轮末与 Note 拉起轮均为纯内存行为：轮末只写视图层 roundsum 块（A248 起每块即时落盘——轮末无额外落盘动作），元数据面不写
             // A229 timeback 未闭合自动拉起——优先于 Note（莎 2026-10-12 定）：域未回收 = 本轮未结束，同样不 roundsum；
             // 上限 3 次防无限空转（模型不回收时出声后放行本轮结束）
-            if (TimebackActive)
+            if (!stopRequested && TimebackActive)
             {
                 if (_timebackPullCount < 3)
                 {
@@ -3065,7 +3008,7 @@ namespace CH4
                 _timebackPullCount = 0;
             }
             // M4a Note 自动拉起提前——剩余≥2 条时以 user 名义推下一轮（最后 1 条不拉起——LLM 完成后自然结束；Q2 顺序：Note 未完成 = 本轮未结束——不 roundsum；全部完成天然跳过——防无限循环闸门）
-            if (_noteTasks != null && _noteTasks.Length > 0 && _noteCurrent + 1 < _noteTasks.Length)
+            if (!stopRequested && _noteTasks != null && _noteTasks.Length > 0 && _noteCurrent + 1 < _noteTasks.Length)
             {
                 int remain = _noteTasks.Length - _noteCurrent;
                 // 运行态——Note 拉起轮同样结算（本轮统计留档——design-ch4-llm §2.1 终止语义）

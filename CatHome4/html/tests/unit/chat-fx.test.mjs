@@ -115,6 +115,27 @@ describe('按钮态（fx/controls）', () => {
             parent.appendChild(node);
         }
     });
+
+    it('停止已投递——按钮保持禁用直至轮结束（A393）', () => {
+        const pause = document.getElementById('chatPause');
+        expect(typeof window.fxControlsMarkStopPending).toBe('function');
+        window.fxControlsApply({ runState: 'run' });
+        expect(pause.disabled).toBe(false);
+        // 投递成功 → 当场禁用（点击即回执）
+        window.fxControlsMarkStopPending();
+        expect(pause.disabled).toBe(true);
+        // 轮内后续状态推送不解除（本轮仍在跑）
+        window.fxControlsApply({ runState: 'tool' });
+        expect(pause.disabled).toBe(true);
+        window.fxControlsApply({ runState: 'reply' });
+        expect(pause.disabled).toBe(true);
+        // 轮结束 → 停止态复位（此刻按钮仍禁用属正常语义：idle 无轮可停，与改前一致）
+        window.fxControlsApply({ runState: 'idle' });
+        expect(pause.disabled).toBe(true);
+        // 下一轮开始 → 按钮恢复可用（本地「已点停止」态没有跨轮残留）
+        window.fxControlsApply({ runState: 'link' });
+        expect(pause.disabled).toBe(false);
+    });
 });
 
 // ── ④b 系统注入不打断输入（A219）──────────────

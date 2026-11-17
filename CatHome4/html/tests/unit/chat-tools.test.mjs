@@ -149,6 +149,42 @@ describe('专属骨架——info / catinfo（逐字段摊平）', () => {
         expect(text).toContain('加载包');
     });
 
+    it('info——os / db / 漂移 / 缺陷 / timeback 全段渲染 + 未注册段 JSON 兜底（A391）', () => {
+        const result = JSON.stringify({
+            cat: '123',
+            version: { version: '2.0.314', build: '2026-11-17 15:47:45' },
+            time: { now: '2026-11-17 16:10:00' },
+            os: { description: 'Microsoft Windows 10.0.26300', arch: 'X64', dotnet: '10.0.12' },
+            llm: { protocol: 'opencode', host: 'opencode.ai', model: 'deepseek-v4.1-flash', source: '跟随默认' },
+            endpoint: { chat: 'http://127.0.0.1:8082', panel: 'http://127.0.0.1:8080' },
+            roots: [{ id: 'mau', writable: true, note: '', path: 'C:/gitee/mau' }],
+            tokens: { context: 12345, lastContextChangeAt: 1794902069425 },
+            packs: [{ key: 'mau', desc: 'Mau Job 三件' }],
+            db: { ok: true, summary: '库 2（授权内 2 / 共 4）', libs: [{ name: 'ccbp' }, { name: 'learn' }], rootVisible: true },
+            tools_drift: { added: [{ name: 'ts-check' }], removed: ['group-info'] },
+            tools_defect: [{ group: 'XCat', stage: 'define', reason: 'tools 积木缺失' }],
+            timeback: { active: { id: '7', purpose: '取证', seconds: 53 }, recent: [{ t: 'timeback' }], archive: { ok: true } },
+            future_block: { hello: 'world' }
+        });
+        const text = window.buildToolBlock(card('info', {}, result), 'toolcard').textContent;
+        expect(text).toContain('系统');
+        expect(text).toContain('Microsoft Windows 10.0.26300');
+        expect(text).toContain('数据库');
+        expect(text).toContain('ccbp');
+        expect(text).toContain('工具漂移');
+        expect(text).toContain('ts-check');
+        expect(text).toContain('工具缺陷');
+        expect(text).toContain('timeback');
+        expect(text).toContain('活跃 #7');
+        expect(text).toContain('归档 可用');
+        // 变动时刻走格式化（HH:mm:ss），不直出原始毫秒
+        expect(text).toContain('变动 ');
+        expect(text).not.toContain('1794902069425');
+        // 未注册段——JSON 原文直显，不静默隐藏
+        expect(text).toContain('未注册 · future_block');
+        expect(text).toContain('world');
+    });
+
     it('catinfo——整块 JSON → 每猫一行（运行态 / 相位 / 前文 / 活跃）', () => {
         const result = JSON.stringify({
             count: 2,

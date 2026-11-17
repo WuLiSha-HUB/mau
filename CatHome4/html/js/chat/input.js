@@ -67,9 +67,14 @@ function chatSend() {
     scrollBottomNow();
 }
 
-/// 停止本轮——已生成内容保留（后端负责前文格式修复）
+/// 停止续推——抑制下一次自动请求（A393 · 不打断在途流、不放弃工具批；本轮自然收尾并推 notice 气泡）
 function chatPause() {
-    postCommand('cat.pause');
+    // 指令送达即禁用按钮——点过就有可见回执（本轮仍要跑完，按钮不再随 runState 回弹成可用）
+    postCommand('cat.pause').then(function (j) {
+        if (j && j.ok === true && typeof fxControlsMarkStopPending === 'function') {
+            fxControlsMarkStopPending();
+        }
+    });
 }
 
 /// 继续——用当前前文直接再发一次请求（不追加消息）

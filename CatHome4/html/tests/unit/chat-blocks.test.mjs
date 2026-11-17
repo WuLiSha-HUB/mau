@@ -19,7 +19,7 @@ beforeAll(async () => {
     await bootChatPage();
 });
 
-const PERSIST_TYPES = ['user', 'text', 'reason', 'toolcard', 'retry', 'error', 'inject_report', 'roundsum'];
+const PERSIST_TYPES = ['user', 'text', 'reason', 'toolcard', 'retry', 'error', 'notice', 'inject_report', 'roundsum'];
 const LIVE_TYPES = ['replysse', 'thinksse'];
 
 /// 块体类例外——完成态思考自持 `.chat-think`、工具族自持 `.chat-tool`（`BLOCK_DECL` 未建模这两族块体；
@@ -184,7 +184,7 @@ describe('块型渲染——结构契约', () => {
 describe('形态契约', () => {
     it('persist 十类全气泡，live 三件朴素（A219 起；A235 增 roundsummary）', () => {
         const bubbles = Object.keys(window.BLOCK_DECL).filter((t) => window.BLOCK_DECL[t].form === 'bubble');
-        expect(bubbles.sort()).toEqual(['error', 'inject_report', 'reason', 'retry', 'roundsum', 'roundsummary', 'systemautomessage', 'text', 'toolcard', 'user']);
+        expect(bubbles.sort()).toEqual(['error', 'inject_report', 'notice', 'reason', 'retry', 'roundsum', 'roundsummary', 'systemautomessage', 'text', 'toolcard', 'user']);
         const plains = Object.keys(window.BLOCK_DECL).filter((t) => window.BLOCK_DECL[t].form === 'plain');
         expect(plains.sort()).toEqual(['replysse', 'thinksse', 'toolrun']);
     });

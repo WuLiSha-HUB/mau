@@ -26,10 +26,24 @@ function fxControlsRunning(state) {
     return true;
 }
 
+/// 停止已投递标志——点了停止且指令已送达：按钮保持禁用直到本轮结束（A393）
+/// 语义：runState 仍是进行态（本轮要自然跑完），但用户已没有可停的东西——按钮不该回弹成可用
+var stopPending = false;
+
+/// 标记停止已投递——input.js 投递成功后调用（点击即回执：按钮当场禁用）
+function fxControlsMarkStopPending() {
+    stopPending = true;
+    setDisabled('chatPause', true);
+}
+
 /// 应用——按轮进行态派生按钮可用性（发送恒可用；忙时插话走插话队列语义）
 function fxControlsApply(state) {
     var running = fxControlsRunning(state);
-    setDisabled('chatPause', !running);
+    if (!running) {
+        // 轮已结束——本地「已点停止」态复位（下一轮按钮重新可用）
+        stopPending = false;
+    }
+    setDisabled('chatPause', !running || stopPending);
     setDisabled('chatContinue', running);
     setDisabled('noteStartBtn', running);
     setDisabled('chatSendBtn', false);

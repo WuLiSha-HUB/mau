@@ -607,6 +607,26 @@ namespace CH4
         }
 
         /// <summary>
+        /// 追加提示条目——notice 气泡（A393：纯呈现层——非前文派生，msgIndex = -1；写入即落盘 + 单块追加帧即时上屏，不做全量重绘）。
+        /// 与 error / retry 的分工：本件是中性的操作反馈（如「已终止续推」），不携带失败语义。
+        /// </summary>
+        /// <param name="text">提示正文</param>
+        /// <param name="timestamp">创建时间戳（Unix 毫秒——与消息条目同坐标系）</param>
+        public void AppendNotice(string text, long timestamp)
+        {
+            if (text == null || text.Length == 0)
+            {
+                return;
+            }
+            Dictionary<string, object> payload = new Dictionary<string, object>();
+            payload["text"] = text;
+            ViewBlock block = NewBlock("notice", JsonUtil.Serialize(payload), timestamp, -1);
+            _blocks.Add(block);
+            AppendLine(BuildBlockLine(block));
+            EmitBlock(block);
+        }
+
+        /// <summary>
         /// 追加重试条目——retry 气泡（A158 期三：只增不改——「重试中 / 成功 / 失败」各推一条，不做原位更新）。
         /// </summary>
         /// <param name="payloadJson">retry 载荷 JSON（state/attempt/max/text）</param>

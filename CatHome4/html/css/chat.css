@@ -218,6 +218,7 @@ body { font-family: var(--ch-font-ui); background: var(--ch-bg-page); color: var
 .sb-tick[data-type="retry"] { background: var(--ch-bubble-line-retry); --tick-dir: to right; --tick-s2: 60%; }
 .sb-tick[data-type="error"] { background: var(--ch-bubble-line-error); --tick-dir: to right; --tick-s2: 60%; }
 .sb-tick[data-type="inject_report"] { background: var(--ch-bubble-line-inject_report); --tick-dir: to right; --tick-s2: 60%; }
+.sb-tick[data-type="notice"] { background: var(--ch-bubble-line-inject_report); --tick-dir: to right; --tick-s2: 60%; }
 /* 轮末结算——中心对称（实心居中、两侧淡出）；显式三段 mask */
 .sb-tick[data-type="roundsum"] { background: var(--ch-bubble-line-roundsum); -webkit-mask-image: linear-gradient(to right, transparent 0, #000 50%, transparent 100%), var(--ch-band-fade-v); mask-image: linear-gradient(to right, transparent 0, #000 50%, transparent 100%), var(--ch-band-fade-v); }
 /* 失败（红）——覆盖块型色；红色一律终点 90%（与块型无关——普通工具 35%、报错工具 90%）。
@@ -269,6 +270,10 @@ body { font-family: var(--ch-font-ui); background: var(--ch-bg-page); color: var
 .chat-row.user .chat-bubble { background: var(--ch-chat-user-bg); color: var(--ch-chat-user-fg); border: none; }
 .chat-row.assistant .chat-bubble { background: var(--ch-chat-ai-bg); color: var(--ch-chat-ai-fg); }
 #chatMsgs .chat-bubble.error { color: var(--ch-chat-error-fg); }
+/* A393 notice 块——中性操作提示（如「已终止续推」）：沿用注入报告配色（底 note-bg + 淡紫描边 + 正文字色），
+   辨识度按 inject_report 对齐（2026-11-17 莎定：原弱色 30% 描边与工具气泡难分） */
+#chatMsgs .chat-row[data-type="notice"] .chat-bubble { background: var(--ch-note-bg); --bubble-line: var(--ch-bubble-line-inject_report); }
+#chatMsgs .chat-bubble.notice { color: var(--ch-inject-fg); }
 .chat-plain.streaming::after { content: '▌'; color: var(--ch-ok); animation: chatblink 1s infinite; }
 @keyframes chatblink { 50% { opacity: 0; } }
 /* A85 Think 块——两态两渲染器（流式态 .stream live-only / 完成态 .done 落盘；规格 design-ch4-frontend-theme §六）

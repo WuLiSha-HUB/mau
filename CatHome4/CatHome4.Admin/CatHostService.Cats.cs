@@ -312,7 +312,7 @@ namespace CatHome4.Admin
             }
             if (line.StartsWith("cat.pause", StringComparison.Ordinal))
             {
-                // P6 中止——管理面指定猫（每猫端口无 key 版本走 DispatchCommandForCat/Major）
+                // 停止续推——管理面指定猫（每猫端口无 key 版本走 DispatchCommandForCat/Major）
                 string rest = line.Substring(9).Trim();
                 if (rest.Length == 0)
                 {
@@ -332,7 +332,7 @@ namespace CatHome4.Admin
                     return "cat.pause | 猫已停机（无会话）: " + cat.DisplayName;
                 }
                 cat.Session.Pause();
-                return "cat.pause | 已投递中止: " + cat.DisplayName;
+                return "cat.pause | 已投递停止续推: " + cat.DisplayName;
             }
             if (line.StartsWith("cat.continue", StringComparison.Ordinal))
             {
@@ -424,7 +424,7 @@ namespace CatHome4.Admin
             sb.AppendLine("  cat.start <key> | 分配端口 + 拉起 HttpHost");
             sb.AppendLine("  cat.stop <key> | 停止（majordomo 禁停）");
             sb.AppendLine("  cat.delete <key> | 销毁（majordomo 禁删）");
-            sb.AppendLine("  cat.pause <key> | 中止当前回合");
+            sb.AppendLine("  cat.pause <key> | 停止自动续推（在途请求跑完后收尾）");
             sb.AppendLine("  cat.continue <key> | 继续（当前前文再发一次请求）");
             sb.AppendLine("  cat.chat <key> <内容> | 内核对话投递");
             sb.AppendLine("  cat.cfg.get <key> | 该猫 cat.cfg 全量字段");

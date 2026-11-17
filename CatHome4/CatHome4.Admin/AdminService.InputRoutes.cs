@@ -139,7 +139,7 @@ namespace CatHome4.Admin
             InputRoute chat = new InputRoute("Chat ", true, true, RouteChat, "对话内容投递目标会话");
 
             // [段2] 本地猫控——无参形式仅每猫 / majordomo 独立端口（主入口走 cat.* 管理面需带 key）
-            InputRoute pause = new InputRoute("cat.pause", false, true, RoutePause, "中止本端口会话回合（无参形式）");
+            InputRoute pause = new InputRoute("cat.pause", false, true, RoutePause, "停止本端口会话自动续推（无参形式；在途请求跑完后收尾）");
             pause.LocalCatControlOnly = true;
             InputRoute cont = new InputRoute("cat.continue", false, false, RouteContinue, "继续本端口会话（无参形式）");
             cont.LocalCatControlOnly = true;
@@ -414,7 +414,7 @@ namespace CatHome4.Admin
         }
 
         /// <summary>
-        /// 本地猫控·中止——本端口会话回合中止（线程安全：内部仅置位 + 取消令牌）。
+        /// 本地猫控·停止续推——置位抑制标志（线程安全：跨线程唯一动作是置位，在途请求不打断）。
         /// </summary>
         /// <param name="target">目标选择器</param>
         /// <param name="line">输入行</param>
