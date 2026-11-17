@@ -2,6 +2,7 @@
 # 外部投放区取包 → 产物区落位（root 执行；不重启、不碰运行区）
 #
 # 用法：bash take-app.sh <包名|包路径> [--dry-run]
+#       bash take-app.sh --list          ← 只列投放区待取包与最近归档，不校验不搬运
 #   包 = /srv/inbox/<名>.tar.gz  或  /srv/inbox/<名>/（已解包目录）
 #
 # 职责边界：
@@ -23,16 +24,58 @@ PREV="$PUB/app.prev"
 NEW="$PUB/app.new"
 
 DRY=0
+LIST=0
 ARG=""
 for a in "$@"; do
     case "$a" in
         --dry-run) DRY=1 ;;
+        --list) LIST=1 ;;
         *) ARG="$a" ;;
     esac
 done
 
+# --list：只读列表，不校验、不落位、不动任何文件
+# 存在意义——投放区可能不在本猫的可见根内；此路给「有哪些包」一个不依赖受控根的合法出口
+if [ "$LIST" = "1" ]; then
+    echo "[投放区] $INBOX"
+    n=0
+    if [ -d "$INBOX" ]; then
+        while IFS= read -r p; do
+            [ -n "$p" ] || continue
+            [ -e "$p" ] || continue
+            n=$((n + 1))
+            sz=$(du -sh "$p" 2>/dev/null | cut -f1 || true)
+            mt=$(date -r "$p" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')
+            echo "  $n) $(basename "$p")  ${sz:-?}  ${mt:-?}"
+        done <<EOF
+$(find "$INBOX" -maxdepth 1 -mindepth 1 ! -name '_done' 2>/dev/null | sort)
+EOF
+    else
+        echo "  （投放区目录不存在）"
+    fi
+    if [ "$n" -eq 0 ]; then
+        echo "  （空——没有待取包）"
+    fi
+    echo "[最近归档] $INBOX/_done"
+    if [ -d "$INBOX/_done" ]; then
+        last=$(find "$INBOX/_done" -maxdepth 1 -mindepth 1 -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -n1 | cut -d' ' -f2- || true)
+        if [ -n "${last:-}" ]; then
+            lsz=$(du -sh "$last" 2>/dev/null | cut -f1 || true)
+            lmt=$(date -r "$last" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')
+            echo "  $(basename "$last")  ${lsz:-?}  ${lmt:-?}"
+        else
+            echo "  （无）"
+        fi
+    else
+        echo "  （无）"
+    fi
+    echo "提示：取包 → bash $0 <包名|包路径> [--dry-run]"
+    exit 0
+fi
+
 if [ -z "$ARG" ]; then
     echo "用法：bash take-app.sh <包名|包路径> [--dry-run]" >&2
+    echo "      bash take-app.sh --list" >&2
     echo "示例：bash take-app.sh 20261116-app.tar.gz" >&2
     exit 2
 fi
