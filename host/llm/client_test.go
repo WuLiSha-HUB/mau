@@ -113,3 +113,27 @@ func TestClient_HTTP500Retries(t *testing.T) {
 		t.Fatalf("最终错误文本: %s", events[len(events)-1].Text)
 	}
 }
+
+// TestClient_MaxTokensUnbounded 输出上限不设本地硬上界（改判 2026-11-18）：
+// 填多大就传多大，131072 只是空值兜底默认，不是天花板。
+func TestClient_MaxTokensUnbounded(t *testing.T) {
+	t.Setenv("MAU_LLM_MAX_TOKENS", "")
+	cases := []struct {
+		name string
+		set  string
+		want int
+	}{
+		{"超大值原样透传", "999999", 999999},
+		{"默认值可用", "131072", 131072},
+		{"小于默认值可用", "100", 100},
+		{"非数字回落默认", "abc", defaultMaxTokens},
+		{"负数回落默认", "-1", defaultMaxTokens},
+		{"零回落默认", "0", defaultMaxTokens},
+	}
+	for _, testCase := range cases {
+		c := &Client{Settings: func(string) string { return testCase.set }}
+		if got := c.maxTokens(); got != testCase.want {
+			t.Fatalf("%s：maxTokens = %d，期望 %d", testCase.name, got, testCase.want)
+		}
+	}
+}

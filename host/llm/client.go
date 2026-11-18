@@ -17,10 +17,8 @@ import (
 )
 
 // 默认输出上限——显式传入（不带 max_tokens 时上游按自家默认截断）。
+// 仅作空值兜底；真实上限由模型服务端决定，不设本地硬上界（改判 2026-11-18）。
 const defaultMaxTokens = 131072
-
-// 输出上限合法上界。
-const maxMaxTokens = 131072
 
 // 默认兜底模型名。
 const fallbackModel = "deepseek-v4-flash"
@@ -235,7 +233,7 @@ func (c *Client) maxTokens() int {
 		return defaultMaxTokens
 	}
 	parsed, err := strconv.Atoi(normalized)
-	if err == nil && parsed > 0 && parsed <= maxMaxTokens {
+	if err == nil && parsed > 0 {
 		return parsed
 	}
 	if !c.maxTokensWarned {

@@ -275,7 +275,7 @@ func configPostFixture(t *testing.T) (*Server, string) {
 	dir := t.TempDir()
 	schemaPath := filepath.Join(dir, "schema.json")
 	body := `{"items":[
-		{"key":"llm.max_tokens","file":"llm.cfg","default":"131072","sensitive":false,"writable":true,"type":"int","min":"1","max":"131072","desc":"上限"},
+		{"key":"llm.max_tokens","file":"llm.cfg","default":"131072","sensitive":false,"writable":true,"type":"int","min":"1","desc":"上限"},
 		{"key":"llm.thinking","file":"llm.cfg","default":"enabled","sensitive":false,"writable":true,"type":"string","values":["enabled","disabled"],"desc":"思考"},
 		{"key":"vision.api_key","file":"vision.cfg","default":"","sensitive":true,"writable":true,"type":"string","desc":"视觉密钥"}
 	]}`
@@ -319,6 +319,25 @@ func TestConfigPostSuccess(t *testing.T) {
 	}
 }
 
+// TestConfigPostMaxTokensUnbounded 输出上限不设上界——填多大都接受（改判 2026-11-18：
+// 模型真实输出上限由服务端决定，本地不再硬卡 131072）。
+func TestConfigPostMaxTokensUnbounded(t *testing.T) {
+	s, dir := configPostFixture(t)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/config",
+		strings.NewReader(`{"key":"llm.max_tokens","value":"999999"}`)))
+	if !strings.Contains(rec.Body.String(), `"ok":true`) {
+		t.Fatalf("大值被拒: %s", rec.Body.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "llm.cfg"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "llm.max_tokens=999999") {
+		t.Fatalf("落盘内容不符: %q", string(raw))
+	}
+}
+
 // TestConfigPostTokenKeyMasked 含 token 字样的键回显掩码（C# IsSecretKey 同口径——
 // llm.max_tokens 命中 token 子串，短值全掩码 ****；两侧同形，不是缺陷）。
 func TestConfigPostTokenKeyMasked(t *testing.T) {
@@ -356,7 +375,6 @@ func TestConfigPostRejects(t *testing.T) {
 		{"value 空", `{"key":"llm.max_tokens","value":""}`, `{"ok":false,"error":"value 为空"}`},
 		{"掩码回写", `{"key":"llm.max_tokens","value":"12****34"}`, `{"ok":false,"error":"value 含掩码标记——请输入真实值"}`},
 		{"未声明键", `{"key":"ui.unknown","value":"1"}`, `{"ok":false,"error":"配置键未在 schema 声明: ui.unknown"}`},
-		{"值域超限", `{"key":"llm.max_tokens","value":"999999"}`, `{"ok":false,"error":"配置项 llm.max_tokens 超出上限 131072"}`},
 	}
 	for _, testCase := range cases {
 		s, _ := configPostFixture(t)
