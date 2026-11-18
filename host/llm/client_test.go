@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -111,6 +112,36 @@ func TestClient_HTTP500Retries(t *testing.T) {
 	}
 	if !strings.HasPrefix(events[len(events)-1].Text, "ERR|HTTP_500") {
 		t.Fatalf("最终错误文本: %s", events[len(events)-1].Text)
+	}
+}
+
+// TestClient_LargeTextBodyNotRejected 纯文本请求体超 3 MB 仍照发（2026-11-18 口径修正）：
+// 3 MB 只约束图片预算，不再本地拒发纯文本；本例构造 ~3.1 MB 文本，断言无 CONTEXT_TOO_LARGE 事件且服务端收到请求。
+func TestClient_LargeTextBodyNotRejected(t *testing.T) {
+	var gotBytes int64
+	var gotErr error
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBytes, gotErr = io.Copy(io.Discard, r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n"))
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer server.Close()
+	client := newTestClient(t, server)
+	big := strings.Repeat("x", 3150614) // 用户实测触发值：3150614 字节超 3 MB 4886 字节
+	var events []Event
+	client.Stream(context.Background(), []session.Message{{Role: session.RoleUser, Content: big}}, nil, "cat", func(ev Event) {
+		events = append(events, ev)
+	})
+	// 断言 1：不再产生 CONTEXT_TOO_LARGE 本地错误
+	for _, ev := range events {
+		if ev.Kind == EventError && strings.Contains(ev.Text, "CONTEXT_TOO_LARGE") {
+			t.Fatalf("纯文本 3 MB+ 不应本地拒发: %s", ev.Text)
+		}
+	}
+	// 断言 2：服务端确实收到请求体（不是本地拦下）
+	if gotErr != nil || gotBytes == 0 {
+		t.Fatalf("服务端未收到请求: bytes=%d err=%v", gotBytes, gotErr)
 	}
 }
 

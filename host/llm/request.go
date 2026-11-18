@@ -217,8 +217,10 @@ func buildWireTools(tools []session.ToolSpec) string {
 
 // ── 请求体预算（图片省略保护）────────────────────────────────────────────
 
-// maxRequestBodyBytes 主请求体安全上限——2026-11-14 实测本地网关 WorkBuddyShell
+// maxRequestBodyBytes 图片预算阈值——2026-11-14 实测本地网关 WorkBuddyShell
 // （127.0.0.1:18100）：0.5 / 1 / 2 / 3 MB 正常响应，4 MB / 6 MB 直接断连（WinError 10053）。
+// 2026-11-18 口径修正：该阈值只决定「能不能带图」，不再是请求体硬上限——纯文本超限时照发不拦，
+// 图片通道按此预算摘图（超预算不看图）。4 MB 断连实测主因是图占空间，非纯文本本身。
 const maxRequestBodyBytes = 3 * 1024 * 1024
 
 // imageDropNoticePrefix / Suffix 图片省略占位——进 text 块（模型可见），中间夹省略张数。

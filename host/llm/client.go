@@ -268,13 +268,9 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 	} else {
 		c.lastImageDropNotice = 0
 	}
-	if len(body) > maxRequestBodyBytes {
-		// 上下文超限拦截（G20）：图片已按预算处理过仍超限 = 纯文本前文本身过大。
-		// 直发会被网关掐断（WinError 10053），改为显式失败 + 出口。
-		emit(Event{Kind: EventError, Text: "ERR|CONTEXT_TOO_LARGE|请求体 " + itoa(len(body)) + " 字节超安全上限 " + itoa(maxRequestBodyBytes) +
-			"（图片已按预算处理）——请回滚会话或开新会话后重试"})
-		return
-	}
+	// 纯文本请求体不再设硬上限（2026-11-18 口径修正）：3 MB 阈值只约束图片预算（BuildChatRequestBodyBudget 负责摘图）。
+	// 图片已按预算处理（超预算全摘）；纯文本本身超 3 MB 照发——网关 4 MB 断连实测主因是图占空间，非纯文本。
+	// 超长请求若真撞网关断连，走下方传输重试 / 故障转移兜底，不再本地拒发。
 	sentWithImages := omittedImages == 0 && requestHasImages(messages)
 	imageDowngraded := false
 	retryCount := 0
