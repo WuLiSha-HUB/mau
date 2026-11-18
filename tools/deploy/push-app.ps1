@@ -1,11 +1,11 @@
 ﻿<#
 .SYNOPSIS
-    CH4 Linux 产物推送（A368）——调 SetUp publish-linux 产 public/app-linux，打包投递 /srv/inbox，由猫会话执行 take-app + restart-incr 落位。
+    CH4 Linux 产物推送（A368）——调 SetUp publish-linux 产 public/app-linux，打包投递 /srv/inbox。开发机侧到此为止：落位（take-app）与上线（restart-incr）归远端自己。
 
 .DESCRIPTION
-    链路固定：SetUp publish-linux（门禁 + 组翻译 + linux-x64 交叉发布 + 指纹，不自增版本）→ 打包 → scp → /srv/inbox
-              → root 跑 take-app.sh 校验后覆盖 public/app → restart-incr 搬运行区。
-    远端使用顺序（不可反）：git pull → push-app → take-app → restart-incr。
+    开发机侧：SetUp publish-linux（门禁 + 组翻译 + linux-x64 交叉发布 + 指纹，不自增版本）→ 打包 → scp → /srv/inbox（到此结束）。
+    远端侧（归远端自己执行，顺序不可反）：git pull 到与包同源 → take-app 覆盖 public/app → restart-incr 搬运行区。
+    开发机不得用 ssh 代跑远端脚本或指令（判据 → Project/CatHomeLinux/deploy-linux.md §1.0）。
     反序会让源码 mtime 新于产物，incr 哨兵直接判「产物过期」（假红）。
 
     产物端归 SetUp 单一实现——本脚本不重复 publish / 组翻译 / html 镜像；
@@ -129,7 +129,8 @@ if ($LASTEXITCODE -ne 0)
     throw "scp 失败（退出码 $LASTEXITCODE）"
 }
 
-# [段6] 落位交由远端 root 侧接管（2026-11-16 甲案）
-# 本脚本只投递——public/app 的覆盖与执行位设置都在 take-app.sh 内（root）；
-# ubuntu 侧既无权改产物区，也无权读回自证，故不再内联 ssh 落位与核验。
-Write-Host "[push-app] 包已投 /srv/inbox —— 等猫会话执行 take-app + restart-incr"
+# [段6] 落位与上线归远端（2026-11-18 莎定）——本脚本止于投递
+# 开发机侧链路到此结束：public/app 覆盖（take-app.sh）与运行区切换（restart-incr）
+# 一律由远端自己执行；开发机不得用 ssh 代跑远端脚本或指令
+# （判据与流程 → Project/CatHomeLinux/deploy-linux.md §1.0）。
+Write-Host "[push-app] 包已投 /srv/inbox —— 开发机侧结束，后续 take-app + restart-incr 归远端"
