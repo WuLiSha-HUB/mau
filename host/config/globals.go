@@ -114,6 +114,8 @@ type Entry struct {
 	Min string
 	// Max 数值上限
 	Max string
+	// Values 枚举值域（string 类，下发前端渲染下拉）
+	Values []string
 }
 
 // UndeclaredDesc 是未声明键的固定描述文案。
@@ -161,6 +163,7 @@ func (s *Store) Resolve(schema *Schema, key string) Entry {
 		entry.Type = item.Type
 		entry.Min = item.Min
 		entry.Max = item.Max
+		entry.Values = item.Values
 		if entry.Source == "" {
 			entry.Value = item.Default
 			entry.Source = "default"

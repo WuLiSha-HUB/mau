@@ -136,15 +136,16 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 
 // configItem 是 /api/v1/config 的单项（与 C# 匿名对象同字段同序）。
 type configItem struct {
-	Key       string `json:"key"`
-	Value     string `json:"value"`
-	Source    string `json:"source"`
-	Declared  bool   `json:"declared"`
-	File      string `json:"file"`
-	Default   string `json:"default"`
-	Writable  bool   `json:"writable"`
-	Desc      string `json:"desc"`
-	EmptyDesc string `json:"emptyDesc"`
+	Key       string   `json:"key"`
+	Value     string   `json:"value"`
+	Source    string   `json:"source"`
+	Declared  bool     `json:"declared"`
+	File      string   `json:"file"`
+	Default   string   `json:"default"`
+	Writable  bool     `json:"writable"`
+	Desc      string   `json:"desc"`
+	EmptyDesc string   `json:"emptyDesc"`
+	Values    []string `json:"values,omitempty"`
 }
 
 // configResponse 是 /api/v1/config 的响应体。
@@ -172,6 +173,7 @@ func (s *Server) handleConfigGet(w http.ResponseWriter, r *http.Request) {
 				Writable:  entry.Writable,
 				Desc:      entry.Desc,
 				EmptyDesc: entry.EmptyDesc,
+				Values:    entry.Values,
 			})
 		}
 	}

@@ -248,7 +248,8 @@ func (d *Deps) handleInjectPreviewGet(w http.ResponseWriter, r *http.Request) {
 
 	var current []string
 	oldMount := ""
-	curLevel := config.MountLevelExpert
+	// 无 cat（或该猫无 cat.cfg）→ 全局回落档位优先，否则硬默认专家（读面单点，禁第二份推导）
+	curLevel := config.ResolveMountLevel(nil)
 	if catKey != "" {
 		if cfg, err := config.LoadCatCfg(d.catCfgPath(catKey)); err == nil && cfg != nil {
 			current = cfg.InjectList

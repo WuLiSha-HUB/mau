@@ -116,14 +116,23 @@ func MountLevelFromExpert(expert bool) int {
 	return MountLevelNormal
 }
 
-// ResolveMountLevel 解析猫的生效档位——projectMountLevel 非 0 优先，否则从兼容位 projectMountExpert 推导。
+// ResolveMountLevel 解析猫的生效档位——projectMountLevel 非 0 优先，否则全局 mount.level，
+// 再否则从兼容位 projectMountExpert 推导。
 // 读面单点：挂载清单、注入报告、自报头、前端按钮态全部经本函数，禁第二份推导。
+//
+// 优先级：① 每猫显式档位（用户在猫配置弹层手动选）→ ② 全局 mount.level（配置页「挂载设置」下拉）
+// → ③ 每猫 projectMountExpert 兼容位（旧 cat.cfg）→ ④ 硬默认专家。
+// 全局档位排在兼容位之前：这样「设置全局普通」能覆盖存量猫的 expert=true 缺省位；
+// 而手动选过档位的猫（projectMountLevel 非 0）不受全局设置影响。
 func ResolveMountLevel(cfg *CatCfg) int {
+	if cfg != nil && cfg.ProjectMountLevel != 0 {
+		return NormalizeMountLevel(cfg.ProjectMountLevel)
+	}
+	if global := DefaultMountLevel(); global != 0 {
+		return NormalizeMountLevel(global)
+	}
 	if cfg == nil {
 		return MountLevelExpert
-	}
-	if cfg.ProjectMountLevel != 0 {
-		return NormalizeMountLevel(cfg.ProjectMountLevel)
 	}
 	return MountLevelFromExpert(cfg.ProjectMountExpert)
 }

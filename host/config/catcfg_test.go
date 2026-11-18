@@ -68,25 +68,58 @@ func TestCatCfgCacheKey(t *testing.T) {
 	}
 }
 
-// TestResolveMountLevel 项目挂载三档归一——显式 level 优先，兼容位推导，非法回落专家。
+// TestResolveMountLevel 项目挂载三档归一——显式 level 优先，全局 mount.level 次之，兼容位推导，非法回落专家。
 func TestResolveMountLevel(t *testing.T) {
+	defer SetDefaultMountLevel(0) // 全局投影是进程态——用例结束清干净，避免污染其它测试
 	cases := []struct {
-		name string
-		cfg  *CatCfg
-		want int
+		name   string
+		cfg    *CatCfg
+		global int
+		want   int
 	}{
-		{"空档位+expert真→专家", &CatCfg{ProjectMountExpert: true}, MountLevelExpert},
-		{"空档位+expert假→普通", &CatCfg{ProjectMountExpert: false}, MountLevelNormal},
-		{"普通优先于expert真", &CatCfg{ProjectMountLevel: MountLevelNormal, ProjectMountExpert: true}, MountLevelNormal},
-		{"精通优先", &CatCfg{ProjectMountLevel: MountLevelMaster, ProjectMountExpert: true}, MountLevelMaster},
-		{"越界回落专家", &CatCfg{ProjectMountLevel: 9}, MountLevelExpert},
-		{"负档位回落专家", &CatCfg{ProjectMountLevel: -1, ProjectMountExpert: false}, MountLevelExpert},
-		{"nil配置→专家", nil, MountLevelExpert},
+		{"空档位+expert真→专家", &CatCfg{ProjectMountExpert: true}, 0, MountLevelExpert},
+		{"空档位+expert假→普通", &CatCfg{ProjectMountExpert: false}, 0, MountLevelNormal},
+		{"普通优先于expert真", &CatCfg{ProjectMountLevel: MountLevelNormal, ProjectMountExpert: true}, 0, MountLevelNormal},
+		{"精通优先", &CatCfg{ProjectMountLevel: MountLevelMaster, ProjectMountExpert: true}, 0, MountLevelMaster},
+		{"越界回落专家", &CatCfg{ProjectMountLevel: 9}, 0, MountLevelExpert},
+		{"负档位回落专家", &CatCfg{ProjectMountLevel: -1, ProjectMountExpert: false}, 0, MountLevelExpert},
+		{"nil配置→专家", nil, 0, MountLevelExpert},
+		{"全局普通覆盖expert真", &CatCfg{ProjectMountExpert: true}, MountLevelNormal, MountLevelNormal},
+		{"全局精通覆盖expert假", &CatCfg{ProjectMountExpert: false}, MountLevelMaster, MountLevelMaster},
+		{"每猫显式优先于全局精通", &CatCfg{ProjectMountLevel: MountLevelNormal, ProjectMountExpert: true}, MountLevelMaster, MountLevelNormal},
+		{"nil配置+全局专家→专家", nil, MountLevelExpert, MountLevelExpert},
 	}
 	for _, c := range cases {
+		SetDefaultMountLevel(c.global)
 		if got := ResolveMountLevel(c.cfg); got != c.want {
 			t.Fatalf("%s: ResolveMountLevel=%d，期望 %d", c.name, got, c.want)
 		}
+	}
+}
+
+// TestMountLevelSetting 全局挂载档位的配置值解析与进程内投影同步。
+func TestMountLevelSetting(t *testing.T) {
+	defer SetDefaultMountLevel(0)
+	cases := []struct {
+		value string
+		want  int
+	}{
+		{"0", 0}, {"1", 1}, {"2", 2}, {"3", 3},
+		{" 3 ", 3}, {"", 0}, {"4", 0}, {"-1", 0}, {"high", 0},
+	}
+	for _, c := range cases {
+		if got := MountLevelFromSetting(c.value); got != c.want {
+			t.Fatalf("MountLevelFromSetting(%q)=%d，期望 %d", c.value, got, c.want)
+		}
+	}
+	// 投影：合法值写入可读回，非法值清零
+	SetDefaultMountLevel(MountLevelMaster)
+	if got := DefaultMountLevel(); got != MountLevelMaster {
+		t.Fatalf("投影读回=%d，期望 %d", got, MountLevelMaster)
+	}
+	SetDefaultMountLevel(9)
+	if got := DefaultMountLevel(); got != 0 {
+		t.Fatalf("非法值应清零，实得 %d", got)
 	}
 }
 

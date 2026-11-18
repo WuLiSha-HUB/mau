@@ -119,6 +119,9 @@ func main() {
 	if segmentNote := store.RegisterSchema(schema); segmentNote != "" {
 		sink.Add("S1", segmentNote)
 	}
+	// mount.level 全局回落档位——配置灌入进程内投影（「立即生效」链的启动侧；
+	// 运行侧在 config.SetChecked 单点同步）。未配置时清 0，回落每猫兼容位，行为同加项前。
+	config.SyncDefaultMountLevelFromStore(store, schema)
 	sink.Add("S1", "配置 | "+itoa(len(store.All()))+" 项落盘显式值")
 
 	// [段5] workspace.json——受控根 + 注入清单

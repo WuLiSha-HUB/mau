@@ -198,6 +198,12 @@ func (s *Store) SetChecked(key, value string, schema *Schema) (bool, string) {
 		}
 		return false, "写入失败: " + err.Error()
 	}
+	// [段4] 内存派生投影同步——mount.level 写入后立即更新全局回落档位（「立即生效」语义）。
+	// 放在 SetChecked 单点：POST /api/v1/config 与 config-set 两条写路径都覆盖，
+	// 避免各写各的遗漏。其余键无派生投影（llm.* 由各消费点实时读 store）。
+	if key == MountLevelConfigKey {
+		SetDefaultMountLevel(MountLevelFromSetting(value))
+	}
 	return true, ""
 }
 
