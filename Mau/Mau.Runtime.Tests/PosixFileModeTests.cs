@@ -27,6 +27,9 @@ namespace Mau.Runtime.Tests
 
         /// <summary>0600——私密文件典型权限（组 / 其他全无）。</summary>
         private const UnixFileMode Mode0600 = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        /// <summary>0700——私有目录 / 私密文件的典型权限（组 / 其他全无）。</summary>
+        private const UnixFileMode Mode0700 =
+            UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute;
 
         /// <summary>0664——组可写文件典型权限（umask 022 会被削成 0644 的对照面）。</summary>
         private const UnixFileMode Mode0664 =
@@ -200,6 +203,76 @@ namespace Mau.Runtime.Tests
             catch (UnauthorizedAccessException exception)
             {
                 System.Diagnostics.Debug.WriteLine("临时目录清理被拒绝: " + exception.Message);
+            }
+        }
+        /// <summary>消费点实锤——FileSystemService.Copy 整棵复制私有目录（0700）后，根与子目录权限位保真（A398）。</summary>
+        [Fact]
+        public void FileSystemService_Copy_DirectoryKeepsMode()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+            string baseDir = TempDir("mau_posix_copydir_");
+            try
+            {
+                string writable = Path.Combine(baseDir, "rw");
+                Directory.CreateDirectory(writable);
+                WorkspaceConfig.RootEntry[] entries = new WorkspaceConfig.RootEntry[]
+                {
+                            new WorkspaceConfig.RootEntry() { Id = "rw", Path = writable, Writable = true }
+                };
+                FileSystemService fs = new FileSystemService(entries, Path.Combine(writable, "recycle"));
+                string source = Path.Combine(writable, "src");
+                string nested = Path.Combine(source, "secrets");
+                Directory.CreateDirectory(nested);
+                File.WriteAllText(Path.Combine(nested, "key.txt"), "k");
+                string script = Path.Combine(source, "run.sh");
+                File.WriteAllText(script, "#!/bin/sh\n");
+                File.SetUnixFileMode(script, Mode0755);
+                File.SetUnixFileMode(nested, Mode0700);
+                File.SetUnixFileMode(source, Mode0700);
+
+                string copy = Path.Combine(writable, "copy");
+                fs.Copy(source, copy);
+
+                // 目录自身权限位按源保真——不再退化成 0777 & ~umask
+                Assert.Equal(Mode0700, File.GetUnixFileMode(copy) & OrdinaryMask);
+                Assert.Equal(Mode0700, File.GetUnixFileMode(Path.Combine(copy, "secrets")) & OrdinaryMask);
+                // 文件面（File.Copy 自带保真）与内容照旧
+                Assert.Equal(Mode0755, File.GetUnixFileMode(Path.Combine(copy, "run.sh")) & OrdinaryMask);
+                Assert.Equal("k", fs.ReadText(Path.Combine(copy, "secrets", "key.txt")));
+            }
+            finally
+            {
+                TryDelete(baseDir);
+            }
+        }
+        /// <summary>特殊位不复制——源目录带 setgid 时副本只继承普通权限位。</summary>
+        [Fact]
+        public void PreserveForCopy_DropsSpecialBits()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                return;
+            }
+            string baseDir = TempDir("mau_posix_copy_special_");
+            try
+            {
+                string source = Path.Combine(baseDir, "src");
+                string destination = Path.Combine(baseDir, "dst");
+                Directory.CreateDirectory(source);
+                File.SetUnixFileMode(source, Mode0700 | UnixFileMode.SetGroup);
+                Directory.CreateDirectory(destination);
+                PosixFileMode.PreserveForCopy(source, destination);
+                UnixFileMode mode = File.GetUnixFileMode(destination);
+                Assert.Equal(0, (int)(mode & UnixFileMode.SetGroup));
+                Assert.Equal(0, (int)(mode & UnixFileMode.SetUser));
+                Assert.Equal(Mode0700, mode & OrdinaryMask);
+            }
+            finally
+            {
+                TryDelete(baseDir);
             }
         }
     }

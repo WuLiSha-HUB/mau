@@ -522,6 +522,8 @@ namespace Mau.Runtime
         private static void CopyDirectory(string source, string destination)
         {
             Directory.CreateDirectory(destination);
+            // 目录 mode 不随复制继承（CreateDirectory 走 0777 & ~umask）——显式补源目录权限位（A398）
+            PosixFileMode.PreserveForCopy(source, destination);
             foreach (string file in Directory.EnumerateFiles(source))
             {
                 if (PathBoundary.IsReparsePoint(file))
