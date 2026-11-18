@@ -363,6 +363,7 @@ namespace Mau.Runtime
                 effectiveEncoding = encoding;
             }
             System.IO.File.WriteAllText(tmp, content, effectiveEncoding);
+            PosixFileMode.PreserveForReplace(path, tmp);
             System.IO.File.Move(tmp, path, true);
         }
         /// <summary>

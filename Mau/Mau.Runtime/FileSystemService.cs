@@ -237,6 +237,7 @@ namespace Mau.Runtime
             }
             string tmp = resolved + ".tmp";
             File.WriteAllText(tmp, body, enc);
+            PosixFileMode.PreserveForReplace(resolved, tmp);
             File.Move(tmp, resolved, true);
             return TextFileCodec.DescribeStyle(path, bom, newline);
         }

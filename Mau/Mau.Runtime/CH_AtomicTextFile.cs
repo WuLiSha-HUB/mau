@@ -233,6 +233,7 @@ namespace Mau.Runtime
             /// <summary>覆盖移动。</summary>
             public void MoveReplace(string source, string destination)
             {
+                PosixFileMode.PreserveForReplace(destination, source);
                 File.Move(source, destination, true);
             }
 

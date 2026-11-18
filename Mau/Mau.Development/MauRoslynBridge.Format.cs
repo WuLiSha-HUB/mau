@@ -701,6 +701,7 @@ namespace Mau.Development
             try
             {
                 File.WriteAllText(temporary, payload, new UTF8Encoding(bom));
+                Mau.Runtime.PosixFileMode.PreserveForReplace(path, temporary);
                 File.Move(temporary, path, true);
             }
             finally
