@@ -103,7 +103,7 @@ func TestInjectProjectPostBody(t *testing.T) {
 	server := New(Options{})
 	server.BindInject(
 		func() string { return `{"ok":true}` },
-		func(cat, project string, expert *bool) string {
+		func(cat, project string, level *int) string {
 			return `{"ok":true,"cat":` + JSONQuote(cat) + `}`
 		},
 		func(cat string) string { return `{"ok":true,"cat":"majordomo","on":true}` },

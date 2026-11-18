@@ -449,7 +449,7 @@ func (r *commandRouter) buildInjectSurface(cfg *config.CatCfg, specs []session.T
 	result := inject.BuildPrompt(resolve, readText, baseRole, cfg.Persona, cfg.InjectList, logf)
 	mountDesc := inject.ProjectSummaryOf(resolve, cfg.ProjectMount, logf)
 	report = inject.BuildReportJSON(result.Files, cfg.InjectList, specs, r.Pool.BuildOwnerFlowMap(),
-		cfg.ProjectMount, cfg.ProjectMountExpert, cfg.MountAuto, mountDesc)
+		cfg.ProjectMount, config.ResolveMountLevel(cfg), cfg.MountAuto, mountDesc)
 	return result.Prompt, report, len(cfg.InjectList)
 }
 

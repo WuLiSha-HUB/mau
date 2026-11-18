@@ -33,7 +33,12 @@ type CatCfg struct {
 	InjectList []string `json:"injectList"`
 	// ProjectMount 当前挂载项目名（空 = 未挂载）
 	ProjectMount string `json:"projectMount"`
-	// ProjectMountExpert 专家模式（缺省 true）
+	// ProjectMountLevel 项目挂载档位（1=普通 2=专家 3=精通；0=未设置，回落从 ProjectMountExpert 推导）。
+	// 唯一真相源——三档语义：普通=L3 仅 readme；专家=L3 整目录（一级 *.md）；
+	// 精通=专家 + skill package 整目录 + L3/<项目> 递归全部文件。omitempty 保证 0 不落盘（旧 cat.cfg 字节形态不变）。
+	ProjectMountLevel int `json:"projectMountLevel,omitempty"`
+	// ProjectMountExpert 专家模式兼容位（缺省 true）——旧 cat.cfg / 旧 HTTP 调用方仍认它。
+	// 读：Level 缺省时由它推导（true→专家 2，false→普通 1）；写：由 Level 派生同步（level>=2 → true）。
 	ProjectMountExpert bool `json:"projectMountExpert"`
 	// ProjectMountAt 挂载时刻（Unix 毫秒，0 = 不计时）
 	ProjectMountAt int64 `json:"projectMountAt"`
@@ -82,6 +87,45 @@ func LoadCatCfg(path string) (*CatCfg, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// 项目挂载档位——普通 / 专家 / 精通。三档语义（唯一真相源）：
+//
+//	普通(1)：L3 仅 readme.md；专家(2)：L3 整目录（一级 *.md）；
+//	精通(3)：专家基础 + skill package 整目录（放开仅 _index.md）+ L3/<项目> 递归全部文件。
+const (
+	MountLevelNormal int = 1
+	MountLevelExpert int = 2
+	MountLevelMaster int = 3
+)
+
+// NormalizeMountLevel 归一档位——非法值（含 0 / 负 / >3）回落到专家（历史缺省）。
+func NormalizeMountLevel(level int) int {
+	if level >= MountLevelNormal && level <= MountLevelMaster {
+		return level
+	}
+	return MountLevelExpert
+}
+
+// MountLevelFromExpert 兼容推导——旧 cat.cfg 无 projectMountLevel 时按 expert 位推：
+// true → 专家(2)，false → 普通(1)。
+func MountLevelFromExpert(expert bool) int {
+	if expert {
+		return MountLevelExpert
+	}
+	return MountLevelNormal
+}
+
+// ResolveMountLevel 解析猫的生效档位——projectMountLevel 非 0 优先，否则从兼容位 projectMountExpert 推导。
+// 读面单点：挂载清单、注入报告、自报头、前端按钮态全部经本函数，禁第二份推导。
+func ResolveMountLevel(cfg *CatCfg) int {
+	if cfg == nil {
+		return MountLevelExpert
+	}
+	if cfg.ProjectMountLevel != 0 {
+		return NormalizeMountLevel(cfg.ProjectMountLevel)
+	}
+	return MountLevelFromExpert(cfg.ProjectMountExpert)
 }
 
 // SaveCatCfg 原子写每猫配置——紧凑单行 JSON（中文直出，与 C# JsonUtil.Serialize 同字节形态）。

@@ -80,7 +80,7 @@ type Server struct {
 	apiRoleToggler        func() string
 	apiModelSetter        func(model string) string
 	injectProjectsBuilder func() string
-	injectProjectSetter   func(cat, project string, expert *bool) string
+	injectProjectSetter   func(cat, project string, level *int) string
 	injectAutoGetter      func(cat string) string
 	injectAutoSetter      func(cat string, on *bool) string
 	// adminRegister 是管理端路由注册面（nil = 不挂载管理段；C# _routeRegistrar 同语义）
@@ -193,7 +193,7 @@ func (s *Server) BindAPIRoleToggle(fn func() string) { s.apiRoleToggler = fn }
 func (s *Server) BindAPIModel(fn func(model string) string) { s.apiModelSetter = fn }
 
 // BindInject 绑定项目挂载三件（projects / project / auto）；nil = 不注册。
-func (s *Server) BindInject(projects func() string, project func(cat, project string, expert *bool) string, autoGet func(cat string) string, autoSet func(cat string, on *bool) string) {
+func (s *Server) BindInject(projects func() string, project func(cat, project string, level *int) string, autoGet func(cat string) string, autoSet func(cat string, on *bool) string) {
 	s.injectProjectsBuilder = projects
 	s.injectProjectSetter = project
 	s.injectAutoGetter = autoGet

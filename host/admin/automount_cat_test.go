@@ -202,7 +202,7 @@ func TestApplyInjectProjectMultiCat(t *testing.T) {
 	seedFullProject(t, root, "Demo")
 	sess := seedCatSession(t, deps, "cat008", "八猫", true, "")
 
-	resp, next := deps.applyInjectProject("cat008", "Demo", false, false, false)
+	resp, next := deps.applyInjectProject("cat008", "Demo", 0, false, false)
 	if next == nil {
 		t.Fatalf("多猫挂载失败：%+v", resp)
 	}
@@ -213,7 +213,7 @@ func TestApplyInjectProjectMultiCat(t *testing.T) {
 		t.Fatalf("自报身份未同步：%+v", tag)
 	}
 	// 未知猫——C# 逐字
-	resp, next = deps.applyInjectProject("nobody", "Demo", false, false, false)
+	resp, next = deps.applyInjectProject("nobody", "Demo", 0, false, false)
 	if next != nil {
 		t.Fatal("未知猫不应挂载")
 	}

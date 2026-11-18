@@ -127,13 +127,13 @@ func TestBuildReportJSON(t *testing.T) {
 		{Name: "gamma", Description: "C"},
 	}
 	owner := map[string]string{"alpha": "G1", "beta": "G2"}
-	got := BuildReportJSON(files, []string{"a.md", "b.md", "c.md"}, specs, owner, "CH4", true, false, "一句话")
+	got := BuildReportJSON(files, []string{"a.md", "b.md", "c.md"}, specs, owner, "CH4", 2, false, "一句话")
 	want := `{"files":[` +
 		`{"file":"a.md","status":"ok","message":"","chars":3,"bytes":9},` +
 		`{"file":"b.md","status":"missing","message":"文件不存在（可选，已跳过）","chars":0,"bytes":0},` +
 		`{"file":"c.md","status":"error","message":"boom","chars":0,"bytes":0}],` +
 		`"total":3,"ok":1,"missing":1,"failed":1,"injectCount":3,` +
-		`"mount":"CH4","mountExpert":true,"mountAuto":false,"mountDesc":"一句话",` +
+		`"mount":"CH4","mountExpert":true,"mountLevel":2,"mountAuto":false,"mountDesc":"一句话",` +
 		`"toolGroups":[{"group":"G1","tools":[{"name":"alpha","desc":"A"}]},` +
 		`{"group":"G2","tools":[{"name":"beta","desc":"B"}]},` +
 		`{"group":"","tools":[{"name":"gamma","desc":"C"}]}]}`
@@ -145,9 +145,9 @@ func TestBuildReportJSON(t *testing.T) {
 // TestBuildReportJSONEmpty 零文件 / 零工具——files 空数组而非 null；零工具时 toolGroups 整段不出现
 // （显式取消全部工具 = 不要出现空工具注入段）。
 func TestBuildReportJSONEmpty(t *testing.T) {
-	got := BuildReportJSON(nil, nil, nil, nil, "", true, true, "")
+	got := BuildReportJSON(nil, nil, nil, nil, "", 1, true, "")
 	want := `{"files":[],"total":0,"ok":0,"missing":0,"failed":0,"injectCount":0,` +
-		`"mount":"","mountExpert":true,"mountAuto":true,"mountDesc":""}`
+		`"mount":"","mountExpert":false,"mountLevel":1,"mountAuto":true,"mountDesc":""}`
 	if got != want {
 		t.Fatalf("空报告不符\n got=%s\nwant=%s", got, want)
 	}

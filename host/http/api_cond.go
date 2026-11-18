@@ -190,7 +190,26 @@ func (s *Server) handleInjectProjects(w http.ResponseWriter, r *http.Request) {
 	writeText(w, s.injectProjectsBuilder())
 }
 
-// handleInjectProjectPost 服务 POST /api/v1/inject/project——body {cat, project, expert}。
+// mountLevelFromFields 解析 body 档位——level（1/2/3）优先，无 level 时回落 expert 布尔（true→2 / false→1）。
+// 两者都不给 = nil（沿用现值）。非法值按未指定处理，与 admin 面 parseMountLevelField 同口径。
+func mountLevelFromFields(fields map[string]json.RawMessage) *int {
+	if raw, present := fields["level"]; present {
+		var parsed int
+		if err := json.Unmarshal(raw, &parsed); err == nil && parsed >= 1 && parsed <= 3 {
+			return &parsed
+		}
+	}
+	if expert := fieldBoolPtr(fields, "expert"); expert != nil {
+		level := 1 // 普通
+		if *expert {
+			level = 2 // 专家
+		}
+		return &level
+	}
+	return nil
+}
+
+// handleInjectProjectPost 服务 POST /api/v1/inject/project——body {cat, project, level}（兼容旧 expert 布尔）。
 //
 // 非法 body 回执键 = reason（C# 主端口版口径）。
 func (s *Server) handleInjectProjectPost(w http.ResponseWriter, r *http.Request) {
@@ -203,7 +222,7 @@ func (s *Server) handleInjectProjectPost(w http.ResponseWriter, r *http.Request)
 		writeText(w, `{"ok":false,"reason":"body 非 JSON"}`)
 		return
 	}
-	writeText(w, s.injectProjectSetter(fieldString(fields, "cat"), fieldString(fields, "project"), fieldBoolPtr(fields, "expert")))
+	writeText(w, s.injectProjectSetter(fieldString(fields, "cat"), fieldString(fields, "project"), mountLevelFromFields(fields)))
 }
 
 // handleInjectAutoGet 服务 GET /api/v1/inject/auto——自动识别开关读面（?cat=）。

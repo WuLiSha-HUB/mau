@@ -67,3 +67,46 @@ func TestCatCfgCacheKey(t *testing.T) {
 		t.Fatalf("空 cacheKey 不应落盘：%s", raw)
 	}
 }
+
+// TestResolveMountLevel 项目挂载三档归一——显式 level 优先，兼容位推导，非法回落专家。
+func TestResolveMountLevel(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  *CatCfg
+		want int
+	}{
+		{"空档位+expert真→专家", &CatCfg{ProjectMountExpert: true}, MountLevelExpert},
+		{"空档位+expert假→普通", &CatCfg{ProjectMountExpert: false}, MountLevelNormal},
+		{"普通优先于expert真", &CatCfg{ProjectMountLevel: MountLevelNormal, ProjectMountExpert: true}, MountLevelNormal},
+		{"精通优先", &CatCfg{ProjectMountLevel: MountLevelMaster, ProjectMountExpert: true}, MountLevelMaster},
+		{"越界回落专家", &CatCfg{ProjectMountLevel: 9}, MountLevelExpert},
+		{"负档位回落专家", &CatCfg{ProjectMountLevel: -1, ProjectMountExpert: false}, MountLevelExpert},
+		{"nil配置→专家", nil, MountLevelExpert},
+	}
+	for _, c := range cases {
+		if got := ResolveMountLevel(c.cfg); got != c.want {
+			t.Fatalf("%s: ResolveMountLevel=%d，期望 %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestProjectMountLevelOmitempty 新字段 0 不落盘（旧 cat.cfg 字节形态不变），非 0 落盘且读回。
+func TestProjectMountLevelOmitempty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cat.cfg")
+	cfg := &CatCfg{ID: "cat-x", MountAuto: true, ProjectMountExpert: true}
+	if err := SaveCatCfg(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := os.ReadFile(path)
+	if strings.Contains(string(raw), "projectMountLevel") {
+		t.Fatalf("0 档位不应落盘：%s", raw)
+	}
+	cfg.ProjectMountLevel = MountLevelMaster
+	if err := SaveCatCfg(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadCatCfg(path)
+	if err != nil || loaded.ProjectMountLevel != MountLevelMaster {
+		t.Fatalf("精通档读回不符：%v / %+v", err, loaded)
+	}
+}

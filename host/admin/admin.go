@@ -661,13 +661,13 @@ func RegisterChatInjectRoutes(mux *http.ServeMux, d *Deps) {
 // InjectProjectsJSON 项目清单 JSON——主端口条件注册版数据源（同一实现，不造第二份规则）。
 func (d *Deps) InjectProjectsJSON() string { return jsonText(d.buildInjectProjects()) }
 
-// InjectProjectJSON 项目挂载写面 JSON——expert 为 nil = 沿用现值。
-func (d *Deps) InjectProjectJSON(catKey, project string, expert *bool) string {
-	expertValue := false
-	if expert != nil {
-		expertValue = *expert
+// InjectProjectJSON 项目挂载写面 JSON——level 为 nil = 沿用现值（兼容旧 expert 布尔调用方）。
+func (d *Deps) InjectProjectJSON(catKey, project string, level *int) string {
+	levelValue := config.MountLevelExpert
+	if level != nil {
+		levelValue = *level
 	}
-	resp, _ := d.applyInjectProject(catKey, project, expertValue, expert != nil, true)
+	resp, _ := d.applyInjectProject(catKey, project, levelValue, level != nil, true)
 	return jsonText(resp)
 }
 

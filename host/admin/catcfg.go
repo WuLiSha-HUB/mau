@@ -32,8 +32,10 @@ type catConfigResponse struct {
 	InjectList []string `json:"injectList"`
 	// ProjectMount 当前挂载项目
 	ProjectMount string `json:"projectMount"`
-	// ProjectMountExpert 专家模式
+	// ProjectMountExpert 专家模式兼容位
 	ProjectMountExpert bool `json:"projectMountExpert"`
+	// ProjectMountLevel 项目挂载档位（1=普通 2=专家 3=精通）
+	ProjectMountLevel int `json:"projectMountLevel"`
 	// Packs 加载包挂载清单
 	Packs []string `json:"packs"`
 	// DBLibs 库白名单
@@ -158,6 +160,7 @@ func (d *Deps) handleCatConfigGet(w http.ResponseWriter, r *http.Request) {
 		InjectList:             cfg.InjectList,
 		ProjectMount:           cfg.ProjectMount,
 		ProjectMountExpert:     cfg.ProjectMountExpert,
+		ProjectMountLevel:      config.ResolveMountLevel(cfg),
 		Packs:                  cfg.Packs,
 		DBLibs:                 cfg.DBLibs,
 		AllLibs:                libs,

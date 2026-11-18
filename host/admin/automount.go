@@ -44,7 +44,7 @@ func (d *Deps) TryAutoMountOnMessage(content string) bool {
 	}
 	msgCount := d.sessionMessageCount()
 	// rebuild=false——重建由本方法在下方按前文条数决定（带消息重建与先重建再投消息有竞态）
-	resp, next := d.applyInjectProjectDefault(name, cfg.ProjectMountExpert, false, false)
+	resp, next := d.applyInjectProjectDefault(name, config.ResolveMountLevel(cfg), false, false)
 	if next == nil {
 		d.logInject(2, "消息自动挂载失败：cat=majordomo project="+name+" · "+receiptText(resp))
 		return false
@@ -93,7 +93,7 @@ func (d *Deps) TryAutoMountForCat(catID string, sess *session.Session, content s
 		return false, false
 	}
 	msgCount := sessionMessageCountOf(catSess)
-	resp, next := d.applyInjectProjectCat(id, name, catSess, project, false, false, false)
+	resp, next := d.applyInjectProjectCat(id, name, catSess, project, 0, false, false)
 	if next == nil {
 		d.logInject(2, "消息自动挂载失败：cat="+id+" project="+project+" · "+receiptText(resp))
 		return false, false
@@ -132,7 +132,7 @@ func (d *Deps) AutoMountForCat(catID, content string) {
 		}
 		return
 	}
-	resp, next := d.applyInjectProjectCat(id, cfg.DisplayName, sess, project, false, false, false)
+	resp, next := d.applyInjectProjectCat(id, cfg.DisplayName, sess, project, 0, false, false)
 	if next == nil {
 		d.logInject(2, "投递自动挂载失败：cat="+id+" project="+project+" · "+receiptText(resp))
 		return

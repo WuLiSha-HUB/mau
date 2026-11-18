@@ -33,6 +33,10 @@ const (
 	l3SpecPrefix = "ccbp:L3/"
 	// workspaceSpecPrefix workspace 独立立项的项目档前缀——档案就在工作区根下同名目录，不进 CCBP
 	workspaceSpecPrefix = "workspace:"
+	// skillPackageSpec 精通档额外挂载的 skill package 整目录条目——放开「仅 _index.md」限制。
+	// 与基线里的 `ccbp:templates/skill package/_index.md` 单件不同：本条是整目录（BuildPrompt 展开全部 *.md）。
+	// 取消挂载 / 切档时按整条精确摘除（不带文件名后缀），不碰基线的 _index.md。
+	skillPackageSpec = "ccbp:templates/skill package"
 )
 
 // injectProjectItem 是候选项目条目（projects 数组元素）。
@@ -63,16 +67,18 @@ type injectFailResponse struct {
 	Reason string `json:"reason"`
 }
 
-// injectPreviewResponse 是 GET /api/v1/inject/preview 回执（键序 ok / injectList / expert / mount）。
+// injectPreviewResponse 是 GET /api/v1/inject/preview 回执（键序 ok / injectList / expert / mount / level）。
 type injectPreviewResponse struct {
 	// OK 恒 true
 	OK bool `json:"ok"`
 	// InjectList 重算后的注入清单——**JSON 数组文本**（C# JsonUtil.Array 把数组编码成字符串值，前端按字符串再解析；逐字对齐）
 	InjectList string `json:"injectList"`
-	// Expert 生效的专家模式
+	// Expert 生效的专家模式（兼容位：level>=2 → true）
 	Expert bool `json:"expert"`
 	// Mount 目标项目名（空 = 取消挂载）
 	Mount string `json:"mount"`
+	// Level 生效的项目挂载档位（1=普通 2=专家 3=精通）
+	Level int `json:"level"`
 }
 
 // injectProjectWriteResponse 是 POST /api/v1/inject/project 回执（键序 ok / msg / injectList / rebuilt）。
@@ -238,16 +244,16 @@ func (d *Deps) handleInjectPreviewGet(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	catKey := query.Get("cat")
 	project := query.Get("project")
-	expert, expertSet := parseExpertParam(query.Get("expert"))
+	level, levelSet := parseMountLevel(query.Get("level"), query.Get("expert"))
 
 	var current []string
 	oldMount := ""
-	curExpert := true
+	curLevel := config.MountLevelExpert
 	if catKey != "" {
 		if cfg, err := config.LoadCatCfg(d.catCfgPath(catKey)); err == nil && cfg != nil {
 			current = cfg.InjectList
 			oldMount = cfg.ProjectMount
-			curExpert = cfg.ProjectMountExpert
+			curLevel = config.ResolveMountLevel(cfg)
 		}
 	}
 	if current == nil {
@@ -259,26 +265,34 @@ func (d *Deps) handleInjectPreviewGet(w http.ResponseWriter, r *http.Request) {
 			current = config.ResolveTplEnabledInject(tpl)
 		}
 	}
-	useExpert := curExpert
-	if expertSet {
-		useExpert = expert
+	useLevel := curLevel
+	if levelSet {
+		useLevel = level
 	}
-	next := d.buildInjectListWithMount(current, project, oldMount, useExpert, d.mountOffFor(project))
-	writeJSON(w, injectPreviewResponse{OK: true, InjectList: compactListJSON(next), Expert: useExpert, Mount: project})
+	next := d.buildInjectListWithMount(current, project, oldMount, useLevel, d.mountOffFor(project))
+	writeJSON(w, injectPreviewResponse{OK: true, InjectList: compactListJSON(next), Expert: useLevel >= config.MountLevelExpert, Mount: project, Level: useLevel})
 }
 
-// parseExpertParam 解析 expert 查询参数——只认 true / false（其余 = 未指定，沿用现值）。
-func parseExpertParam(raw string) (bool, bool) {
-	if strings.EqualFold(raw, "true") {
-		return true, true
+// parseMountLevel 解析档位参数——level 优先（1/2/3），无 level 时回落旧 expert 布尔（true→专家 / false→普通）。
+// 两者都不给 = 未指定（沿用现值）。
+func parseMountLevel(levelRaw, expertRaw string) (level int, set bool) {
+	if strings.TrimSpace(levelRaw) != "" {
+		if parsed, err := strconv.Atoi(strings.TrimSpace(levelRaw)); err == nil {
+			if parsed >= config.MountLevelNormal && parsed <= config.MountLevelMaster {
+				return parsed, true
+			}
+		}
 	}
-	if strings.EqualFold(raw, "false") {
-		return false, true
+	if strings.EqualFold(expertRaw, "true") {
+		return config.MountLevelExpert, true
 	}
-	return false, false
+	if strings.EqualFold(expertRaw, "false") {
+		return config.MountLevelNormal, true
+	}
+	return config.MountLevelExpert, false
 }
 
-// handleInjectProjectPost 服务 POST /api/v1/inject/project——body {cat, project, expert}。
+// handleInjectProjectPost 服务 POST /api/v1/inject/project——body {cat, project, level}（兼容旧 expert 布尔）。
 //
 // 写面口径：归一（trim）→ 校验（猫 / 项目存在性）→ 重算清单 → 原子写 cat.cfg →（未开始对话时）立即重建。
 func (d *Deps) handleInjectProjectPost(w http.ResponseWriter, r *http.Request) {
@@ -289,22 +303,30 @@ func (d *Deps) handleInjectProjectPost(w http.ResponseWriter, r *http.Request) {
 	}
 	catKey := fieldString(fields, "cat")
 	project := fieldString(fields, "project")
-	expert, expertSet := parseExpertField(fields)
-	resp, _ := d.applyInjectProject(catKey, project, expert, expertSet, true)
+	level, levelSet := parseMountLevelField(fields)
+	resp, _ := d.applyInjectProject(catKey, project, level, levelSet, true)
 	writeJSON(w, resp)
 }
 
-// parseExpertField 解析 body.expert——只认布尔（缺失 / 非布尔 = 沿用现值）。
-func parseExpertField(fields map[string]json.RawMessage) (bool, bool) {
-	raw, present := fields["expert"]
-	if !present {
-		return false, false
+// parseMountLevelField 解析 body.level——数值档位（1/2/3）优先；无 level 时回落 body.expert 布尔。
+// 缺值 / 非法值 = 未指定（沿用现值）。
+func parseMountLevelField(fields map[string]json.RawMessage) (int, bool) {
+	if raw, present := fields["level"]; present {
+		var parsed int
+		if err := json.Unmarshal(raw, &parsed); err == nil && parsed >= config.MountLevelNormal && parsed <= config.MountLevelMaster {
+			return parsed, true
+		}
 	}
-	var value bool
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return false, false
+	if raw, present := fields["expert"]; present {
+		var value bool
+		if err := json.Unmarshal(raw, &value); err == nil {
+			if value {
+				return config.MountLevelExpert, true
+			}
+			return config.MountLevelNormal, true
+		}
 	}
-	return value, true
+	return config.MountLevelExpert, false
 }
 
 // applyInjectProject 项目挂载执行体——校验猫与项目 → 补件 → 重算清单 → 落盘 →（未开始对话时）重建。
@@ -312,10 +334,10 @@ func parseExpertField(fields map[string]json.RawMessage) (bool, bool) {
 // majordomo 走默认猫专用分支（静态面同步）；其余按 CatLookup 寻址（多猫分支——对齐 C# ApplyInjectProject：
 // id 精确 / 显示名 / id 前缀唯一；未命中 / 停机两句文案逐字）。
 // rebuild=false 只落盘并回传新清单，由调用方决定重建方式（消息自动挂载用——避免先重建再投消息的竞态）。
-func (d *Deps) applyInjectProject(catKey, project string, expert bool, expertSet bool, rebuild bool) (any, []string) {
+func (d *Deps) applyInjectProject(catKey, project string, level int, levelSet bool, rebuild bool) (any, []string) {
 	proj := strings.TrimSpace(project)
 	if catKey == "majordomo" {
-		return d.applyInjectProjectDefault(proj, expert, expertSet, rebuild)
+		return d.applyInjectProjectDefault(proj, level, levelSet, rebuild)
 	}
 	id, name, _, _, sess, ok := d.catLookup(catKey)
 	if !ok {
@@ -326,14 +348,80 @@ func (d *Deps) applyInjectProject(catKey, project string, expert bool, expertSet
 		d.logInject(2, "项目挂载失败：猫已停机 "+name)
 		return injectFailResponse{OK: false, Reason: "猫已停机（无会话）：" + name}, nil
 	}
-	return d.applyInjectProjectCat(id, name, sess, proj, expert, expertSet, rebuild)
+	return d.applyInjectProjectCat(id, name, sess, proj, level, levelSet, rebuild)
+}
+
+// applyMountLevel 把显式档位写进 cat.cfg——levelSet=false 时沿用现值（兼容位也要保持同步）。
+// 返回生效档位（后续清单 / 文案 / 自报头一律用本值）。
+func applyMountLevel(cfg *config.CatCfg, level int, levelSet bool) int {
+	if levelSet {
+		cfg.ProjectMountLevel = config.NormalizeMountLevel(level)
+		cfg.ProjectMountExpert = cfg.ProjectMountLevel >= config.MountLevelExpert
+	}
+	return config.ResolveMountLevel(cfg)
+}
+
+// measureMountExtraBytes 三档额外语料字节——与前端 irExtraK 同口径（3.07 KB/k）：
+// 普通=0；专家=L3 一级 *.md 除 readme；精通=L3 递归全部文件除 readme + skill package 本目录除 _index.md。
+func (d *Deps) measureMountExtraBytes(project string, level int) int64 {
+	if project == "" || level == config.MountLevelNormal {
+		return 0
+	}
+	total := d.measureL3ExtraBytes(project) // 专家：一级 *.md 除 readme
+	if level == config.MountLevelMaster {
+		// 精通：L3 递归补子目录文件（measureL3ExtraBytes 只统计一级）+ skill package 本目录除 _index.md
+		if l3Dir := d.resolveSpec(l3SpecPrefix + project); l3Dir != "" && dirExists(l3Dir) {
+			_ = filepath.WalkDir(l3Dir, func(path string, entry os.DirEntry, err error) error {
+				if err != nil || entry.IsDir() || strings.EqualFold(entry.Name(), "readme.md") {
+					return nil
+				}
+				rel, relErr := filepath.Rel(l3Dir, path)
+				if relErr != nil || !strings.ContainsRune(filepath.ToSlash(rel), '/') {
+					return nil // 一级文件已被 measureL3ExtraBytes 计入，只补子目录
+				}
+				if info, infoErr := entry.Info(); infoErr == nil {
+					total += info.Size()
+				}
+				return nil
+			})
+		}
+		if skillDir := d.resolveSpec(skillPackageSpec); skillDir != "" && dirExists(skillDir) {
+			if entries, err := os.ReadDir(skillDir); err == nil {
+				for _, entry := range entries {
+					if entry.IsDir() || strings.EqualFold(entry.Name(), "_index.md") {
+						continue
+					}
+					if info, err := entry.Info(); err == nil {
+						total += info.Size()
+					}
+				}
+			}
+		}
+	}
+	return total
+}
+
+// mountLevelText 三档挂载文案——普通 L3 仅 readme / 专家 +k / 精通 +k（均按 3.07 KB/k 估值）。
+func (d *Deps) mountLevelText(project string, level int) string {
+	extraBytes := d.measureMountExtraBytes(project, level)
+	switch level {
+	case config.MountLevelNormal:
+		return " · 普通（L3 仅 readme）"
+	case config.MountLevelMaster:
+		if extraBytes <= 0 {
+			return " · 精通 +0k(缺位)"
+		}
+		return " · 精通 +" + strconv.FormatFloat(float64(extraBytes)/1024.0/3.07, 'f', 1, 64) + "k"
+	default:
+		return mountExpertText(extraBytes)
+	}
 }
 
 // applyInjectProjectCat 多猫挂载执行体——cat.cfg 合并写 + 自报身份同步 +（未开始对话时）按猫重建。
 //
 // 语义逐条对齐 C# ApplyInjectProject 多猫分支：项目存在性 → 补件 → 专家模式 → 清单重算 →
 // ProjectMountAt 计时起点 → 落盘 → SetSelfTagMount →（fresh && rebuild）目标猫 session.new。
-func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Session, project string, expert bool, expertSet bool, rebuild bool) (any, []string) {
+func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Session, project string, level int, levelSet bool, rebuild bool) (any, []string) {
 	path := d.catCfgPath(catID)
 	cfg, err := config.LoadCatCfg(path)
 	if err != nil || cfg == nil {
@@ -351,11 +439,8 @@ func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Se
 		d.logInject(2, "挂载补件（cat="+displayName+"）："+warning)
 	}
 	oldMount := cfg.ProjectMount
-	// 专家模式——未显式指定则沿用 cat.cfg 现值（缺省 true）
-	if expertSet {
-		cfg.ProjectMountExpert = expert
-	}
-	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, cfg.ProjectMountExpert, d.mountOffFor(project))
+	useLevel := applyMountLevel(cfg, level, levelSet)
+	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, useLevel, d.mountOffFor(project))
 	cfg.InjectList = next
 	cfg.ProjectMount = project
 	msgCount := sessionMessageCountOf(sess)
@@ -370,7 +455,7 @@ func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Se
 		return injectFailResponse{OK: false, Reason: "cat.cfg 写入失败: " + err.Error()}, nil
 	}
 	// 自报身份同步——项目 / 模式 / Job 清单进请求附加头容器（未挂载 = 空，适配层整组不发）
-	sess.SetSelfTagMount(project, MountModeText(project, cfg.ProjectMountExpert), BuildJobList(next))
+	sess.SetSelfTagMount(project, MountModeText(project, useLevel), BuildJobList(next))
 	// 会话未开始对话 → 立即重建（等同新会话重注入）；已有对话 → 只落盘，下个新会话生效
 	fresh := msgCount <= 1
 	rebuilt := fresh && rebuild
@@ -390,11 +475,7 @@ func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Se
 		} else {
 			msg = "已挂载 " + project + "——新会话生效"
 		}
-		if cfg.ProjectMountExpert {
-			msg = msg + mountExpertText(d.measureL3ExtraBytes(project))
-		} else {
-			msg = msg + " · L3 仅 readme"
-		}
+		msg = msg + d.mountLevelText(project, useLevel)
 	}
 	if len(made) > 0 {
 		msg = msg + " · 补件 " + strconv.Itoa(len(made)) + " 件"
@@ -403,12 +484,12 @@ func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Se
 	if projectText == "" {
 		projectText = "(空)"
 	}
-	d.logInject(1, "项目挂载：cat="+displayName+" project="+projectText+" injectList="+strconv.Itoa(len(next)))
+	d.logInject(1, "项目挂载：cat="+displayName+" project="+projectText+" level="+strconv.Itoa(useLevel)+" injectList="+strconv.Itoa(len(next)))
 	return injectProjectWriteResponse{OK: true, Msg: msg, InjectList: compactListJSON(next), Rebuilt: rebuilt}, next
 }
 
 // applyInjectProjectDefault 主干（majordomo）项目挂载执行体——cat.cfg 合并写 +（未开始对话时）session.new。
-func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet bool, rebuild bool) (any, []string) {
+func (d *Deps) applyInjectProjectDefault(project string, level int, levelSet bool, rebuild bool) (any, []string) {
 	path := d.catCfgPath("majordomo")
 	cfg, err := config.LoadCatCfg(path)
 	if err != nil || cfg == nil {
@@ -426,11 +507,8 @@ func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet 
 		d.logInject(2, "挂载补件（cat=majordomo）："+warning)
 	}
 	oldMount := cfg.ProjectMount
-	// 专家模式——未显式指定则沿用 cat.cfg 现值（缺省 true）
-	if expertSet {
-		cfg.ProjectMountExpert = expert
-	}
-	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, cfg.ProjectMountExpert, d.mountOffFor(project))
+	useLevel := applyMountLevel(cfg, level, levelSet)
+	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, useLevel, d.mountOffFor(project))
 	cfg.InjectList = next
 	cfg.ProjectMount = project
 	msgCount := d.sessionMessageCount()
@@ -446,7 +524,7 @@ func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet 
 	}
 	// 自报身份同步——项目 / 模式 / Job 清单进请求附加头容器（未挂载 = 空，适配层整组不发）
 	if sess := d.sessionFor("majordomo"); sess != nil {
-		sess.SetSelfTagMount(project, MountModeText(project, cfg.ProjectMountExpert), BuildJobList(next))
+		sess.SetSelfTagMount(project, MountModeText(project, useLevel), BuildJobList(next))
 	}
 	// 会话未开始对话 → 立即重建（等同新会话重注入）；已有对话 → 只落盘，下个新会话生效
 	fresh := msgCount <= 1
@@ -467,11 +545,7 @@ func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet 
 		} else {
 			msg = "已挂载 " + project + "——新会话生效"
 		}
-		if cfg.ProjectMountExpert {
-			msg = msg + mountExpertText(d.measureL3ExtraBytes(project))
-		} else {
-			msg = msg + " · L3 仅 readme"
-		}
+		msg = msg + d.mountLevelText(project, useLevel)
 	}
 	if len(made) > 0 {
 		msg = msg + " · 补件 " + strconv.Itoa(len(made)) + " 件"
@@ -480,7 +554,7 @@ func (d *Deps) applyInjectProjectDefault(project string, expert bool, expertSet 
 	if projectText == "" {
 		projectText = "(空)"
 	}
-	d.logInject(1, "项目挂载：cat=majordomo project="+projectText+" injectList="+strconv.Itoa(len(next)))
+	d.logInject(1, "项目挂载：cat=majordomo project="+projectText+" level="+strconv.Itoa(useLevel)+" injectList="+strconv.Itoa(len(next)))
 	return injectProjectWriteResponse{OK: true, Msg: msg, InjectList: compactListJSON(next), Rebuilt: rebuilt}, next
 }
 
@@ -559,15 +633,70 @@ func isWorkspaceProjectDoc(spec, project string) bool {
 	return false
 }
 
-// buildInjectListWithMount 注入清单重算——移除上一次挂载留下的条目，按需追加 Job 三件 + L3 段 + 档案四件。
+// skillPackageBaselineSpec 是新猫默认模板基线里已挂的 skill package 索引单件——精通档展开时要跳过它（防重复），
+// 摘除时要保护它（它不是挂载留下的，是基线固定组成）。
+const skillPackageBaselineSpec = skillPackageSpec + "/_index.md"
+
+// expandSpecFiles 递归展开目录下全部文件为注入 spec（prefix + "/" + 相对路径，统一正斜杠）。
+// accept 非 nil 时按文件名过滤（nil = 全部文件，含子目录附件）；单个子项不可读按缺失跳过，不阻断。
+// 结果按 spec 小写字典序稳定排序——注入清单顺序确定，消费点可对账。
+func expandSpecFiles(prefix, dir string, accept func(string) bool) []string {
+	out := []string{}
+	root := filepath.Clean(dir)
+	_ = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return nil
+		}
+		if accept != nil && !accept(entry.Name()) {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		out = append(out, strings.TrimRight(prefix, "/")+"/"+strings.ReplaceAll(rel, "\\", "/"))
+		return nil
+	})
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out
+}
+
+// expandSpecFilesFlat 仅展开目录下本层文件（不递归子目录）——spec = prefix + "/" + 文件名。
+// 用途：skill package 精通档只挂本目录 35 件，其下子目录（若有）不挂。accept 非 nil 时按名过滤。
+func expandSpecFilesFlat(prefix, dir string, accept func(string) bool) []string {
+	out := []string{}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return out
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		if accept != nil && !accept(entry.Name()) {
+			continue
+		}
+		out = append(out, strings.TrimRight(prefix, "/")+"/"+entry.Name())
+	}
+	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i]) < strings.ToLower(out[j]) })
+	return out
+}
+
+// buildInjectListWithMount 注入清单重算——移除上一次挂载留下的条目，按需追加 Job 三件 + L3 段 + 档案四件 + 精通增强段。
 //
 // 顺序对齐 C#（并发协议侧统一于 2026-11-07）：Job 三件（exp / skill / tools）→ L3 段 → 档案四件
-// （design-status / glossary / project / todo）。保序：未命中移除条件的条目逐字保留原位。
+// （design-status / glossary / project / todo）→ 精通档 skill package 展开。保序：未命中移除条件的条目逐字保留原位。
+//
+// level 三档（config.MountLevel*）：
+//
+//	普通(1)：L3 仅 readme.md 单件
+//	专家(2)：L3 整目录条目（BuildPrompt 展开一级 *.md）
+//	精通(3)：L3/<项目> 递归全部文件（展开成逐条文件 spec）+ skill package 整目录（除基线 _index.md 单件）
 //
 // 🔴 off = 模板勾选关掉的挂载段（见 mountOffFor）——关掉的段不追加（摘除逻辑不受影响）。
-func (d *Deps) buildInjectListWithMount(current []string, project, mountedProject string, expert bool, off map[string]bool) []string {
+func (d *Deps) buildInjectListWithMount(current []string, project, mountedProject string, level int, off map[string]bool) []string {
 	oldMount := strings.TrimSpace(mountedProject)
-	list := make([]string, 0, len(current)+8)
+	list := make([]string, 0, len(current)+16)
 	for _, raw := range current {
 		item := raw
 		if item == "" {
@@ -583,11 +712,12 @@ func (d *Deps) buildInjectListWithMount(current []string, project, mountedProjec
 		if oldMount != "" && strings.HasPrefix(item, jobSpecPrefix+oldMount+"/") {
 			continue
 		}
-		// L3 段两种形态都要摘：专家模式挂目录条目（无尾斜杠），关模式挂 readme.md 单件
-		if oldMount != "" && item == l3SpecPrefix+oldMount {
+		// L3 段所有形态都摘：整目录条目（专家）/ readme.md 单件（普通）/ 递归子文件（精通）
+		if oldMount != "" && (item == l3SpecPrefix+oldMount || strings.HasPrefix(item, l3SpecPrefix+oldMount+"/")) {
 			continue
 		}
-		if oldMount != "" && strings.HasPrefix(item, l3SpecPrefix+oldMount+"/") {
+		// 精通档 skill package 展开条目——精确按前缀摘，但保护基线 _index.md 单件
+		if oldMount != "" && strings.HasPrefix(item, skillPackageSpec+"/") && item != skillPackageBaselineSpec {
 			continue
 		}
 		list = append(list, item)
@@ -605,16 +735,22 @@ func (d *Deps) buildInjectListWithMount(current []string, project, mountedProjec
 			}
 		}
 	}
-	// ② L3 段——Job 段之下、项目档案之上：专家模式=整目录（一级 *.md 按名展开）；关=只挂 readme.md
+	// ② L3 段——Job 段之下、项目档案之上
 	if !off["l3"] {
-		if expert {
-			spec := l3SpecPrefix + project
-			if dir := d.resolveSpec(spec); dir != "" && dirExists(dir) {
-				list = append(list, spec)
-			}
-		} else {
+		switch level {
+		case config.MountLevelNormal:
 			spec := l3SpecPrefix + project + "/readme.md"
 			if path := d.resolveSpec(spec); path != "" && fileExists(path) {
+				list = append(list, spec)
+			}
+		case config.MountLevelMaster:
+			// 精通：递归全部文件（含子目录 F-推理现场/ 下的 record.md / json 附件）
+			if dir := d.resolveSpec(l3SpecPrefix + project); dir != "" && dirExists(dir) {
+				list = append(list, expandSpecFiles(l3SpecPrefix+project, dir, nil)...)
+			}
+		default: // 专家（含兼容缺省）
+			spec := l3SpecPrefix + project
+			if dir := d.resolveSpec(spec); dir != "" && dirExists(dir) {
 				list = append(list, spec)
 			}
 		}
@@ -630,6 +766,17 @@ func (d *Deps) buildInjectListWithMount(current []string, project, mountedProjec
 				if fileExists(filepath.Join(projDir, name)) {
 					list = append(list, projDocSpec+name)
 				}
+			}
+		}
+	}
+	// ④ 精通增强段：skill package 仅本目录（放开仅 _index.md，不递归其子目录）——展开为逐条文件 spec，跳过基线已有的 _index.md
+	if level == config.MountLevelMaster && !off["skill"] {
+		if dir := d.resolveSpec(skillPackageSpec); dir != "" && dirExists(dir) {
+			for _, spec := range expandSpecFilesFlat(skillPackageSpec, dir, nil) {
+				if spec == skillPackageBaselineSpec {
+					continue
+				}
+				list = append(list, spec)
 			}
 		}
 	}
@@ -696,17 +843,21 @@ func BuildJobList(list []string) string {
 	return strings.Join(jobs, ",")
 }
 
-// MountModeText 挂载模式文本——未挂载为空（适配层整组不发），挂载态 expert / readme。
+// MountModeText 挂载模式文本——未挂载为空（适配层整组不发），挂载态 normal / expert / master。
 //
-// 语义对齐 C#：默认猫分支 project.Length == 0 ? "" : (ProjectMountExpert ? "expert" : "readme")。
-func MountModeText(project string, expert bool) string {
+// 三档自报头值：普通=normal / 专家=expert / 精通=master（适配层按此整组发或裁剪）。
+func MountModeText(project string, level int) string {
 	if project == "" {
 		return ""
 	}
-	if expert {
+	switch level {
+	case config.MountLevelNormal:
+		return "normal"
+	case config.MountLevelMaster:
+		return "master"
+	default:
 		return "expert"
 	}
-	return "readme"
 }
 
 // ensureSkeletonsOnMount 挂载补件——三类缺件：项目档两件 / 项目 Job 三件 / L3 readme；已存在即跳过。

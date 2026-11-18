@@ -110,7 +110,7 @@ func TestBuildInjectListWithMount(t *testing.T) {
 		"ccbp:L2/SOUL.md",
 	}
 	// 专家组：旧挂载条目全剥，新项目四段按序追加
-	next := deps.buildInjectListWithMount(current, "Demo", "Old", true, nil)
+	next := deps.buildInjectListWithMount(current, "Demo", "Old", config.MountLevelExpert, nil)
 	want := []string{
 		"ccbp:AGENTS.md",
 		"ccbp:L2/SOUL.md",
@@ -126,18 +126,18 @@ func TestBuildInjectListWithMount(t *testing.T) {
 	if strings.Join(next, " | ") != strings.Join(want, " | ") {
 		t.Fatalf("专家组清单不符:\n实际 %v\n期望 %v", next, want)
 	}
-	// 关模式：L3 只挂 readme.md 单件
-	next = deps.buildInjectListWithMount(current, "Demo", "Old", false, nil)
+	// 普通档：L3 只挂 readme.md 单件
+	next = deps.buildInjectListWithMount(current, "Demo", "Old", config.MountLevelNormal, nil)
 	if !contains(next, "ccbp:L3/Demo/readme.md") || contains(next, "ccbp:L3/Demo") {
-		t.Fatalf("关模式 L3 段不符: %v", next)
+		t.Fatalf("普通档 L3 段不符: %v", next)
 	}
 	// 取消挂载（project 空）：只剥旧条目，不追加
-	next = deps.buildInjectListWithMount(current, "", "Old", true, nil)
+	next = deps.buildInjectListWithMount(current, "", "Old", config.MountLevelExpert, nil)
 	if strings.Join(next, " | ") != "ccbp:AGENTS.md | ccbp:L2/SOUL.md" {
 		t.Fatalf("取消挂载清单不符: %v", next)
 	}
 	// 模板勾选关掉的挂载段——off 命中即不追加（摘除照旧）
-	next = deps.buildInjectListWithMount(current, "Demo", "Old", true, map[string]bool{
+	next = deps.buildInjectListWithMount(current, "Demo", "Old", config.MountLevelExpert, map[string]bool{
 		"job": true, "l3": true, "glossary": true,
 	})
 	wantOff := []string{
@@ -203,7 +203,7 @@ func TestApplyInjectProjectSyncsSelfTag(t *testing.T) {
 	deps.Session.CatKey = "majordomo"
 	deps.Session.SetDisplayName("主干")
 
-	deps.applyInjectProject("majordomo", "Demo", true, true, false)
+	deps.applyInjectProject("majordomo", "Demo", config.MountLevelExpert, true, false)
 	tag := deps.Session.SelfTag()
 	if tag.Project != "Demo" || tag.MountMode != "expert" || tag.Jobs != "Demo" {
 		t.Fatalf("挂载后自报身份不符: %+v", tag)
@@ -211,13 +211,18 @@ func TestApplyInjectProjectSyncsSelfTag(t *testing.T) {
 	if tag.CatID != "majordomo" || tag.CatName != "主干" {
 		t.Fatalf("猫身份字段不符: %+v", tag)
 	}
-	// 切 readme 模式——模式头随挂载面刷新
-	deps.applyInjectProject("majordomo", "Demo", false, true, false)
-	if got := deps.Session.SelfTag(); got.MountMode != "readme" || got.Project != "Demo" {
-		t.Fatalf("readme 模式未刷新: %+v", got)
+	// 切普通档——模式头随挂载面刷新
+	deps.applyInjectProject("majordomo", "Demo", config.MountLevelNormal, true, false)
+	if got := deps.Session.SelfTag(); got.MountMode != "normal" || got.Project != "Demo" {
+		t.Fatalf("普通档模式头未刷新: %+v", got)
+	}
+	// 切精通档——模式头 master
+	deps.applyInjectProject("majordomo", "Demo", config.MountLevelMaster, true, false)
+	if got := deps.Session.SelfTag(); got.MountMode != "master" || got.Project != "Demo" {
+		t.Fatalf("精通档模式头未刷新: %+v", got)
 	}
 	// 取消挂载——三项整组清空（适配层按空跳过）
-	deps.applyInjectProject("majordomo", "", false, false, false)
+	deps.applyInjectProject("majordomo", "", 0, false, false)
 	if got := deps.Session.SelfTag(); got.Project != "" || got.MountMode != "" || got.Jobs != "" {
 		t.Fatalf("取消挂载后应清空三项: %+v", got)
 	}
@@ -344,14 +349,14 @@ func TestInjectPreview(t *testing.T) {
 		t.Fatalf("状态码 %d: %s", rec.Code, rec.Body.String())
 	}
 	order := objectKeyOrder(t, rec.Body.Bytes())
-	if strings.Join(order, ",") != "ok,injectList,expert,mount" {
+	if strings.Join(order, ",") != "ok,injectList,expert,mount,level" {
 		t.Fatalf("键序不符: %v", order)
 	}
 	var payload injectPreviewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("解析失败: %v", err)
 	}
-	if !payload.OK || !payload.Expert || payload.Mount != "Demo" {
+	if !payload.OK || !payload.Expert || payload.Mount != "Demo" || payload.Level != config.MountLevelExpert {
 		t.Fatalf("回执异常: %+v", payload)
 	}
 	// injectList 是 JSON 数组文本（C# JsonUtil.Array 产出字符串值——前端按字符串再解析）
@@ -463,8 +468,8 @@ func TestInjectProjectPost(t *testing.T) {
 	if !payload.Rebuilt {
 		t.Fatalf("rebuilt 应为 true（未开始对话 + 重建请求）: %+v", payload)
 	}
-	if !strings.HasSuffix(payload.Msg, " · L3 仅 readme") {
-		t.Fatalf("关模式文案不符: %s", payload.Msg)
+	if !strings.HasSuffix(payload.Msg, " · 普通（L3 仅 readme）") {
+		t.Fatalf("普通档文案不符: %s", payload.Msg)
 	}
 	if len(dispatched) != 1 || dispatched[0] != "session.new" {
 		t.Fatalf("未投递会话重建: %v", dispatched)
@@ -598,4 +603,83 @@ func decodeListJSON(t *testing.T, text string) []string {
 		t.Fatalf("清单不是 JSON 数组文本: %q（%v）", text, err)
 	}
 	return list
+}
+
+// TestBuildInjectListMasterLevel 精通档——L3 递归全文件（含子目录附件）+ skill package 仅本目录展开（不递归子目录），
+// 基线里的 skill package/_index.md 去重不重复挂；切回普通/专家或取消挂载时精通增强条目全摘且保护基线索引。
+func TestBuildInjectListMasterLevel(t *testing.T) {
+	deps, root := newTestDeps(t)
+	seedFullProject(t, root, "Demo")
+	// L3 子目录附件（递归标志物）
+	writeTestFile(t, filepath.Join(root, "L3", "Demo", "F-推理现场", "rec.md"), "# record")
+	// skill package 目录：基线索引单件 + 两个整目录件（含子目录）
+	writeTestFile(t, filepath.Join(root, "templates", "skill package", "_index.md"), "# index")
+	writeTestFile(t, filepath.Join(root, "templates", "skill package", "ACS.md"), "# ACS")
+	writeTestFile(t, filepath.Join(root, "templates", "skill package", "sub", "X.md"), "# X")
+
+	base := []string{
+		"ccbp:L1",
+		"ccbp:templates/skill package/_index.md", // 基线已挂的索引单件
+	}
+	master := deps.buildInjectListWithMount(base, "Demo", "", config.MountLevelMaster, nil)
+	// L3 递归：readme + A-域 + 子目录 rec 都要在（逐条 spec，非整目录条目）
+	for _, want := range []string{"ccbp:L3/Demo/readme.md", "ccbp:L3/Demo/A-域.md", "ccbp:L3/Demo/F-推理现场/rec.md"} {
+		if !contains(master, want) {
+			t.Fatalf("精通档 L3 递归缺 %s：%v", want, master)
+		}
+	}
+	if contains(master, "ccbp:L3/Demo") {
+		t.Fatalf("精通档不应出现整目录条目：%v", master)
+	}
+	// skill package 仅本目录：ACS 要在、子目录 sub/X 不挂；基线 _index.md 只出现一次（不去重会变成两条）
+	if !contains(master, "ccbp:templates/skill package/ACS.md") {
+		t.Fatalf("精通档 skill package 本目录件缺失：%v", master)
+	}
+	if contains(master, "ccbp:templates/skill package/sub/X.md") {
+		t.Fatalf("精通档 skill package 不应递归子目录：%v", master)
+	}
+	idxCount := 0
+	for _, item := range master {
+		if item == "ccbp:templates/skill package/_index.md" {
+			idxCount++
+		}
+	}
+	if idxCount != 1 {
+		t.Fatalf("基线索引应恰好 1 条（不去重则重复）：%d · %v", idxCount, master)
+	}
+	// 专家档不含递归附件与 skill 展开
+	expert := deps.buildInjectListWithMount(base, "Demo", "", config.MountLevelExpert, nil)
+	if contains(expert, "ccbp:L3/Demo/F-推理现场/rec.md") || contains(expert, "ccbp:templates/skill package/ACS.md") {
+		t.Fatalf("专家档不应含精通增强：%v", expert)
+	}
+	// 从精通取消挂载：L3 递归件与 skill 展开件全摘，基线索引保留
+	cleared := deps.buildInjectListWithMount(master, "", "Demo", config.MountLevelMaster, nil)
+	if !contains(cleared, "ccbp:templates/skill package/_index.md") || !contains(cleared, "ccbp:L1") {
+		t.Fatalf("取消挂载应保留基线：%v", cleared)
+	}
+	for _, gone := range []string{"ccbp:L3/Demo/readme.md", "ccbp:L3/Demo/F-推理现场/rec.md", "ccbp:templates/skill package/ACS.md", "ccbp:templates/skill package/sub/X.md"} {
+		if contains(cleared, gone) {
+			t.Fatalf("取消挂载残留 %s：%v", gone, cleared)
+		}
+	}
+}
+
+// TestParseMountLevel 档位解析——level 优先，回落 expert 布尔，非法/缺失 = 未指定。
+func TestParseMountLevel(t *testing.T) {
+	if lvl, set := parseMountLevel("3", ""); !set || lvl != config.MountLevelMaster {
+		t.Fatalf("level=3 应为精通：%d/%v", lvl, set)
+	}
+	if lvl, set := parseMountLevel("", "false"); !set || lvl != config.MountLevelNormal {
+		t.Fatalf("expert=false 应为普通：%d/%v", lvl, set)
+	}
+	if lvl, set := parseMountLevel("", "true"); !set || lvl != config.MountLevelExpert {
+		t.Fatalf("expert=true 应为专家：%d/%v", lvl, set)
+	}
+	if _, set := parseMountLevel("9", "maybe"); set {
+		t.Fatal("非法 level 与非布尔 expert 应判未指定")
+	}
+	// level 优先于 expert
+	if lvl, _ := parseMountLevel("1", "true"); lvl != config.MountLevelNormal {
+		t.Fatalf("level 应优先于 expert：%d", lvl)
+	}
 }

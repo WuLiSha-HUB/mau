@@ -191,7 +191,7 @@ func wireCatSession(dataRoot string, workspace *config.WorkspaceConfig, toolsRes
 	// 入站自报身份——自家 apis（回环 + 18100）请求附加头数据源；挂载项按 cat.cfg 初值
 	client.SelfTag = sess.SelfTag
 	sess.SetClientID("cat-home5/" + version)
-	sess.SetSelfTagMount(cfg.ProjectMount, admin.MountModeText(cfg.ProjectMount, cfg.ProjectMountExpert), admin.BuildJobList(cfg.InjectList))
+	sess.SetSelfTagMount(cfg.ProjectMount, admin.MountModeText(cfg.ProjectMount, config.ResolveMountLevel(cfg)), admin.BuildJobList(cfg.InjectList))
 
 	// 授权面——特权 + 注册表 + 当前名单（与 C# IsToolAllowed 同序）
 	authorizedSet := make(map[string]bool, len(authorized))

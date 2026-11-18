@@ -238,10 +238,11 @@ func BuildToolGroups(specs []session.ToolSpec, ownerFlow map[string]string) []To
 }
 
 // BuildReportJSON 构建注入报告 JSON——键序对齐 C# BuildInjectReportJson：
-// files[] → total → ok → missing → failed → injectCount → mount → mountExpert → mountAuto → mountDesc → toolGroups[]。
+// files[] → total → ok → missing → failed → injectCount → mount → mountExpert → mountLevel → mountAuto → mountDesc → toolGroups[]。
 //
+// mountExpert 是兼容位（level>=2 即 true）；mountLevel 是三档真相源（1=普通 2=专家 3=精通），前端按钮态读它。
 // files 项五键：file / status / message / chars / bytes；toolGroups 项：group / tools[{name,desc}]。
-func BuildReportJSON(files []FileResult, injectList []string, specs []session.ToolSpec, ownerFlow map[string]string, mount string, mountExpert, mountAuto bool, mountDesc string) string {
+func BuildReportJSON(files []FileResult, injectList []string, specs []session.ToolSpec, ownerFlow map[string]string, mount string, mountLevel int, mountAuto bool, mountDesc string) string {
 	var b strings.Builder
 	total := 0
 	ok := 0
@@ -286,7 +287,9 @@ func BuildReportJSON(files []FileResult, injectList []string, specs []session.To
 	b.WriteString(`,"mount":`)
 	b.WriteString(session.JSONString(mount))
 	b.WriteString(`,"mountExpert":`)
-	b.WriteString(strconv.FormatBool(mountExpert))
+	b.WriteString(strconv.FormatBool(mountLevel >= 2))
+	b.WriteString(`,"mountLevel":`)
+	b.WriteString(strconv.Itoa(mountLevel))
 	b.WriteString(`,"mountAuto":`)
 	b.WriteString(strconv.FormatBool(mountAuto))
 	b.WriteString(`,"mountDesc":`)
