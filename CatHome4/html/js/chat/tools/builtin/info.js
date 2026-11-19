@@ -216,10 +216,45 @@ function ovInfoPairs(d) {
             pairs.push({ k: 'timeback', v: tbParts.join(' · ') });
         }
     }
+    // [A401] 所属组与角色——后端已按本猫过滤，只列参与的组；空数组 = 查过且没有（不省略该行）
+    var grp = d.groups;
+    if (grp && typeof grp === 'object' && grp.length !== undefined) {
+        if (grp.length === 0) {
+            pairs.push({ k: '组', v: '（无）' });
+        } else {
+            var grpParts = [];
+            for (var gi = 0; gi < grp.length; gi = gi + 1) {
+                var g = grp[gi];
+                var gOne = field(g, 'group');
+                var gRoles = [];
+                if (g.roles && g.roles.length > 0) {
+                    for (var ri = 0; ri < g.roles.length; ri = ri + 1) {
+                        gRoles.push(ovGroupRole(g.roles[ri]));
+                    }
+                }
+                if (gRoles.length > 0) {
+                    gOne = gOne + '(' + gRoles.join('·') + ')';
+                }
+                var gProject = field(g, 'project');
+                if (gProject.length > 0) {
+                    gOne = gOne + '[' + gProject + ']';
+                }
+                if (g.running === true) {
+                    gOne = gOne + ' 运行中';
+                } else if (g.enabled === true) {
+                    gOne = gOne + ' 未运行';
+                } else {
+                    gOne = gOne + ' 已停用';
+                }
+                grpParts.push(gOne);
+            }
+            pairs.push({ k: '组', v: grpParts.join(' · ') });
+        }
+    }
     // [A391] 未注册段兜底——后端新增段不得在前端静默消失：JSON 原文直显（判据 = 后端加段，前端自动可见）
     var knownKeys = {
         ok: 1, tool: 1, cat: 1, version: 1, time: 1, os: 1, llm: 1, endpoint: 1,
-        roots: 1, tokens: 1, packs: 1, db: 1, tools_drift: 1, tools_defect: 1, timeback: 1
+        roots: 1, tokens: 1, packs: 1, db: 1, tools_drift: 1, tools_defect: 1, timeback: 1, groups: 1
     };
     var allKeys = Object.keys(d);
     for (var ki = 0; ki < allKeys.length; ki = ki + 1) {
@@ -262,6 +297,20 @@ function ovToolName(one) {
         nm = field(one, 'tool');
     }
     return nm.length > 0 ? nm : JSON.stringify(one);
+}
+
+/// 组角色中文——member 成员 / admin 管理员 / subscriber 订阅；未识别角色原样显示（不静默吞）
+function ovGroupRole(role) {
+    if (role === 'member') {
+        return '成员';
+    }
+    if (role === 'admin') {
+        return '管理员';
+    }
+    if (role === 'subscriber') {
+        return '订阅';
+    }
+    return String(role);
 }
 
 /// 键值行 → 折叠摘要文本（段折叠摘要在行数 >5 时展示「前 2 + … + 后 2」）

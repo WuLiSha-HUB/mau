@@ -587,6 +587,48 @@ namespace CH4
             {
                 info["timeback"] = timebackBlock;
             }
+            // [段11] groups——本猫所属组与角色（A401）：只列本猫参与的组（成员 / 管理员 / 订阅任一命中）
+            // 角色判定取 GroupSummary 单点（HasMember / HasAdmin / HasSubscriber）；无组输出空数组（自证「查过且没有」）
+            // 只报本猫自己的角色与组的运行态——不列成员名单（info 是自省面，不是组花名册）
+            List<object> myGroups = new List<object>();
+            if (catKey.Length > 0)
+            {
+                List<GroupSummary> allGroups = GroupStore.ListGroups();
+                for (int i = 0; i < allGroups.Count; i = i + 1)
+                {
+                    GroupSummary oneGroup = allGroups[i];
+                    List<string> roles = new List<string>();
+                    if (oneGroup.HasMember(catKey))
+                    {
+                        roles.Add("member");
+                    }
+                    if (oneGroup.HasAdmin(catKey))
+                    {
+                        roles.Add("admin");
+                    }
+                    if (oneGroup.HasSubscriber(catKey))
+                    {
+                        roles.Add("subscriber");
+                    }
+                    if (roles.Count == 0)
+                    {
+                        continue;
+                    }
+                    string groupProject = oneGroup.Project;
+                    if (groupProject == null)
+                    {
+                        groupProject = "";
+                    }
+                    Dictionary<string, object> groupItem = new Dictionary<string, object>();
+                    groupItem["group"] = oneGroup.Name;
+                    groupItem["roles"] = roles;
+                    groupItem["project"] = groupProject;
+                    groupItem["enabled"] = oneGroup.Enabled;
+                    groupItem["running"] = oneGroup.Running;
+                    myGroups.Add(groupItem);
+                }
+            }
+            info["groups"] = myGroups;
             return JsonSerializer.Serialize(info, CatHostService.InfoJsonOptions);
         }
         /// <summary>

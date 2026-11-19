@@ -50,6 +50,54 @@ namespace CH4
         public int SubscribeIdleSec;
         /// <summary>订阅者未读游标——猫 key → 已推送到的 seq（缺省 0 = 从头）</summary>
         public Dictionary<string, long> SubscribeCursors = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        /// <summary>
+        /// 成员判定——成员名单是否含该猫 key。
+        /// </summary>
+        /// <param name="key">猫 key（空 = false）</param>
+        /// <returns>true=组成员</returns>
+        public bool HasMember(string key)
+        {
+            return ContainsCatKey(MemberKeys, key);
+        }
+        /// <summary>
+        /// 管理员判定——管理员名单是否含该猫 key（管理员恒为成员子集）。
+        /// </summary>
+        /// <param name="key">猫 key（空 = false）</param>
+        /// <returns>true=组管理员</returns>
+        public bool HasAdmin(string key)
+        {
+            return ContainsCatKey(AdminKeys, key);
+        }
+        /// <summary>
+        /// 订阅者判定——订阅自动转发名单是否含该猫 key。
+        /// </summary>
+        /// <param name="key">猫 key（空 = false）</param>
+        /// <returns>true=订阅者</returns>
+        public bool HasSubscriber(string key)
+        {
+            return ContainsCatKey(SubscriberKeys, key);
+        }
+        /// <summary>
+        /// 名单包含判定——成员 / 管理员 / 订阅者三名单共用（严格序数比较；A401 判定单点）。
+        /// </summary>
+        /// <param name="keys">名单（可空）</param>
+        /// <param name="key">待查猫 key</param>
+        /// <returns>true=命中</returns>
+        private static bool ContainsCatKey(string[] keys, string key)
+        {
+            if (keys == null || key == null || key.Length == 0)
+            {
+                return false;
+            }
+            for (int i = 0; i < keys.Length; i = i + 1)
+            {
+                if (string.Equals(keys[i], key, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     /// <summary>

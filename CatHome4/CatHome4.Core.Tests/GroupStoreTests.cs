@@ -106,6 +106,32 @@ namespace CatHome4.Core.Tests
         }
 
         /// <summary>
+        /// 角色判定单点（A401）——HasMember / HasAdmin / HasSubscriber 只认各自名单；空 key 与陌生人一律 false。
+        /// </summary>
+        [Fact]
+        public void RoleChecks_MatchOnlyOwnNameLists()
+        {
+            GroupStore.CreateOrUpdate("施工队", new string[] { "majordomo", "coder1", "watcher" }, "", new string[] { "majordomo" }, new string[] { "watcher" });
+            GroupSummary g = GroupStore.GetGroup("施工队");
+            Assert.NotNull(g);
+            if (g == null)
+            {
+                return;
+            }
+            Assert.True(g.HasMember("coder1"));
+            Assert.False(g.HasAdmin("coder1"));
+            Assert.False(g.HasSubscriber("coder1"));
+            Assert.True(g.HasAdmin("majordomo"));
+            Assert.False(g.HasSubscriber("majordomo"));
+            Assert.True(g.HasSubscriber("watcher"));
+            Assert.False(g.HasMember("outsider"));
+            Assert.False(g.HasAdmin("outsider"));
+            Assert.False(g.HasSubscriber("outsider"));
+            Assert.False(g.HasMember(""));
+            Assert.False(g.HasAdmin(null));
+        }
+
+        /// <summary>
         /// 游标收敛——取消订阅删游标；重新订阅从当前末序号起（不补历史）；原订阅者游标保留。
         /// </summary>
         [Fact]

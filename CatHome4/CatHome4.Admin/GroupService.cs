@@ -267,22 +267,25 @@ namespace CatHome4.Admin
             {
                 return "ERR|BAD_ARGS|派单必须指定 to（@ 目标猫）";
             }
-            if (!IsMember(g, to))
+            // A402——to 认成员 key 或显示名（组内解析；歧义 / 未命中随错误附候选）
+            string toKey = "";
+            string toErr = "";
+            if (!ResolveMemberKey(g, to, out toKey, out toErr))
             {
-                return "ERR|GROUP_TARGET_NOT_MEMBER|@ 目标不在组内: " + to;
+                return toErr;
             }
-            string result = GroupStore.AppendMessage(g.Name, catId, "delegation", text, refs, to);
+            string result = GroupStore.AppendMessage(g.Name, catId, "delegation", text, refs, toKey);
             if (!result.StartsWith("ok|", StringComparison.Ordinal))
             {
                 return result;
             }
             long seq = ParseSeq(result);
-            CatHostService.CatEntry cat = CatHostService.FindDeliveryCat(to);
+            CatHostService.CatEntry cat = CatHostService.FindDeliveryCat(toKey);
             if (cat == null || cat.Session == null)
             {
-                return "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + to + "（消息已入组 #" + seq.ToString() + "）";
+                return "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + toKey + "（消息已入组 #" + seq.ToString() + "）";
             }
-            string content = "[来自组:" + g.Name + "]\n" + text;
+            string content = "[来自组:" + g.Name + "]\\n" + text;
             string origin = "group:" + g.Name + ":" + seq.ToString() + ":delegation";
             if (notify)
             {
@@ -291,12 +294,12 @@ namespace CatHome4.Admin
             }
             if (!cat.Session.PostUserMessage(content, "user", "", origin))
             {
-                return "ERR|GROUP_DELIVER_FAIL|投递未受理: " + to + "（消息已入组 #" + seq.ToString() + "）";
+                return "ERR|GROUP_DELIVER_FAIL|投递未受理: " + toKey + "（消息已入组 #" + seq.ToString() + "）";
             }
-            string toName = CatHostService.ResolveCatDisplayName(to);
+            string toName = CatHostService.ResolveCatDisplayName(toKey);
             Dictionary<string, object> extras = new Dictionary<string, object>();
             extras["seq"] = seq;
-            extras["to"] = to;
+            extras["to"] = toKey;
             string summary = g.Name + " | 已派单 → " + toName + " · #" + seq.ToString();
             return BuildReply("group-delegate", g.Name, -1, extras, summary, new List<string>());
         }
@@ -346,25 +349,28 @@ namespace CatHome4.Admin
             {
                 return "ERR|BAD_ARGS|重建会话必须指定 to（@ 目标猫）";
             }
-            if (!IsMember(g, to))
+            // A402——to 认成员 key 或显示名（组内解析；歧义 / 未命中随错误附候选）
+            string toKey = "";
+            string toErr = "";
+            if (!ResolveMemberKey(g, to, out toKey, out toErr))
             {
-                return "ERR|GROUP_TARGET_NOT_MEMBER|@ 目标不在组内: " + to;
+                return toErr;
             }
             // 单向数据流：管理员不得重建另一名管理员——只能重建自己或非管理成员
-            if (!string.Equals(to, catId, StringComparison.Ordinal) && IsAdmin(g, to))
+            if (!string.Equals(toKey, catId, StringComparison.Ordinal) && IsAdmin(g, toKey))
             {
-                return "ERR|GROUP_TARGET_IS_ADMIN|管理员不得重建另一名管理员（仅可重建自己或非管理成员）: " + to;
+                return "ERR|GROUP_TARGET_IS_ADMIN|管理员不得重建另一名管理员（仅可重建自己或非管理成员）: " + toKey;
             }
             if (reason.Length == 0)
             {
                 return "ERR|BAD_ARGS|重建会话必须给出 reason（新会话唯一的上下文说明）";
             }
-            CatHostService.CatEntry target = CatHostService.FindDeliveryCat(to);
+            CatHostService.CatEntry target = CatHostService.FindDeliveryCat(toKey);
             if (target == null || target.Session == null)
             {
-                return "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + to;
+                return "ERR|GROUP_TARGET_OFFLINE|目标猫未运行: " + toKey;
             }
-            string noteText = "[系统] 请求重建会话 → " + to + " | 原因 " + reason;
+            string noteText = "[系统] 请求重建会话 → " + toKey + " | 原因 " + reason;
             if (first.Length > 0)
             {
                 noteText = noteText + " | 初始指令 " + first.Length.ToString() + " 字";
@@ -380,7 +386,7 @@ namespace CatHome4.Admin
             {
                 origin = "";
             }
-            bool self = string.Equals(to, catId, StringComparison.Ordinal);
+            bool self = string.Equals(toKey, catId, StringComparison.Ordinal);
             if (self)
             {
                 if (!target.Session.RequestSessionRebuild(first, origin))
@@ -390,7 +396,7 @@ namespace CatHome4.Admin
             }
             else
             {
-                string result = AdminService.RebuildCatSession(to, first, origin);
+                string result = AdminService.RebuildCatSession(toKey, first, origin);
                 if (!result.StartsWith("ok|", StringComparison.Ordinal))
                 {
                     return result;
@@ -401,10 +407,10 @@ namespace CatHome4.Admin
             {
                 mode = "queued";
             }
-            string toName = CatHostService.ResolveCatDisplayName(to);
+            string toName = CatHostService.ResolveCatDisplayName(toKey);
             Dictionary<string, object> extras = new Dictionary<string, object>();
             extras["seq"] = seq;
-            extras["to"] = to;
+            extras["to"] = toKey;
             extras["mode"] = mode;
             string summary = g.Name + " | 已重建 → " + toName + " · #" + seq.ToString();
             if (self)
@@ -588,18 +594,11 @@ namespace CatHome4.Admin
         /// <returns>true=组成员</returns>
         private static bool IsMember(GroupSummary g, string key)
         {
-            if (key == null || key.Length == 0)
+            if (g == null)
             {
                 return false;
             }
-            for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
-            {
-                if (string.Equals(g.MemberKeys[i], key, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-            return false;
+            return g.HasMember(key);
         }
         /// <summary>订阅者判定——显式 subscriberKeys 名单（空 = 不自动转发）。</summary>
         /// <param name="g">组投影</param>
@@ -607,18 +606,11 @@ namespace CatHome4.Admin
         /// <returns>true=订阅者</returns>
         private static bool IsSubscriber(GroupSummary g, string key)
         {
-            if (key == null || key.Length == 0)
+            if (g == null)
             {
                 return false;
             }
-            for (int i = 0; i < g.SubscriberKeys.Length; i = i + 1)
-            {
-                if (string.Equals(g.SubscriberKeys[i], key, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-            return false;
+            return g.HasSubscriber(key);
         }
 
         /// <summary>管理员判定——显式 adminKeys 名单（空 = 无人可派单，失败可见）。</summary>
@@ -627,18 +619,11 @@ namespace CatHome4.Admin
         /// <returns>true=管理员</returns>
         private static bool IsAdmin(GroupSummary g, string key)
         {
-            if (key == null || key.Length == 0)
+            if (g == null)
             {
                 return false;
             }
-            for (int i = 0; i < g.AdminKeys.Length; i = i + 1)
-            {
-                if (string.Equals(g.AdminKeys[i], key, StringComparison.Ordinal))
-                {
-                    return true;
-                }
-            }
-            return false;
+            return g.HasAdmin(key);
         }
 
         /// <summary>解析 AppendMessage 回执中的 seq（ok|组名|seq=N）。</summary>
@@ -827,7 +812,90 @@ namespace CatHome4.Admin
             return BuildReply("group-clear", g.Name, beforeCount, extras, g.Name + " | 已清空 " + beforeCount.ToString() + " 条 · 归档 " + archiveText, body);
         }
         /// <summary>
-        /// 目标猫解析——组内成员**精确**匹配（不把组 key 直接喂给 cat.cfg 寻址，防 id 前缀误配）。
+        /// 组内目标解析（A402）——成员 key 精确优先，其次成员显示名（Trim + 忽略大小写）；
+        /// 显示名重名或未命中一律拒收，并列出可选目标（失败可见、可自行纠正）。
+        /// </summary>
+        /// <param name="g">组投影</param>
+        /// <param name="wanted">入参（成员 cat key 或显示名）</param>
+        /// <param name="key">输出成员 cat key</param>
+        /// <param name="err">输出错误文本（空 = 通过）</param>
+        /// <returns>true=解析成功</returns>
+        private static bool ResolveMemberKey(GroupSummary g, string wanted, out string key, out string err)
+        {
+            key = "";
+            err = "";
+            string want = wanted == null ? "" : wanted.Trim();
+            if (want.Length == 0)
+            {
+                err = "ERR|BAD_ARGS|目标猫不能为空";
+                return false;
+            }
+            // [段1] key 精确——成员名单即授权边界，真 key 直通
+            if (g.HasMember(want))
+            {
+                key = want;
+                return true;
+            }
+            // [段2] 成员显示名——只在本组成员内匹配（不放开到全局猫表）；重名视为歧义拒收
+            string hit = "";
+            int hitCount = 0;
+            for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
+            {
+                string memberKey = g.MemberKeys[i];
+                string name = CatHostService.ResolveCatDisplayName(memberKey);
+                if (name.Length == 0)
+                {
+                    continue;
+                }
+                if (!string.Equals(name, want, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+                hitCount = hitCount + 1;
+                hit = memberKey;
+            }
+            if (hitCount == 1)
+            {
+                key = hit;
+                return true;
+            }
+            if (hitCount > 1)
+            {
+                err = "ERR|GROUP_TARGET_AMBIGUOUS|显示名在组内命中 " + hitCount.ToString() + " 只猫——请改用 key（可用：" + DescribeMembers(g) + "）";
+                return false;
+            }
+            err = "ERR|GROUP_TARGET_NOT_MEMBER|目标不在组内: " + want + "（可用：" + DescribeMembers(g) + "）";
+            return false;
+        }
+        /// <summary>
+        /// 成员候选文本——「显示名（key）」顿号连接（目标解析失败时随错误带回，便于直接复制 key）。
+        /// </summary>
+        /// <param name="g">组投影</param>
+        /// <returns>候选文本（无成员 = 「（无成员）」）</returns>
+        private static string DescribeMembers(GroupSummary g)
+        {
+            List<string> parts = new List<string>();
+            for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
+            {
+                string memberKey = g.MemberKeys[i];
+                string name = CatHostService.ResolveCatDisplayName(memberKey);
+                if (name.Length > 0)
+                {
+                    parts.Add(name + "（" + memberKey + "）");
+                }
+                else
+                {
+                    parts.Add(memberKey);
+                }
+            }
+            if (parts.Count == 0)
+            {
+                return "（无成员）";
+            }
+            return string.Join("、", parts.ToArray());
+        }
+        /// <summary>
+        /// 目标猫解析——组内成员解析（key 精确优先、其次显示名；A402）；不把组 key 直接喂给 cat.cfg 寻址，防 id 前缀误配。
         /// </summary>
         /// <param name="argsJson">工具参数 JSON（cat 必填）</param>
         /// <param name="group">组名</param>
@@ -872,25 +940,18 @@ namespace CatHome4.Admin
             {
                 return "ERR|BAD_ARGS|缺少参数 cat";
             }
-            // [段1] 成员名单即授权边界——精确匹配，不走前缀
-            bool found = false;
-            for (int i = 0; i < g.MemberKeys.Length; i = i + 1)
+            // [段1] 成员名单即授权边界——key 精确优先、其次成员显示名（A402 组内解析；不放开前缀匹配）
+            string memberKey = "";
+            string memberErr = "";
+            if (!ResolveMemberKey(g, wanted, out memberKey, out memberErr))
             {
-                if (string.Equals(g.MemberKeys[i], wanted, StringComparison.Ordinal))
-                {
-                    found = true;
-                    break;
-                }
+                return memberErr;
             }
-            if (!found)
-            {
-                return "ERR|GROUP_TARGET_NOT_MEMBER|目标不在组内: " + wanted;
-            }
-            if (denySelf && string.Equals(wanted, catId, StringComparison.Ordinal))
+            if (denySelf && string.Equals(memberKey, catId, StringComparison.Ordinal))
             {
                 return "ERR|GROUP_TARGET_SELF|不能修改自己的配置——改自己请由人操作";
             }
-            target = wanted;
+            target = memberKey;
             return "";
         }
         /// <summary>

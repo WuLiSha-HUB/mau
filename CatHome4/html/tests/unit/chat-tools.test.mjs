@@ -187,6 +187,27 @@ describe('专属骨架——info / catinfo（逐字段摊平）', () => {
         expect(text).toContain('world');
     });
 
+    it('info——groups 段渲染：角色中文 / 项目 / 运行态；空数组出「（无）」（A401）', () => {
+        const withGroups = JSON.stringify({
+            cat: '639249925591864296',
+            version: { version: '2.0.328', build: '2026-11-19 18:00:00' },
+            groups: [
+                { group: 'DMMaster', roles: ['member', 'admin'], project: 'DMM', enabled: true, running: true },
+                { group: 'LoopCheck', roles: ['subscriber'], project: '', enabled: true, running: false },
+                { group: 'Retired', roles: ['member'], project: '', enabled: false, running: false }
+            ]
+        });
+        const text = window.buildToolBlock(card('info', {}, withGroups), 'toolcard').textContent;
+        expect(text).toContain('DMMaster(成员·管理员)[DMM] 运行中');
+        expect(text).toContain('LoopCheck(订阅) 未运行');
+        expect(text).toContain('Retired(成员) 已停用');
+        // groups 属已注册段——不再走「未注册」兜底
+        expect(text).not.toContain('未注册 · groups');
+
+        const emptyText = window.buildToolBlock(card('info', {}, JSON.stringify({ cat: 'x', groups: [] })), 'toolcard').textContent;
+        expect(emptyText).toContain('（无）');
+    });
+
     it('catinfo——整块 JSON → 每猫一行（运行态 / 相位 / 前文 / 活跃）', () => {
         const result = JSON.stringify({
             count: 2,
