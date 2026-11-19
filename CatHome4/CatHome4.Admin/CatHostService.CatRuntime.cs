@@ -163,5 +163,46 @@ namespace CatHome4.Admin
             map[id] = new CatRuntimeEntry() { Running = running, Port = port };
             return true;
         }
+        /// <summary>
+        /// 显示名唯一性校验——cat 名不可重复（A403）。
+        /// 口径：Trim 后忽略大小写比对；范围 = 多猫注册表 + 默认会话 majordomo（id 与显示名）；改名时豁免自身 id。
+        /// </summary>
+        /// <param name="name">待校验显示名（空串由调用方判空）</param>
+        /// <param name="excludeId">豁免的猫 id（改名时为自身 id；新建时传空串）</param>
+        /// <returns>冲突描述（空=通过）</returns>
+        internal static string CheckDisplayNameTaken(string name, string excludeId)
+        {
+            if (name == null || name.Trim().Length == 0)
+            {
+                return "";
+            }
+            string target = name.Trim();
+            if (excludeId != "majordomo")
+            {
+                string majorName = "majordomo";
+                if (_chatBridge != null && _chatBridge.DefaultSession != null && _chatBridge.DefaultSession.DisplayName != null && _chatBridge.DefaultSession.DisplayName.Length > 0)
+                {
+                    majorName = _chatBridge.DefaultSession.DisplayName;
+                }
+                if (string.Equals(majorName.Trim(), target, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "显示名「" + target + "」已被占用（majordomo）——cat 名不可重复";
+                }
+            }
+            for (int i = 0; i < _cats.Count; i = i + 1)
+            {
+                CatEntry cat = _cats[i];
+                if (excludeId != null && excludeId.Length > 0 && cat.Id == excludeId)
+                {
+                    continue;
+                }
+                string existName = cat.DisplayName == null ? "" : cat.DisplayName.Trim();
+                if (string.Equals(existName, target, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "显示名「" + target + "」已被占用（id " + cat.Id + "）——cat 名不可重复";
+                }
+            }
+            return "";
+        }
     }
 }

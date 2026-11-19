@@ -732,6 +732,12 @@ namespace CatHome4.Admin
                 {
                     return Results.Json(new { ok = false, error = "displayName 不能为空" });
                 }
+                // A403——cat 名不可重复（人面端点同一门禁：改名豁免自身 id）
+                string nameError = CheckDisplayNameTaken(trimmedName, catKey);
+                if (nameError.Length > 0)
+                {
+                    return Results.Json(new { ok = false, error = nameError });
+                }
                 cfg.DisplayName = trimmedName;
             }
             if (userInjectIdleOnlyPresent)

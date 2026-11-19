@@ -11,6 +11,23 @@ var catNewInput = document.getElementById('catNewName');
 var catCards = {};   // 猫 id → { el, refs, data, prev }
 var catGroupPool = {};   // 分组键 → { el, title, grid }
 var lastCatSig = '';   // 上次结构签名（组序 + 组内 id 序）——相同则跳过节点排列（A225f）
+var lastCatsList = []; // A403——最近一次列表快照（/api/v1/cats 原始条目），供显示名唯一性预检
+
+// A403 显示名唯一性预检——cat 名不可重复（后端 CheckDisplayNameTaken 为权威门禁，此处只做本地即时提示）
+// 口径与后端一致：Trim + 忽略大小写；selfId = 改名时的自身 id（新建传空串）
+function findCatNameOwner(name, selfId) {
+    var target = (name || '').trim().toLowerCase();
+    if (target.length === 0) { return null; }
+    for (var i = 0; i < lastCatsList.length; i = i + 1) {
+        var cat = lastCatsList[i] || {};
+        if (selfId && cat.id === selfId) { continue; }
+        var catName = typeof cat.name === 'string' ? cat.name : '';
+        if (catName.trim().toLowerCase() === target) {
+            return cat;
+        }
+    }
+    return null;
+}
 
 // 猫列表加载——HTTP 拉一次（初始 / 手动刷新；实时跟随走 SSE state 事件）
 function loadCats() {
@@ -26,6 +43,7 @@ function loadCats() {
 // 增量更新：卡片节点按 id 复用、只改属性；**结构排列仅在签名变化时触碰 DOM**
 // （判例 A225f：每帧无条件 appendChild 会把节点移出再插入 → 浏览器取消 :hover 与进行中的过渡 → hover 边缘闪烁）
 function applyCatState(cats) {
+    lastCatsList = cats || [];
     if (!cats || cats.length === 0) {
         clearCatCards();
         catsMsgEl.textContent = '暂无猫——输入显示名新建';
@@ -366,6 +384,12 @@ function catNew() {
     var name = catNewInput.value.trim();
     if (name.length === 0) {
         catsMsgEl.textContent = '显示名不能为空';
+        return;
+    }
+    // A403——cat 名不可重复（本地预检；后端 cat.new 同一门禁）
+    var owner = findCatNameOwner(name, '');
+    if (owner) {
+        catsMsgEl.textContent = '显示名「' + name + '」已被占用（' + owner.id + '）——cat 名不可重复';
         return;
     }
     catNewInput.value = '';

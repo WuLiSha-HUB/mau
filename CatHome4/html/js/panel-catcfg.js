@@ -456,6 +456,13 @@ function loadQqGroupHint(botKey) {
 }
 
 function saveCatCfg() {
+    // A403——cat 名不可重复（本地预检；后端 /api/v1/cat-config 同一门禁，改名豁免自身 id）
+    var submitName = document.getElementById('catCfgName').value.trim();
+    var nameOwner = findCatNameOwner(submitName, catCfgTarget);
+    if (nameOwner) {
+        document.getElementById('catCfgMsg').textContent = '显示名「' + submitName + '」已被占用（' + nameOwner.id + '）——cat 名不可重复';
+        return;
+    }
     var themeRaw = parseInt(document.getElementById('catCfgTheme').value, 10);
     var themeColor = isNaN(themeRaw) || themeRaw < 0 ? 0 : themeRaw;
     var toolNames = collectChecked('catCfgTools');

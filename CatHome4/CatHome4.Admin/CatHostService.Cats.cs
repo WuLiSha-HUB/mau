@@ -649,12 +649,19 @@ namespace CatHome4.Admin
             bool immediate = false;
             if (field == "displayName")
             {
-                if (value.Length == 0)
+                string trimmedName = value.Trim();
+                if (trimmedName.Length == 0)
                 {
                     return "cat.cfg.set | displayName 不能为空";
                 }
-                cfg.DisplayName = value;
-                applied = "displayName=" + value;
+                // A403——cat 名不可重复（改名豁免自身 id）
+                string nameError = CheckDisplayNameTaken(trimmedName, id);
+                if (nameError.Length > 0)
+                {
+                    return "cat.cfg.set | " + nameError;
+                }
+                cfg.DisplayName = trimmedName;
+                applied = "displayName=" + trimmedName;
             }
             else if (field == "apiConfigId")
             {
@@ -894,16 +901,27 @@ namespace CatHome4.Admin
         /// <returns>结果文本</returns>
         private static string HandleCatNew(string name)
         {
+            string trimmedName = name == null ? "" : name.Trim();
+            if (trimmedName.Length == 0)
+            {
+                return "cat.new | 显示名不能为空";
+            }
+            // A403——cat 名不可重复（多猫注册表 + majordomo 全量比对，忽略大小写）
+            string nameError = CheckDisplayNameTaken(trimmedName, "");
+            if (nameError.Length > 0)
+            {
+                return "cat.new | " + nameError;
+            }
             string id = SessionStore.NewSessionId();
-            CatEntry cat = CreateCatEntry(id, name);
+            CatEntry cat = CreateCatEntry(id, trimmedName);
             if (cat == null)
             {
                 return "cat.new | 会话构造失败";
             }
             _cats.Add(cat);
             SaveCatCfg(cat);
-            LogStore.Add("CatHome4", 1, "已创建猫「" + name + "」（id " + id + "），静默待启动", "CHAT");
-            return "cat.new | id=" + id + " | name=" + name + " | 静默态（cat.start 启动）";
+            LogStore.Add("CatHome4", 1, "已创建猫「" + trimmedName + "」（id " + id + "），静默待启动", "CHAT");
+            return "cat.new | id=" + id + " | name=" + trimmedName + " | 静默态（cat.start 启动）";
         }
 
         /// <summary>
