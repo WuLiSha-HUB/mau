@@ -19,6 +19,7 @@ var gCatNodes = {};      // catKey -> 球列节点（A319；增量复用，不�
 var gDividerMs = 3600000; // A340 时间分割线阈值——相邻两行时刻差超过 1 小时即插一条分割线
 var gTarget = '';        // @ 目标（2026-11-13）——空 = 不 @（只记流水）；非空 = 派单投递该猫
 var gMembers = [];       // 最近一次成员名单（@ 浮层渲染用）
+var gCatPorts = {};      // A404——catKey -> 会话端口（点消息行头像打开该猫会话；组信息每次加载刷新）
 var gHiddenCats = {};    // A343 猫显隐——键 = 被隐藏的 catKey（初始空 = 全部显示）；人消息无 from，恒显示
 var gFilterKind = 'all'; // A341 类型筛选——all / note（讨论）/ receipt（回执）/ delegation（派单）；与猫显隐叠加
 
@@ -172,6 +173,7 @@ function gLoadInfo(skipTargets) {
             gInfoEl.title = gMemberRoster(members);
             // A319/A320——主题色映射 + 球列（状态 / 前文）+ 已渲染气泡回填
             gRefreshThemeMap(members);
+            gRefreshPortMap(members);
             gRenderCats(members);
             gPlaceCats();
             gApplyThemeColors();
@@ -337,6 +339,36 @@ function gRefreshThemeMap(members) {
     }
 }
 
+// A404——会话端口映射（成员名单 → catKey:端口；组信息每次加载刷新）
+// 打开动作取这里而非行内快照：端口可能因重启变化，点的那一刻用最新名单
+function gRefreshPortMap(members) {
+    gCatPorts = {};
+    for (var i = 0; i < members.length; i = i + 1) {
+        var m = members[i];
+        if (!m || !m.key) {
+            continue;
+        }
+        gCatPorts[m.key] = Number(m.port) || 0;
+    }
+}
+
+// A404——打开该猫会话页（等价 console 猫卡「打开会话」）：端口 0 / 未运行即出声，不静默失败
+function gOpenCatChat(key) {
+    var port = Number(gCatPorts[key]) || 0;
+    var label = key;
+    for (var i = 0; i < gMembers.length; i = i + 1) {
+        if (gMembers[i] && gMembers[i].key === key) {
+            label = gMembers[i].displayName || key;
+            break;
+        }
+    }
+    if (port <= 0) {
+        gInfoEl.textContent = label + ' 未运行——无会话端口，无法打开会话';
+        return;
+    }
+    window.open(uiEndpoint(port), '_blank');
+}
+
 // 单行着色——主题色写进行内变量（描边取该色；底色不动，保持助手气泡一致）
 function gApplyCatTheme(row, fromKey) {
     var idx = 0;
@@ -401,6 +433,8 @@ function gBuildRow(m) {
         avatar.textContent = gCatInitial(gUserName, '');
     } else {
         avatar.textContent = gCatInitial(m.displayName, m.from);
+        // A404——猫头像可点：打开该猫会话（与 console 猫卡「打开会话」等价）
+        avatar.title = '打开 ' + ((m.displayName && m.displayName.length > 0) ? m.displayName : (m.from || '')) + ' 的会话';
     }
     var body = document.createElement('div');
     body.className = 'grp-body';
@@ -957,6 +991,23 @@ gInputEl.addEventListener('keydown', function (e) {
     }
 });
 document.addEventListener('visibilitychange', gOnVisibilityChange);
+// A404——点消息行头像 = 打开该猫会话（与 console 猫卡「打开会话」同一端点拼接）
+// 委托绑定一次：行由轮询增量追加，逐行绑会漏掉已渲染行；人侧头像无 data-from 自然不跳
+gMsgsEl.addEventListener('click', function (e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('grp-avatar')) {
+        return;
+    }
+    var row = t.closest ? t.closest('.chat-row') : null;
+    if (!row) {
+        return;
+    }
+    var from = row.getAttribute('data-from');
+    if (!from) {
+        return;
+    }
+    gOpenCatChat(from);
+});
 
 // 引导——版本标记 / 字号配置 / 类型切换条 / @ 目标（随组信息填充）/ 组信息 / 消息流 / 自绘滚动带接线
 loadUiVersion();

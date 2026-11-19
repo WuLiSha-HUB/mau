@@ -302,6 +302,9 @@ test('A319 球列——重复渲染复用节点，不重建', () => {
   // 运行态刷新落点——灯点跟着改
   expect(first.querySelector('.gc-dot').className).toContain('reply');
   expect(first.querySelector('.gc-tok').textContent).toBe('900');
+  // A399——非 idle 态挂 busy 判据类（描边转白由 CSS 承载；jsdom 不做级联，断言落判据类）
+  // 本次四个成员：a1 reply / a2 think 为 busy，b1 idle 与未运行的 c1 不 busy
+  expect(document.querySelectorAll('#groupCats .gc-item.busy').length).toBe(2);
 });
 
 // A320 气泡着色——只写描边变量（不染底色）；刻度取主题色靠 scroll.js 复制 --gc-color
@@ -504,4 +507,29 @@ test('@ 目标浮层——按钮开合、列表含「无 @」与成员、选中�
   window.gPickTarget('coder1');
   window.gFillTargets([{ key: 'majordomo', displayName: '雾理莎' }]);
   expect(window.gTarget).toBe('');
+});
+
+// A404——点猫消息行头像打开该猫会话（端口取组信息 members[].port，等价 console 猫卡「打开会话」）
+test('A404 头像跳会话——猫行头像 window.open 该猫端口，人侧不跳', () => {
+  const opened = [];
+  const prevOpen = window.open;
+  window.open = (url) => { opened.push(url); return null; };
+  window.gRefreshPortMap([
+    { key: 'a1', displayName: '甲', port: 9001 },
+    { key: 'b1', displayName: '乙', port: 0 }
+  ]);
+  const catRow = window.gBuildRow({ seq: 11, from: 'a1', displayName: '甲', type: 'note', ts: 0, text: 'x' });
+  document.getElementById('chatMsgs').appendChild(catRow);
+  catRow.querySelector('.grp-avatar').click();
+  expect(opened).toEqual(['http://127.0.0.1:9001/']);
+  // 端口 0（未运行）——不打开，页头出声
+  window.gOpenCatChat('b1');
+  expect(opened.length).toBe(1);
+  expect(document.getElementById('chatInfo').textContent).toContain('未运行');
+  // 人侧头像无 data-from——点击不打开
+  const humanRow = window.gBuildRow({ seq: 12, from: '', type: 'note', ts: 0, text: 'y' });
+  document.getElementById('chatMsgs').appendChild(humanRow);
+  humanRow.querySelector('.grp-avatar').click();
+  expect(opened.length).toBe(1);
+  window.open = prevOpen;
 });

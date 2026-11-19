@@ -52,12 +52,14 @@ namespace CatHome4.Admin
             {
                 string key = g.MemberKeys[i];
                 bool memberRunning = false;
+                int memberPort = 0;
                 string memberRunState = "idle";
                 long memberContext = 0;
                 CatHostService.CatEntry memberCat = CatHostService.FindDeliveryCat(key);
                 if (memberCat != null)
                 {
                     memberRunning = memberCat.Running;
+                    memberPort = memberCat.Port;
                     if (memberCat.Session != null)
                     {
                         Dictionary<string, object> memberState = memberCat.Session.BuildStateEntry();
@@ -88,7 +90,8 @@ namespace CatHome4.Admin
                     themeColor = CatHostService.ResolveCatThemeColor(key),
                     running = memberRunning,
                     runState = memberRunState,
-                    context = memberContext
+                    context = memberContext,
+                    port = memberPort
                 });
             }
             // [段2] 行装配
