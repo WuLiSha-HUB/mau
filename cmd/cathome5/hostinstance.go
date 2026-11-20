@@ -207,6 +207,11 @@ func startCatHost(inst *catInstance, deps *hostInstanceDeps, port int) (*hostIns
 		if deps.DispatchCat != nil {
 			srv.BindCommand(func(text string) (bool, string) { return deps.DispatchCat(inst.id, sess, text), "" })
 		}
+		// 附件包裹组装——每猫对话端口同源（编号取本猫前文条数真值，session 闭包绑定）
+		srv.BindEnvelope(func(text string, images, files []string) string {
+			line := session.ApplyImageEnvelopeToLine(text, images, sess.Context.Count())
+			return session.ApplyFileEnvelopeToLine(line, files, sess.Context.Count())
+		})
 		if deps.Admin != nil {
 			// 对话页路由——静态三件（chat-images / cache-image / audio）+ 项目挂载四件。
 			// C# 每猫 hostoptions 注入了 InjectProjectsBuilder / InjectProjectSetter / InjectAutoGetter /

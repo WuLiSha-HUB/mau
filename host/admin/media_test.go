@@ -185,3 +185,85 @@ func TestOpenDataDir(t *testing.T) {
 		t.Fatalf("打开目标 = %s，预期 %s", called, root)
 	}
 }
+
+// uploadFile 发一次文件上传（X-File-Name 传原名）。
+func uploadFile(t *testing.T, deps *Deps, name string, data []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/chat-files", bytes.NewReader(data))
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("X-File-Name", name)
+	rec := httptest.NewRecorder()
+	deps.handleChatFilesUpload(rec, req)
+	return rec
+}
+
+// TestChatFilesUploadAndDedup 文件上传——内容寻址前缀 + 安全原名；同名同内容去重；原名穿越清洗。
+func TestChatFilesUploadAndDedup(t *testing.T) {
+	deps, root := newTestDeps(t)
+	rec := uploadFile(t, deps, "需求 文档.md", []byte("# 内容"))
+	var got struct {
+		OK    bool   `json:"ok"`
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		Bytes int    `json:"bytes"`
+		Dedup bool   `json:"dedup"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("上传回执解析失败: %v（原始 %s）", err, rec.Body.String())
+	}
+	if !got.OK || got.Dedup || got.Bytes != len([]byte("# 内容")) {
+		t.Fatalf("首传回执异常: %s", rec.Body.String())
+	}
+	if !strings.HasSuffix(got.Name, "_需求 文档.md") {
+		t.Fatalf("落盘名未保留原名: %s", got.Name)
+	}
+	if got.Path != filepath.Join(root, "chat-files", got.Name) {
+		t.Fatalf("落点不符: %s", got.Path)
+	}
+	// 同名同内容二传——去重命中，不重复落盘
+	rec = uploadFile(t, deps, "需求 文档.md", []byte("# 内容"))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("二传回执解析失败: %v", err)
+	}
+	if !got.Dedup {
+		t.Fatalf("同文件未去重: %s", rec.Body.String())
+	}
+	// 原名穿越清洗——落盘名不含分隔符与上级引用
+	rec = uploadFile(t, deps, `..\..\evil.txt`, []byte("x"))
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("穿越名回执解析失败: %v", err)
+	}
+	if strings.ContainsAny(got.Name, `/\`) || strings.Contains(got.Name, "..") {
+		t.Fatalf("原名穿越未清洗: %s", got.Name)
+	}
+}
+
+// TestCacheFileGet 取文件——白名单裸名命中 + 非法名 404。
+func TestCacheFileGet(t *testing.T) {
+	deps, root := newTestDeps(t)
+	if err := os.MkdirAll(filepath.Join(root, "chat-files"), 0o755); err != nil {
+		t.Fatalf("建目录失败: %v", err)
+	}
+	name := "0c41cc57bffae948_说明.txt"
+	if err := os.WriteFile(filepath.Join(root, "chat-files", name), []byte("hello"), 0o644); err != nil {
+		t.Fatalf("写文件失败: %v", err)
+	}
+	rec := do(t, deps, "GET", "/api/v1/cache-file/"+name, "")
+	if rec.Code != 200 {
+		t.Fatalf("取文件状态码 = %d", rec.Code)
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.HasPrefix(got, "text/plain") {
+		t.Fatalf("Content-Type = %s", got)
+	}
+	if got := rec.Header().Get("Cache-Control"); !strings.Contains(got, "immutable") {
+		t.Fatalf("Cache-Control = %s", got)
+	}
+	if rec = do(t, deps, "GET", "/api/v1/cache-file/a..b.txt", ""); rec.Code != 404 {
+		t.Fatalf("非法名状态码 = %d，预期 404", rec.Code)
+	}
+	for _, bad := range []string{`..\x.txt`, "a/b.txt", ""} {
+		if isSafeArtifactName(bad) {
+			t.Fatalf("%q 被判为安全文件名", bad)
+		}
+	}
+}

@@ -110,6 +110,8 @@ type Server struct {
 	logCursor int
 	// commandFn 是会话指令投递面（返回 false = 未受理；第二个返回值为执行结果文本，空 = 无结果）
 	commandFn func(text string) (bool, string)
+	// envelopeFn 是附件包裹组装面（指令行 + 图片路径 + 文件路径 → 套用包裹后的指令行；nil = 不组装）
+	envelopeFn func(text string, images, files []string) string
 	// frameFn 当前全局帧号（回执携带；nil = 0）
 	frameFn func() int64
 	// cmdSeq 指令序号计数器（原子）
@@ -226,6 +228,11 @@ func (s *Server) BindLogIncrement(fn func(from int) (string, int)) { s.logIncrem
 // 结果文本随回执回传（result 字段）——调用方据它拿 cat.new 的会话 id / cat.start 的端口，
 // 不必再用全量快照轮询反查（面板建猫链的两个 500ms 轮询即因此存在）。
 func (s *Server) BindCommand(fn func(text string) (bool, string)) { s.commandFn = fn }
+
+// BindEnvelope 绑定附件包裹组装面——指令载荷带 images / files 时在投递前把
+// `[image-open]` / `[file-open]` 包裹拼进指令行（编号取组装时刻前文条数真值）；
+// nil = 不组装，两个字段均按忽略处理（零回归）。
+func (s *Server) BindEnvelope(fn func(text string, images, files []string) string) { s.envelopeFn = fn }
 
 // BindFrame 绑定全局帧号读取（指令回执携带）；nil = 0。
 func (s *Server) BindFrame(fn func() int64) { s.frameFn = fn }

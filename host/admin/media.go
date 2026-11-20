@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"cathome5/mau/fs"
 )
@@ -354,4 +356,273 @@ func (d *Deps) logChat(level int, message string) {
 		return
 	}
 	d.Logf("CHAT", level, message)
+}
+
+// ── 对话文件附件（任意类型）────────────────────────────────────────
+//
+// 与图片通道（上段）平行的第二条附件通道：任意类型文件随消息发送。
+// 差异：① 原名经 X-File-Name 传入（图片是纯内容寻址）；② 落盘名 = 内容寻址前缀 + 安全原名（可读）；
+// ③ 取文件端点只服务文件缓存目录裸名（不做受控根分支——避免成为任意文件读取面）。
+
+// 文件缓存目录白名单——Data 下相对名（换机不改配置）；首项为写入目录。
+var fileDirs = []string{"chat-files"}
+
+// fileWriteDir 是文件上传落点（fileDirs 首项）。
+const fileWriteDir = "chat-files"
+
+// maxFileBytes 是单文件体积上限——50 MiB（通用文件口径；图片仍走 10 MiB 图片通道）。
+const maxFileBytes = 50 * 1024 * 1024
+
+// maxFileNameBytes 是安全原名的字节上限——留出 hash 前缀与分隔符后落盘名仍可读。
+const maxFileNameBytes = 120
+
+// fileUploadResponse 是文件上传回执（ok / name / path / bytes / dedup）。
+type fileUploadResponse struct {
+	// OK 恒 true
+	OK bool `json:"ok"`
+	// Name 落盘文件名（内容寻址前缀 + 安全原名）
+	Name string `json:"name"`
+	// Path 落盘绝对路径
+	Path string `json:"path"`
+	// Bytes 字节数
+	Bytes int `json:"bytes"`
+	// Dedup 是否去重命中（同内容同名字已在盘）
+	Dedup bool `json:"dedup"`
+}
+
+// handleChatFilesUpload 服务 POST /api/v1/chat-files——任意类型文件原始字节入库。
+//
+// 原名经 `X-File-Name`（URL 编码，HTTP 头只允许 ASCII）传入；缺失时回落 `file`。
+// 入口面零容忍：空体 / 超上限 / 读越界一律拒绝并给原因（失败必须可见）。
+func (d *Deps) handleChatFilesUpload(w http.ResponseWriter, r *http.Request) {
+	rawName := strings.TrimSpace(r.Header.Get("X-File-Name"))
+	if rawName != "" {
+		if unescaped, err := url.QueryUnescape(rawName); err == nil {
+			rawName = unescaped
+		}
+	}
+	if r.ContentLength > maxFileBytes {
+		d.logChat(2, "文件上传拒绝（超上限）："+itoa(int(r.ContentLength))+" 字节")
+		writeErr(w, "文件超过上限 "+itoa(maxFileBytes)+" 字节")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, maxFileBytes+1))
+	if err != nil {
+		d.logChat(3, "文件上传失败（读取）："+err.Error())
+		writeErr(w, "文件读取失败："+err.Error())
+		return
+	}
+	if len(body) > maxFileBytes {
+		d.logChat(2, "文件上传拒绝（读取越界上限）")
+		writeErr(w, "文件超过上限 "+itoa(maxFileBytes)+" 字节")
+		return
+	}
+	if len(body) == 0 {
+		writeErr(w, "空文件内容")
+		return
+	}
+	safe := sanitizeFileName(rawName)
+	name := fileArtifactName(body, safe)
+	dir := filepath.Join(d.DataRoot, fileWriteDir)
+	full := filepath.Join(dir, name)
+	dedup := false
+	if _, statErr := os.Stat(full); statErr == nil {
+		dedup = true
+	} else {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			d.logChat(3, "文件上传失败："+err.Error())
+			writeErr(w, "文件落盘失败："+err.Error())
+			return
+		}
+		// 先写临时名再改名——避免半截文件被当成完整文件
+		temp := full + ".tmp"
+		if err := os.WriteFile(temp, body, 0o644); err != nil {
+			d.logChat(3, "文件上传失败："+err.Error())
+			writeErr(w, "文件落盘失败："+err.Error())
+			return
+		}
+		if err := os.Rename(temp, full); err != nil {
+			_ = os.Remove(temp)
+			// 并发同文件——他人已落地即视为去重命中
+			if _, statErr := os.Stat(full); statErr == nil {
+				dedup = true
+			} else {
+				d.logChat(3, "文件上传失败："+err.Error())
+				writeErr(w, "文件落盘失败："+err.Error())
+				return
+			}
+		}
+	}
+	note := "文件上传：" + name + "（" + itoa(len(body)) + " 字节"
+	if dedup {
+		note += "，去重命中"
+	}
+	d.logChat(1, note+"）")
+	writeJSON(w, fileUploadResponse{OK: true, Name: name, Path: full, Bytes: len(body), Dedup: dedup})
+}
+
+// sanitizeFileName 原名清洗——去目录部分、替换非法字符、去前导点、限长；空名回落 `file`。
+//
+// 判据：结果不含路径分隔符 / 冒号 / 控制字符；以 `.` 开头一律剥掉（防隐藏文件与穿越）。
+func sanitizeFileName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "file"
+	}
+	name = filepath.Base(strings.ReplaceAll(name, "\\", "/"))
+	if name == "." || name == ".." || name == "/" {
+		return "file"
+	}
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r < 0x20 || r == 0x7f:
+			b.WriteRune('_')
+		case r == '\\' || r == '/' || r == ':' || r == '*' || r == '?' || r == '"' || r == '<' || r == '>' || r == '|':
+			b.WriteRune('_')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	out := strings.TrimLeft(b.String(), ".")
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "file"
+	}
+	// 限长（按字节退到合法 UTF-8 边界）
+	for len(out) > maxFileNameBytes {
+		out = out[:len(out)-1]
+		for len(out) > 0 && !utf8.ValidString(out) {
+			out = out[:len(out)-1]
+		}
+	}
+	if out == "" {
+		return "file"
+	}
+	return out
+}
+
+// fileArtifactName 内容寻址文件名——sha256 前 8 字节（16 位十六进制）+ `_` + 安全原名。
+//
+// 同内容同名字 → 同一文件（去重）；同内容不同名 → 两个文件（保留原名可读性）。
+func fileArtifactName(data []byte, safeName string) string {
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:8]) + "_" + safeName
+}
+
+// handleCacheFileGet 服务 GET /api/v1/cache-file/{file...}——只认文件缓存目录内裸名。
+//
+// 设计取舍：不开放受控根分支与任意扩展名——本端点只服务「对话附件」这一个面，
+// 避免成为任意文件读取入口（与 cache-image 的三分支不同，这里刻意收窄）。
+func (d *Deps) handleCacheFileGet(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("file")
+	if !isSafeArtifactName(name) {
+		notFound(w)
+		return
+	}
+	for _, rel := range fileDirs {
+		full := filepath.Join(d.DataRoot, rel, name)
+		if serveFile(w, full) == nil {
+			return
+		}
+	}
+	notFound(w)
+}
+
+// isSafeArtifactName 落盘文件名安全判定——裸名 / 无分隔符 / 无上级引用 / 有长度上限。
+func isSafeArtifactName(name string) bool {
+	if name == "" || len(name) > 255 {
+		return false
+	}
+	if strings.ContainsAny(name, `/\`) || strings.Contains(name, "..") {
+		return false
+	}
+	return filepath.Base(name) == name
+}
+
+// serveFile 文件响应单一出口——存在即读；Content-Type 按扩展名；图片 / 文本 / PDF 内联，其余下载。
+//
+// 返回 nil 表示已响应；非 nil 表示未响应（调用方继续找 / 404）。
+func serveFile(w http.ResponseWriter, full string) error {
+	data, err := os.ReadFile(full)
+	if err != nil {
+		return err
+	}
+	ext := filepath.Ext(full)
+	if fileInlineExt(ext) {
+		w.Header().Set("Content-Disposition", "inline")
+	} else {
+		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(filepath.Base(full)))
+	}
+	// 内容寻址前缀不可变 → 长缓存
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	w.Header().Set("Content-Type", fileMimeOfExt(ext))
+	_, _ = w.Write(data)
+	return nil
+}
+
+// fileMimeOfExt 扩展名 → Content-Type（常见类型表；未命中回落 application/octet-stream）。
+func fileMimeOfExt(ext string) string {
+	switch strings.ToLower(ext) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".webp":
+		return "image/webp"
+	case ".gif":
+		return "image/gif"
+	case ".bmp":
+		return "image/bmp"
+	case ".svg":
+		return "image/svg+xml"
+	case ".txt", ".log":
+		return "text/plain; charset=utf-8"
+	case ".md":
+		return "text/markdown; charset=utf-8"
+	case ".json":
+		return "application/json; charset=utf-8"
+	case ".html", ".htm":
+		return "text/html; charset=utf-8"
+	case ".css":
+		return "text/css; charset=utf-8"
+	case ".js", ".mjs":
+		return "text/javascript; charset=utf-8"
+	case ".csv":
+		return "text/csv; charset=utf-8"
+	case ".xml":
+		return "application/xml; charset=utf-8"
+	case ".yaml", ".yml":
+		return "text/yaml; charset=utf-8"
+	case ".pdf":
+		return "application/pdf"
+	case ".zip":
+		return "application/zip"
+	case ".7z":
+		return "application/x-7z-compressed"
+	case ".rar":
+		return "application/vnd.rar"
+	case ".gz":
+		return "application/gzip"
+	case ".tar":
+		return "application/x-tar"
+	case ".mp3":
+		return "audio/mpeg"
+	case ".wav":
+		return "audio/wav"
+	case ".mp4":
+		return "video/mp4"
+	}
+	return "application/octet-stream"
+}
+
+// fileInlineExt 内联预览判定——图片 / 文本类 / PDF 内联，其余按附件下载。
+func fileInlineExt(ext string) bool {
+	switch strings.ToLower(ext) {
+	case ".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".svg",
+		".txt", ".log", ".md", ".json", ".csv", ".xml", ".yaml", ".yml",
+		".pdf":
+		return true
+	}
+	return false
 }

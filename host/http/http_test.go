@@ -396,3 +396,84 @@ func TestConfigPostUnboundStore(t *testing.T) {
 		t.Fatalf("未绑定回执 = %s", got)
 	}
 }
+
+// TestHandleCommandAppliesImageEnvelope 指令载荷带 images 时——投递前把列表交给组装面并用返回值替换指令行。
+func TestHandleCommandAppliesImageEnvelope(t *testing.T) {
+	s := New(Options{})
+	var got string
+	s.BindCommand(func(text string) (bool, string) {
+		got = text
+		return true, ""
+	})
+	s.BindEnvelope(func(text string, images, files []string) string {
+		return text + "|" + strings.Join(images, ",")
+	})
+	body := `{"text":"Chat 看这个","images":["D:/a.png","D:/b.png"]}`
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/command", strings.NewReader(body)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("状态码 = %d", rec.Code)
+	}
+	if got != "Chat 看这个|D:/a.png,D:/b.png" {
+		t.Fatalf("指令行 = %q", got)
+	}
+}
+
+// TestHandleCommandWithoutImages 无 images 字段——组装面不被调用（零回归）。
+func TestHandleCommandWithoutImages(t *testing.T) {
+	s := New(Options{})
+	called := false
+	var got string
+	s.BindCommand(func(text string) (bool, string) {
+		got = text
+		return true, ""
+	})
+	s.BindEnvelope(func(text string, images, files []string) string {
+		called = true
+		return text
+	})
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/command", strings.NewReader(`{"text":"Chat 纯文本"}`)))
+	if called {
+		t.Fatal("无 images 时不应调用组装面")
+	}
+	if got != "Chat 纯文本" {
+		t.Fatalf("指令行 = %q", got)
+	}
+}
+
+// TestHandleCommandEnvelopeEmptyKeepsText 组装面返回空串——原样投递（失败退化为原文本）。
+func TestHandleCommandEnvelopeEmptyKeepsText(t *testing.T) {
+	s := New(Options{})
+	var got string
+	s.BindCommand(func(text string) (bool, string) {
+		got = text
+		return true, ""
+	})
+	s.BindEnvelope(func(text string, images, files []string) string { return "" })
+	body := `{"text":"Chat 原样","images":["D:/a.png"]}`
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/command", strings.NewReader(body)))
+	if got != "Chat 原样" {
+		t.Fatalf("指令行 = %q", got)
+	}
+}
+
+// TestHandleCommandAppliesBothEnvelopes images 与 files 同时携带——两者都交给组装面。
+func TestHandleCommandAppliesBothEnvelopes(t *testing.T) {
+	s := New(Options{})
+	var got string
+	s.BindCommand(func(text string) (bool, string) {
+		got = text
+		return true, ""
+	})
+	s.BindEnvelope(func(text string, images, files []string) string {
+		return text + "|img=" + strings.Join(images, ",") + "|file=" + strings.Join(files, ",")
+	})
+	body := `{"text":"Chat 混合","images":["D:/a.png"],"files":["D:/b.zip","D:/c.md"]}`
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, httptest.NewRequest("POST", "/api/v1/command", strings.NewReader(body)))
+	if got != "Chat 混合|img=D:/a.png|file=D:/b.zip,D:/c.md" {
+		t.Fatalf("指令行 = %q", got)
+	}
+}

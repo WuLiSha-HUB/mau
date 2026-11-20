@@ -382,6 +382,12 @@ func main() {
 		},
 	}
 	server.BindCommand(router.HandleResult)
+	// 附件包裹组装——指令载荷带 images / files 时在 `Chat ` 行前拼 `[image-open]` / `[file-open]` 包裹
+	// （编号取当前前文条数真值；A65 / design-ch4-chat-images §五；文件契约同构）
+	server.BindEnvelope(func(text string, images, files []string) string {
+		line := session.ApplyImageEnvelopeToLine(text, images, wiring.Session.Context.Count())
+		return session.ApplyFileEnvelopeToLine(line, files, wiring.Session.Context.Count())
+	})
 	server.BindCats(router.catsJSON)
 	server.BindFrame(frame.Current)
 	// [段12d] 语料热重载 HTTP 入口——与 host-reload 工具同一执行体（toolRuntime.ReloadFlow）

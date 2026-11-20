@@ -126,6 +126,9 @@ func Register(mux *http.ServeMux, d *Deps) {
 	// [段9] 对话图片附件——上传 + 取图（受控根寻址 / 根内绝对路径 / 缓存目录裸名）
 	mux.HandleFunc("POST /api/v1/chat-images", d.handleChatImagesUpload)
 	mux.HandleFunc("GET /api/v1/cache-image/{file...}", d.handleCacheImageGet)
+	// [段9b] 对话文件附件——任意类型文件上传 + 取文件（只服务文件缓存目录裸名）
+	mux.HandleFunc("POST /api/v1/chat-files", d.handleChatFilesUpload)
+	mux.HandleFunc("GET /api/v1/cache-file/{file...}", d.handleCacheFileGet)
 	// [段10] 音频资产——轮末总结拼接音频取回（产物目录裸名 + .wav）
 	mux.HandleFunc("GET /api/v1/audio/{file...}", d.handleAudioGet)
 	// [段11] 数据库（Smriti）——库清单 / 建库 / 条目查询 / 条目全文（条目库服务未接入，占位回执归 P4）
@@ -151,12 +154,15 @@ func Register(mux *http.ServeMux, d *Deps) {
 
 // RegisterChatPageRoutes 对话页静态路由注册——chat.html 专用（不含管理 CRUD），可安全下发到每猫端口。
 //
-// 对齐 C# `AdminService.ChatImages.RegisterChatPageRoutes`：图片上传 / 取图 / 音频点播三件。
+// 对齐 C# `AdminService.ChatImages.RegisterChatPageRoutes`：图片上传 / 取图 / 音频点播三件；
+// 2026-11-20 增补文件附件两件（上传 / 取文件——任意类型，只服务文件缓存目录裸名）。
 // 每猫独立对话端口（d-1b）经 BindAdmin 注入本注册面——管理端 RouteRegistrar 不随实例下发。
 func RegisterChatPageRoutes(mux *http.ServeMux, d *Deps) {
 	mux.HandleFunc("POST /api/v1/chat-images", d.handleChatImagesUpload)
 	mux.HandleFunc("GET /api/v1/cache-image/{file...}", d.handleCacheImageGet)
 	mux.HandleFunc("GET /api/v1/audio/{file...}", d.handleAudioGet)
+	mux.HandleFunc("POST /api/v1/chat-files", d.handleChatFilesUpload)
+	mux.HandleFunc("GET /api/v1/cache-file/{file...}", d.handleCacheFileGet)
 }
 
 // writeJSON 写 JSON 响应——关闭 HTML 转义（中文直出）、去尾换行（同 C# JsonUtil.Serialize 紧凑形态）。

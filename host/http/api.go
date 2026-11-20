@@ -64,6 +64,17 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	text := extractCommandText(body)
+	// 附件包裹——载荷带 images / files 时由后端在投递前组装（编号取组装时刻前文条数真值；
+	// 不成立时原样投递——图片契约见 design-ch4-chat-images §五，文件契约与其同构）
+	if s.envelopeFn != nil {
+		images := extractCommandImages(body)
+		files := extractCommandFiles(body)
+		if len(images) > 0 || len(files) > 0 {
+			if applied := s.envelopeFn(text, images, files); applied != "" {
+				text = applied
+			}
+		}
+	}
 	if s.commandFn == nil {
 		writeJSON(w, map[string]any{"ok": false, "error": "command not implemented"})
 		return
@@ -97,6 +108,30 @@ func extractCommandText(body []byte) string {
 		return payload.Text
 	}
 	return strings.TrimSpace(string(body))
+}
+
+// extractCommandImages 从请求体提取图片路径列表——载荷可选 `images` 字段（绝对路径数组）。
+// 非 JSON 体 / 缺字段 / 形态非法一律返回空列表（调用方按无附件处理——零回归）。
+func extractCommandImages(body []byte) []string {
+	var payload struct {
+		Images []string `json:"images"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil
+	}
+	return payload.Images
+}
+
+// extractCommandFiles 从请求体提取文件路径列表——载荷可选 `files` 字段（绝对路径数组）。
+// 非 JSON 体 / 缺字段 / 形态非法一律返回空列表（调用方按无附件处理——零回归）。
+func extractCommandFiles(body []byte) []string {
+	var payload struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil
+	}
+	return payload.Files
 }
 
 // jsonStr 编码 JSON 字符串字面量（关闭 HTML 转义）。
