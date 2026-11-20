@@ -682,4 +682,72 @@ func TestParseMountLevel(t *testing.T) {
 	if lvl, _ := parseMountLevel("1", "true"); lvl != config.MountLevelNormal {
 		t.Fatalf("level 应优先于 expert：%d", lvl)
 	}
+	// level=0 = 清除每猫显式档（跟随全局），不是「未指定」
+	if lvl, set := parseMountLevel("0", ""); !set || lvl != 0 {
+		t.Fatalf("level=0 应为清除显式档：%d/%v", lvl, set)
+	}
+}
+
+// TestApplyMountLevelNoPin 挂载动作带的当前档位不固化——挂载后改全局 mount.level 仍生效
+// （2026-11-20 判例：挂载/取消挂载曾无条件写每猫显式档，把全局默认变成一次性快照）。
+func TestApplyMountLevelNoPin(t *testing.T) {
+	config.SetDefaultMountLevel(config.MountLevelExpert)
+	defer config.SetDefaultMountLevel(0)
+	cfg := &config.CatCfg{ProjectMountExpert: true}
+	if got := applyMountLevel(cfg, config.MountLevelExpert, true, "Mau"); got != config.MountLevelExpert {
+		t.Fatalf("生效档位 = %d，期望 %d", got, config.MountLevelExpert)
+	}
+	if cfg.ProjectMountLevel != 0 {
+		t.Fatalf("挂载带当前档不应固化，落盘档位 = %d", cfg.ProjectMountLevel)
+	}
+}
+
+// TestApplyMountLevelExplicit 真实切档才写每猫显式档。
+func TestApplyMountLevelExplicit(t *testing.T) {
+	config.SetDefaultMountLevel(config.MountLevelExpert)
+	defer config.SetDefaultMountLevel(0)
+	cfg := &config.CatCfg{ProjectMountExpert: true}
+	if got := applyMountLevel(cfg, config.MountLevelMaster, true, "Mau"); got != config.MountLevelMaster {
+		t.Fatalf("生效档位 = %d，期望 %d", got, config.MountLevelMaster)
+	}
+	if cfg.ProjectMountLevel != config.MountLevelMaster || !cfg.ProjectMountExpert {
+		t.Fatalf("显式切档未落盘: level=%d expert=%v", cfg.ProjectMountLevel, cfg.ProjectMountExpert)
+	}
+}
+
+// TestApplyMountLevelClear level=0 清除显式档——回到跟随全局。
+func TestApplyMountLevelClear(t *testing.T) {
+	config.SetDefaultMountLevel(config.MountLevelExpert)
+	defer config.SetDefaultMountLevel(0)
+	cfg := &config.CatCfg{ProjectMountLevel: config.MountLevelMaster, ProjectMountExpert: true}
+	if got := applyMountLevel(cfg, 0, true, "Mau"); got != config.MountLevelExpert {
+		t.Fatalf("清除后生效档位 = %d，期望全局 %d", got, config.MountLevelExpert)
+	}
+	if cfg.ProjectMountLevel != 0 {
+		t.Fatalf("显式档未清除: %d", cfg.ProjectMountLevel)
+	}
+}
+
+// TestApplyMountLevelUnmount 取消挂载不改档位——档位不是挂载状态的一部分。
+func TestApplyMountLevelUnmount(t *testing.T) {
+	config.SetDefaultMountLevel(config.MountLevelExpert)
+	defer config.SetDefaultMountLevel(0)
+	cfg := &config.CatCfg{ProjectMountLevel: config.MountLevelMaster, ProjectMountExpert: true}
+	_ = applyMountLevel(cfg, config.MountLevelNormal, true, "")
+	if cfg.ProjectMountLevel != config.MountLevelMaster {
+		t.Fatalf("取消挂载不应改档位，落盘 = %d", cfg.ProjectMountLevel)
+	}
+}
+
+// TestApplyMountLevelClearWithoutProject level=0 清除与挂载状态无关——未挂载猫的残留显式档也能清。
+func TestApplyMountLevelClearWithoutProject(t *testing.T) {
+	config.SetDefaultMountLevel(config.MountLevelExpert)
+	defer config.SetDefaultMountLevel(0)
+	cfg := &config.CatCfg{ProjectMountLevel: config.MountLevelMaster, ProjectMountExpert: true}
+	if got := applyMountLevel(cfg, 0, true, ""); got != config.MountLevelExpert {
+		t.Fatalf("清除后生效档位 = %d，期望全局 %d", got, config.MountLevelExpert)
+	}
+	if cfg.ProjectMountLevel != 0 {
+		t.Fatalf("显式档未清除: %d", cfg.ProjectMountLevel)
+	}
 }

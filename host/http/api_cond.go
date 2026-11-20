@@ -190,12 +190,13 @@ func (s *Server) handleInjectProjects(w http.ResponseWriter, r *http.Request) {
 	writeText(w, s.injectProjectsBuilder())
 }
 
-// mountLevelFromFields 解析 body 档位——level（1/2/3）优先，无 level 时回落 expert 布尔（true→2 / false→1）。
-// 两者都不给 = nil（沿用现值）。非法值按未指定处理，与 admin 面 parseMountLevelField 同口径。
+// mountLevelFromFields 解析 body 档位——level（0=清除显式档跟随全局 / 1/2/3）优先，
+// 无 level 时回落 expert 布尔（true→2 / false→1）。两者都不给 = nil（沿用现值）。
+// 非法值按未指定处理，与 admin 面 parseMountLevelField 同口径。
 func mountLevelFromFields(fields map[string]json.RawMessage) *int {
 	if raw, present := fields["level"]; present {
 		var parsed int
-		if err := json.Unmarshal(raw, &parsed); err == nil && parsed >= 1 && parsed <= 3 {
+		if err := json.Unmarshal(raw, &parsed); err == nil && parsed >= 0 && parsed <= 3 {
 			return &parsed
 		}
 	}

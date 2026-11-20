@@ -267,19 +267,19 @@ func (d *Deps) handleInjectPreviewGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	useLevel := curLevel
-	if levelSet {
+	if levelSet && level != 0 {
 		useLevel = level
 	}
 	next := d.buildInjectListWithMount(current, project, oldMount, useLevel, d.mountOffFor(project))
 	writeJSON(w, injectPreviewResponse{OK: true, InjectList: compactListJSON(next), Expert: useLevel >= config.MountLevelExpert, Mount: project, Level: useLevel})
 }
 
-// parseMountLevel 解析档位参数——level 优先（1/2/3），无 level 时回落旧 expert 布尔（true→专家 / false→普通）。
-// 两者都不给 = 未指定（沿用现值）。
+// parseMountLevel 解析档位参数——level 优先（0=清除显式档跟随全局 / 1/2/3），无 level 时回落旧 expert 布尔
+// （true→专家 / false→普通）。两者都不给 = 未指定（沿用现值）。
 func parseMountLevel(levelRaw, expertRaw string) (level int, set bool) {
 	if strings.TrimSpace(levelRaw) != "" {
 		if parsed, err := strconv.Atoi(strings.TrimSpace(levelRaw)); err == nil {
-			if parsed >= config.MountLevelNormal && parsed <= config.MountLevelMaster {
+			if parsed >= 0 && parsed <= config.MountLevelMaster {
 				return parsed, true
 			}
 		}
@@ -309,12 +309,12 @@ func (d *Deps) handleInjectProjectPost(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, resp)
 }
 
-// parseMountLevelField 解析 body.level——数值档位（1/2/3）优先；无 level 时回落 body.expert 布尔。
-// 缺值 / 非法值 = 未指定（沿用现值）。
+// parseMountLevelField 解析 body.level——数值档位（1/2/3）优先；0 = 清除每猫显式档（跟随全局）；
+// 无 level 时回落 body.expert 布尔。缺值 / 非法值 = 未指定（沿用现值）。
 func parseMountLevelField(fields map[string]json.RawMessage) (int, bool) {
 	if raw, present := fields["level"]; present {
 		var parsed int
-		if err := json.Unmarshal(raw, &parsed); err == nil && parsed >= config.MountLevelNormal && parsed <= config.MountLevelMaster {
+		if err := json.Unmarshal(raw, &parsed); err == nil && parsed >= 0 && parsed <= config.MountLevelMaster {
 			return parsed, true
 		}
 	}
@@ -352,12 +352,25 @@ func (d *Deps) applyInjectProject(catKey, project string, level int, levelSet bo
 	return d.applyInjectProjectCat(id, name, sess, proj, level, levelSet, rebuild)
 }
 
-// applyMountLevel 把显式档位写进 cat.cfg——levelSet=false 时沿用现值（兼容位也要保持同步）。
+// applyMountLevel 把显式档位写进 cat.cfg——只认「真实切档」，挂载动作带的当前档位不固化。
+//
+// 三条判据（2026-11-20 修：挂载 / 取消挂载曾无条件写每猫显式档，把「全局默认」固化成一次性快照——
+// 之后改 mount.level 对任何挂载过的猫永远无效）：
+//   - levelSet && level==0：清除每猫显式档，回到跟随全局（POST body level:0 的语义）——
+//     清除与挂载状态无关：取消挂载路径也能用它清残留显式档
+//   - levelSet && level>0 && project 为空：不写——取消挂载不是切档
+//   - levelSet && level>0 && project 非空：只有与当前生效档位不同才写——挂载带当前档 = 不固化
+//
 // 返回生效档位（后续清单 / 文案 / 自报头一律用本值）。
-func applyMountLevel(cfg *config.CatCfg, level int, levelSet bool) int {
+func applyMountLevel(cfg *config.CatCfg, level int, levelSet bool, project string) int {
 	if levelSet {
-		cfg.ProjectMountLevel = config.NormalizeMountLevel(level)
-		cfg.ProjectMountExpert = cfg.ProjectMountLevel >= config.MountLevelExpert
+		if level == 0 {
+			cfg.ProjectMountLevel = 0
+			cfg.ProjectMountExpert = true
+		} else if project != "" && config.NormalizeMountLevel(level) != config.ResolveMountLevel(cfg) {
+			cfg.ProjectMountLevel = config.NormalizeMountLevel(level)
+			cfg.ProjectMountExpert = cfg.ProjectMountLevel >= config.MountLevelExpert
+		}
 	}
 	return config.ResolveMountLevel(cfg)
 }
@@ -440,7 +453,7 @@ func (d *Deps) applyInjectProjectCat(catID, displayName string, sess *session.Se
 		d.logInject(2, "挂载补件（cat="+displayName+"）："+warning)
 	}
 	oldMount := cfg.ProjectMount
-	useLevel := applyMountLevel(cfg, level, levelSet)
+	useLevel := applyMountLevel(cfg, level, levelSet, project)
 	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, useLevel, d.mountOffFor(project))
 	cfg.InjectList = next
 	cfg.ProjectMount = project
@@ -508,7 +521,7 @@ func (d *Deps) applyInjectProjectDefault(project string, level int, levelSet boo
 		d.logInject(2, "挂载补件（cat=majordomo）："+warning)
 	}
 	oldMount := cfg.ProjectMount
-	useLevel := applyMountLevel(cfg, level, levelSet)
+	useLevel := applyMountLevel(cfg, level, levelSet, project)
 	next := d.buildInjectListWithMount(cfg.InjectList, project, oldMount, useLevel, d.mountOffFor(project))
 	cfg.InjectList = next
 	cfg.ProjectMount = project
