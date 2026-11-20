@@ -462,14 +462,16 @@ func isCathome5Repo(dir string) bool {
 	return strings.Contains(string(raw), "module cathome5")
 }
 
-// prepareRelayExecutable 准备接力可执行文件——宿主自身就在运行区时复制到 <target>_relay
+// prepareRelayExecutable 准备接力可执行文件——宿主自身就在运行区时复制到 <target>_staging/_relay
 // （运行中的 exe 会锁住目录：直接以 target 内 exe 跑继电器会让原子切换改名必失败）。
+// 2026-11-19：relay 副本由独立 <target>_relay 收进 staging 子目录——D:\Mau 下不再生成顶层 MauOut_relay；
+// deploy() 用 copyTreeSkip 排除 _relay，接力副本不固化进运行区。
 func prepareRelayExecutable(exe, target string) (string, error) {
 	exeDir := filepath.Dir(exe)
 	if !strings.EqualFold(filepath.Clean(exeDir), filepath.Clean(target)) {
 		return exe, nil
 	}
-	relayDir := target + "_relay"
+	relayDir := filepath.Join(target+"_staging", "_relay")
 	if err := os.MkdirAll(relayDir, 0o755); err != nil {
 		return "", err
 	}

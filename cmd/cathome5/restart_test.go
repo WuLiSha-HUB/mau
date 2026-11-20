@@ -516,3 +516,36 @@ func TestRestartGateFrozenSessionNotBlocker(t *testing.T) {
 		t.Fatalf("OA 在途应硬等，got %q", blocker)
 	}
 }
+
+// TestPrepareRelayExecutableLandsInStaging 2026-11-19：接力副本从独立 <target>_relay
+// 收进 <target>_staging/_relay——D:\Mau 下不再生成顶层 MauOut_relay。
+func TestPrepareRelayExecutableLandsInStaging(t *testing.T) {
+	base := t.TempDir()
+	target := filepath.Join(base, "MauOut")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(target, "cathome5.exe")
+	if err := os.WriteFile(exe, []byte("host-exe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err := prepareRelayExecutable(exe, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(target+"_staging", "_relay", "cathome5.exe")
+	if !strings.EqualFold(filepath.Clean(got), filepath.Clean(want)) {
+		t.Fatalf("relay 落点 = %q，期望 %q", got, want)
+	}
+	if raw, err := os.ReadFile(got); err != nil || string(raw) != "host-exe" {
+		t.Fatalf("relay 副本内容不符: %q, %v", raw, err)
+	}
+	if _, err := os.Stat(target + "_relay"); !os.IsNotExist(err) {
+		t.Fatalf("不应再生成独立 <target>_relay 目录: %v", err)
+	}
+	// exe 不在 target 内时原样返回、不复制
+	outside := filepath.Join(base, "elsewhere", "cathome5.exe")
+	if got2, err := prepareRelayExecutable(outside, target); err != nil || got2 != outside {
+		t.Fatalf("非运行区 exe 应原样返回: %q, %v", got2, err)
+	}
+}

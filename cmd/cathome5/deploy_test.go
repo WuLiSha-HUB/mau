@@ -295,3 +295,37 @@ func TestAutostartPrecheckNoSwitchKeepsOldSemantics(t *testing.T) {
 		t.Fatalf("应记自启跳过步骤：%+v", r.steps)
 	}
 }
+
+// TestCopyTreeSkipExcludesRelay 2026-11-19：staging→target_new 复制时排除 _relay/
+// （接力副本不固化进运行区，也不因被 relay exe 持有而挡住 copy）。
+func TestCopyTreeSkipExcludesRelay(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "staging")
+	dst := filepath.Join(t.TempDir(), "new")
+	files := map[string]string{
+		"cathome5.exe":        "prod",
+		"version.txt":         "0.36.9",
+		"_relay/cathome5.exe": "relay",
+		"_relay/extra.bin":    "x",
+		"html/index.html":     "html",
+	}
+	for rel, body := range files {
+		p := filepath.Join(src, rel)
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := copyTreeSkip(src, dst, isRelayDirRel); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{"cathome5.exe", "version.txt", "html/index.html"} {
+		if _, err := os.Stat(filepath.Join(dst, rel)); err != nil {
+			t.Fatalf("部署产物应被复制：%s (%v)", rel, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dst, "_relay")); !os.IsNotExist(err) {
+		t.Fatalf("_relay 不应固化进运行区: %v", err)
+	}
+}

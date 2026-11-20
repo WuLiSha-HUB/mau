@@ -352,7 +352,8 @@ func (r *deployRun) deploy() error {
 	if err := os.RemoveAll(targetNew); err != nil {
 		return fmt.Errorf("清理 %s 失败: %w", targetNew, err)
 	}
-	if err := copyTree(staging, targetNew); err != nil {
+	// staging 内的 _relay/（接力副本）不固化进运行区——只搬部署产物。
+	if err := copyTreeSkip(staging, targetNew, isRelayDirRel); err != nil {
 		return fmt.Errorf("复制到 %s 失败: %w", targetNew, err)
 	}
 	r.add("stage", true, staging+" → "+targetNew)
@@ -979,7 +980,7 @@ func processAlive(pid int) bool {
 	return strings.Contains(string(out), "\""+strconv.Itoa(pid)+"\"")
 }
 
-// resolveGo 解析 go 可执行文件——flag > PATH > 仓库同级 tools/go/bin/go.exe。
+// resolveGo 解析 go 可执行文件——flag > PATH > tools/bench/go > tools/go（仓库同级 / 父级）。
 func (r *deployRun) resolveGo() (string, error) {
 	if r.o.GoExe != "" {
 		return r.o.GoExe, nil
@@ -987,11 +988,14 @@ func (r *deployRun) resolveGo() (string, error) {
 	if path, err := exec.LookPath("go"); err == nil {
 		return path, nil
 	}
-	candidate := filepath.Join(filepath.Dir(filepath.Dir(r.o.Repo)), "tools", "go", "bin", "go.exe")
+	// 本机 go 在 tools/bench/go（不是 tools/go）——2026-11-19 full 重启 prepare FAIL 根因：
+	// relay 进程无 config 上下文，resolveGo 只查 PATH + tools/go，够不到 config go.path 指向的
+	// tools/bench/go/bin/go.exe。补候选面，full 链不依赖 PATH 环境变量。
+	candidate := filepath.Join(filepath.Dir(filepath.Dir(r.o.Repo)), "tools", "bench", "go", "bin", "go.exe")
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate, nil
 	}
-	// 施工仓同级 tools（<repo>/../tools/go/bin/go.exe）
+	// 施工仓同级 tools（<repo>/../tools/go/bin/go.exe）——保留旧候选兼容老布局
 	candidate = filepath.Join(r.o.Repo, "..", "tools", "go", "bin", "go.exe")
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate, nil
@@ -1028,6 +1032,13 @@ func readVersionFile(path string) (string, error) {
 
 // copyTree 整棵复制（文件权限保留；重解析点按普通文件读，失败出声）。
 func copyTree(src, dst string) error {
+	return copyTreeSkip(src, dst, nil)
+}
+
+// copyTreeSkip 复制目录树——skip(rel) 为真则跳过该项（目录返回 SkipDir 跳过整棵子树）。
+// 用途：staging 内的 _relay/（接力副本容身处，2026-11-19 由顶层 <target>_relay 收进 staging）
+// 不能固化进运行区——它既不是部署产物，又在接力期被运行中的 relay exe 持有。
+func copyTreeSkip(src, dst string, skip func(rel string) bool) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -1035,6 +1046,12 @@ func copyTree(src, dst string) error {
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
 			return err
+		}
+		if skip != nil && skip(rel) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		target := filepath.Join(dst, rel)
 		if info.IsDir() {
@@ -1049,6 +1066,11 @@ func copyTree(src, dst string) error {
 		}
 		return os.WriteFile(target, raw, info.Mode().Perm())
 	})
+}
+
+// isRelayDirRel 判定相对路径是否为 staging 内的接力副本目录（_relay 本身或其子树）。
+func isRelayDirRel(rel string) bool {
+	return rel == "_relay" || strings.HasPrefix(rel, "_relay"+string(filepath.Separator))
 }
 
 // countTree 统计目录内文件数。
