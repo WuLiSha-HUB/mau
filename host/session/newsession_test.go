@@ -145,3 +145,23 @@ func TestRebuildDisplayNameKeep(t *testing.T) {
 		t.Fatalf("显示名未更新，got=%q", got)
 	}
 }
+
+// TestRebuildResetsModelOverride 新会话重置会话级临时模型——作用域 = 会话级（关页重进沿用、session.new 重置）。
+//
+// 判据两条：① 重建后覆盖归空（标签回端点默认）；② 钩子随写面回调（请求面副本同步清）。
+func TestRebuildResetsModelOverride(t *testing.T) {
+	dir := withSessionDirs(t)
+	s := newTestSessionInSessions(t, dir, "cat-model-reset")
+	var synced []string
+	s.SetModelOverrideHook(func(value string) { synced = append(synced, value) })
+	if got := s.SetModelOverride("glm-4.6"); got != "glm-4.6" || s.ModelOverride() != "glm-4.6" {
+		t.Fatalf("覆盖未生效: %q", got)
+	}
+	s.Rebuild(SessionNewOptions{DisplayName: "猫丙", SystemPrompt: "SYS"})
+	if got := s.ModelOverride(); got != "" {
+		t.Fatalf("重建未重置临时模型: %q", got)
+	}
+	if len(synced) != 2 || synced[0] != "glm-4.6" || synced[1] != "" {
+		t.Fatalf("钩子回调不符（应「选模型 + 重建重置」两次）: %#v", synced)
+	}
+}

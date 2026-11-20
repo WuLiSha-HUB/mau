@@ -570,12 +570,15 @@ func main() {
 			return admin.BuildAPIModelsJSON(wiring.LLMStore, wiring.CatCfg.APIConfigID, wiring.Session.APIRoleBackup(), wiring.Session.ModelOverride())
 		})
 		server.BindAPIModel(func(model string) string {
+			// 写面唯一入口——请求面副本由 SetModelOverrideHook 同步（见下方钩子接线）
 			value := wiring.Session.SetModelOverride(model)
-			if wiring.Client != nil {
-				wiring.Client.SetModelOverride(value)
-			}
 			return `{"ok":true,"model":` + session.JSONString(value) + `}`
 		})
+		// 会话级临时模型的请求面同步——选模型与 session.new 重建重置同经此钩子，
+		// 两处副本（Session 展示面 / Client 请求面）不各自为政。
+		if wiring.Client != nil {
+			wiring.Session.SetModelOverrideHook(func(value string) { wiring.Client.SetModelOverride(value) })
+		}
 		server.BindInject(
 			adminDeps.InjectProjectsJSON,
 			adminDeps.InjectProjectJSON,

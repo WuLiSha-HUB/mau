@@ -195,12 +195,15 @@ func startCatHost(inst *catInstance, deps *hostInstanceDeps, port int) (*hostIns
 				return admin.BuildAPIModelsJSON(store, apiConfigID, sess.APIRoleBackup(), sess.ModelOverride())
 			})
 			srv.BindAPIModel(func(model string) string {
+				// 写面唯一入口——请求面副本由 SetModelOverrideHook 同步（见下方钩子接线）
 				value := sess.SetModelOverride(model)
-				if wiring.Client != nil {
-					wiring.Client.SetModelOverride(value)
-				}
 				return `{"ok":true,"model":` + session.JSONString(value) + `}`
 			})
+			// 会话级临时模型的请求面同步——选模型与 session.new 重建重置同经此钩子，
+			// 两处副本（Session 展示面 / Client 请求面）不各自为政。
+			if wiring.Client != nil {
+				sess.SetModelOverrideHook(func(value string) { wiring.Client.SetModelOverride(value) })
+			}
 		}
 		// 指令面——Chat / session.new 落本猫会话；cat.* / catcfg.* / delay.* 与管理面同一执行体
 		// （每猫端口不回执行结果文本：result 只服务管理面建猫链，主端口 BindCommand(HandleResult) 提供）

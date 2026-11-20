@@ -6,7 +6,8 @@ import "strconv"
 // HandleSessionNew（归档半边在 archive.go，注入面构建在 host/inject）。
 //
 // 顺序即语义：SetToolSpecs → SetDisplayName → SetSystemPrompt → Clear → ResetStats →
-// Store.Rewrite → ArchiveLegacy（视图留档，清空前）→ ClearView → SetInjectReport → PushSessionReset。
+// SetModelOverride（会话级临时模型重置）→ Store.Rewrite → ArchiveLegacy（视图留档，清空前）→
+// ClearView → SetInjectReport → PushSessionReset。
 
 // SessionNewOptions 是会话重建参数——注入面产物由调用方（宿主装配层）构建后传入。
 type SessionNewOptions struct {
@@ -40,6 +41,9 @@ func (s *Session) Rebuild(opts SessionNewOptions) string {
 	s.Context.Clear()
 	// E3 真实 usage 统计——新会话零统计起算
 	s.ResetStats()
+	// 会话级临时模型随重建重置——新会话从端点默认模型起（作用域=会话级：关页重进沿用、
+	// session.new 重置；写经 SetModelOverride → 回调同步请求面副本）
+	s.SetModelOverride("")
 	// 前文落盘重写（空前文 = 只留 system）
 	if s.Store != nil {
 		s.Store.Rewrite(s.Context.Messages())

@@ -109,6 +109,11 @@ type Session struct {
 	apiRole APIRole
 	// modelOverride 会话级临时模型（空=跟随端点默认；不回写端点池配置）
 	modelOverride string
+	// modelOverrideHook 覆盖值变更回调（装配层接线，把值同步到请求面 llm.Client；nil = 未接线）
+	//
+	// 用途：session.new 重建要重置覆盖，而 Session 不能 import llm（llm 已 import session）——
+	// 经回调保持「写面唯一入口 SetModelOverride」同时两处副本一致。
+	modelOverrideHook func(value string)
 	// roundSummary 轮末总结服务状态（开关 / 在途工单 / 本轮缓冲）
 	roundSummary roundSummaryState
 	// Delays 延迟队列（timer 排程注入 + state.delay 段数据源；nil = 未接线——timer 明示、状态段空 entries）
@@ -650,12 +655,26 @@ func (s *Session) PushAPIRoleView(role, reason string) {
 }
 
 // SetModelOverride 会话级临时模型写入——空串 = 清空覆盖（跟随端点默认模型）；不回写端点池配置。
+//
+// 写面唯一入口：REST /api/v1/api-model（选模型 / 清覆盖）与 session.new 重建（重置）共用；
+// 落值后经 modelOverrideHook 同步请求面副本（llm.Client.ModelOverride），两处不各自为政。
 func (s *Session) SetModelOverride(model string) string {
 	value := strings.TrimSpace(model)
 	s.mu.Lock()
 	s.modelOverride = value
+	hook := s.modelOverrideHook
 	s.mu.Unlock()
+	if hook != nil {
+		hook(value)
+	}
 	return value
+}
+
+// SetModelOverrideHook 接线覆盖值变更回调（装配层构造期调用一次；nil = 断开）——锁外回调。
+func (s *Session) SetModelOverrideHook(hook func(value string)) {
+	s.mu.Lock()
+	s.modelOverrideHook = hook
+	s.mu.Unlock()
 }
 
 // ModelOverride 会话级临时模型（空 = 跟随端点默认）。
