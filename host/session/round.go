@@ -779,7 +779,7 @@ func (s *Session) applyUsage(usageJSON string) {
 	r.mu.Unlock()
 
 	// A93 实测比值——最近一次请求的真实 prompt token + 当时前文字符数（留档头 token 折算来源）
-	chars := computeContextChars(s.Context.Messages())
+	chars := s.Context.Chars()
 
 	s.mu.Lock()
 	s.sessionTokens.Prompt += parsed.Prompt
@@ -1444,7 +1444,7 @@ func (s *Session) StateEntry() map[string]any {
 		"noteActive":        noteActive(s.Note),
 		"contextCount":      s.Context.Count(),
 		"context":           s.ContextTokensKnown(),
-		"contextChars":      computeContextChars(s.Context.Messages()),
+		"contextChars":      s.Context.Chars(),
 		"lastActiveAt":      s.LastActiveAtKnown(),
 		"sessionPrompt":     s.sessionTokensValue().Prompt,
 		"sessionCacheHit":   s.sessionTokensValue().CacheHit,

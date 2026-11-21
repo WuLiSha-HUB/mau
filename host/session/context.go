@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // Context 是会话前文容器——消息历史 + 系统提示词缓存 + 最后变动时刻。
@@ -19,6 +20,9 @@ type Context struct {
 	systemPrompt string
 	// lastChangeAt 最后一次前文变动时刻（Unix 毫秒；0=从未变动）
 	lastChangeAt int64
+	// chars 前文正文总字符数（rune 数）——写入口增量维护，结构性重建时重算；
+	// 快照/状态面按 O(1) 读（旧实现每次 len([]rune(Content)) 全量转换，29 猫 × 12 次/s 会喂满 GC）
+	chars int64
 	// onAppend 消息追加回调（完整前文留档采集挂接点；nil = 未挂接）——解锁后调用，不在锁内执行
 	onAppend func()
 }
@@ -45,6 +49,7 @@ func (c *Context) SetSystemPrompt(prompt string) {
 	}
 	c.history = kept
 	c.markChangedLocked()
+	c.recountCharsLocked()
 }
 
 // AddUserMessage 追加用户消息——返回追加的消息（空文本不入上下文）。
@@ -61,6 +66,7 @@ func (c *Context) AddUserMessageWithImages(text, imagesJSON string) *Message {
 	msg := newMessage(RoleUser, text)
 	msg.ImagesJSON = imagesJSON
 	c.history = append(c.history, msg)
+	c.chars += int64(utf8.RuneCountInString(msg.Content))
 	c.markChangedLocked()
 	c.mu.Unlock()
 	c.fireAppend()
@@ -82,6 +88,7 @@ func (c *Context) AddAssistantMessageWithReasoning(text, reasoning string) *Mess
 	msg := newMessage(RoleAssistant, text)
 	msg.ReasoningContent = reasoning
 	c.history = append(c.history, msg)
+	c.chars += int64(utf8.RuneCountInString(msg.Content))
 	c.markChangedLocked()
 	appended := &c.history[len(c.history)-1]
 	c.mu.Unlock()
@@ -101,6 +108,8 @@ func (c *Context) AddAssistantToolCalls(toolCallsJSON, reasoning string) *Messag
 	msg.ToolCallsJSON = toolCallsJSON
 	msg.ReasoningContent = reasoning
 	c.history = append(c.history, msg)
+	// 声明轮 Content 恒空——chars 不变；保留此行以便「所有 append 都维护 chars」可被静态核对
+	c.chars += int64(utf8.RuneCountInString(msg.Content))
 	c.markChangedLocked()
 	c.mu.Unlock()
 	c.fireAppend()
@@ -121,6 +130,7 @@ func (c *Context) AddToolResult(toolCallID, toolName, result string) *Message {
 	msg.ToolCallID = toolCallID
 	msg.ToolName = toolName
 	c.history = append(c.history, msg)
+	c.chars += int64(utf8.RuneCountInString(msg.Content))
 	c.markChangedLocked()
 	c.mu.Unlock()
 	c.fireAppend()
@@ -171,6 +181,28 @@ func (c *Context) Count() int {
 	return len(c.history)
 }
 
+// Chars 前文正文总字符数（rune 数）——O(1) 读，写入口增量维护。
+//
+// 口径与旧实现 computeContextChars 逐字节一致（全消息 Content 的 rune 数之和）：
+// tool_calls / reasoning / 附件不计；编辑正文按差值更新。
+func (c *Context) Chars() int64 {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.chars
+}
+
+// recountCharsLocked 全量重算字符数（调用方持写锁）。
+//
+// 只在结构性重建（换系统提示词 / 清空 / 历史替换）后调用——这些路径本来就要遍历，
+// 增量为常规路径（append / 编辑正文）保 O(1)。
+func (c *Context) recountCharsLocked() {
+	total := int64(0)
+	for i := range c.history {
+		total += int64(utf8.RuneCountInString(c.history[i].Content))
+	}
+	c.chars = total
+}
+
 // LastChangeAt 最后一次前文变动时刻（Unix 毫秒；0=从未变动）。
 func (c *Context) LastChangeAt() int64 {
 	c.mu.RLock()
@@ -187,6 +219,7 @@ func (c *Context) Clear() {
 		c.history = append(c.history, newMessage(RoleSystem, c.systemPrompt))
 	}
 	c.markChangedLocked()
+	c.recountCharsLocked()
 }
 
 // SetMessageContent 替换指定索引消息的正文——编辑前文用（返回是否命中）。
@@ -199,7 +232,9 @@ func (c *Context) SetMessageContent(index int, content string) bool {
 	if index < 0 || index >= len(c.history) {
 		return false
 	}
+	c.chars -= int64(utf8.RuneCountInString(c.history[index].Content))
 	c.history[index].Content = content
+	c.chars += int64(utf8.RuneCountInString(content))
 	if c.history[index].Role == RoleSystem {
 		c.systemPrompt = content
 	}
@@ -247,6 +282,7 @@ func (c *Context) CountBefore(stamp int64) int {
 func (c *Context) ReplaceMessages(messages []Message) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	defer c.recountCharsLocked()
 	c.history = make([]Message, 0, len(messages))
 	c.systemPrompt = ""
 	if messages == nil {

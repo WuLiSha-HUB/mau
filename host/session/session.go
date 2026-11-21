@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // ToolSpec 是会话注入面工具声明——wire 声明三字段。
@@ -438,7 +439,7 @@ func (s *Session) SaveMeta() {
 	if store == nil {
 		return
 	}
-	chars := computeContextChars(s.Context.Messages())
+	chars := s.Context.Chars()
 	s.mu.Lock()
 	s.contextChars = chars
 	meta := &SessionMeta{
@@ -479,11 +480,15 @@ func (s *Session) contextTokensKnownLocked() int64 {
 	return s.persistedContextTokens
 }
 
-// computeContextChars 前文总字符数——全消息 Content 长度之和。
+// computeContextChars 前文总字符数——全消息 Content 的 rune 数之和。
+//
+// 零分配（utf8.RuneCountInString 单遍扫描）——旧实现 len([]rune(Content)) 会为每条消息
+// 分配 4 B/字符的临时切片，在 250ms 泵上被 29 猫 × 12 次/s 放大成数百 MB/s 的短命分配。
+// 常规读面已改走 Context.Chars()（增量维护 O(1)）；本函数保留为等价基准（单测对照）。
 func computeContextChars(messages []Message) int64 {
 	total := int64(0)
 	for _, msg := range messages {
-		total += int64(len([]rune(msg.Content)))
+		total += int64(utf8.RuneCountInString(msg.Content))
 	}
 	return total
 }

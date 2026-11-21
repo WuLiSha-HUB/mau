@@ -25,7 +25,7 @@ func (s *Session) BuildStateJSON() string {
 		}
 	})
 	lastActive := s.LastActiveAtKnown()
-	chars := computeContextChars(s.Context.Messages())
+	chars := s.Context.Chars()
 	count := int64(s.Context.Count())
 	s.mu.Lock()
 	catID := s.CatKey
