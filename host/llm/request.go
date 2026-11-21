@@ -30,13 +30,16 @@ type Params struct {
 // 键序：model / messages / stream / max_tokens / stream_options / thinking /
 // [reasoning_effort] / [tools] / [user_id]；空 tools 省略字段，空 userID 省略字段。
 func BuildChatRequestBody(messages []session.Message, tools []session.ToolSpec, params Params, userID string) string {
-	return buildChatRequestBody(messages, tools, params, userID, nil)
+	body, _ := buildChatRequestBody(messages, tools, params, userID, nil, 0)
+	return body
 }
 
 // buildChatRequestBody 预算 / 降级共用实现——keeps 命中的消息按「保留末尾 N 张」展开图片
-// （缺省 = 全展开；0 = 全摘）。
-func buildChatRequestBody(messages []session.Message, tools []session.ToolSpec, params Params, userID string, keeps map[int]int) string {
+// （缺省 = 全展开；0 = 全摘）；shrinkAreaRatio > 0 时本地图片按像素面积比降分辨率后内联
+// （0 = 原图直发）。返回（请求体, 实际降分辨率的图片张数）。
+func buildChatRequestBody(messages []session.Message, tools []session.ToolSpec, params Params, userID string, keeps map[int]int, shrinkAreaRatio float64) (string, int) {
 	var b strings.Builder
+	shrunkCount := 0
 	b.WriteString(`{"model":`)
 	b.WriteString(JSONString(params.Model))
 	b.WriteString(`,"messages":[`)
@@ -50,7 +53,7 @@ func buildChatRequestBody(messages []session.Message, tools []session.ToolSpec, 
 				keep = value
 			}
 		}
-		b.WriteString(buildWireMessageMode(msg, keep))
+		b.WriteString(buildWireMessageMode(msg, keep, shrinkAreaRatio, &shrunkCount))
 	}
 	b.WriteString(`],"stream":true`)
 	b.WriteString(`,"max_tokens":`)
@@ -73,22 +76,23 @@ func buildChatRequestBody(messages []session.Message, tools []session.ToolSpec, 
 		b.WriteString(JSONString(userID))
 	}
 	b.WriteString("}")
-	return b.String()
+	return b.String(), shrunkCount
 }
 
 // buildWireMessage 单条消息序列化——四角色分派（C# 同构）。
 func buildWireMessage(msg session.Message) string {
-	return buildWireMessageMode(msg, -1)
+	return buildWireMessageMode(msg, -1, 0, nil)
 }
 
 // buildWireMessageMode 单条消息序列化——keepImages < 0 全展开；0 全摘；N 保留末尾 N 张。
-func buildWireMessageMode(msg session.Message, keepImages int) string {
+// shrinkAreaRatio > 0 时本地图片按像素面积比降分辨率；shrunk 累计实际降级张数（可空）。
+func buildWireMessageMode(msg session.Message, keepImages int, shrinkAreaRatio float64, shrunk *int) string {
 	switch msg.Role {
 	case session.RoleSystem:
 		return `{"role":"system","content":` + JSONString(msg.Content) + `}`
 	case session.RoleUser:
 		if msg.ImagesJSON != "" {
-			return buildUserMessageWithImagesLimit(msg, keepImages)
+			return buildUserMessageWithImagesLimit(msg, keepImages, shrinkAreaRatio, shrunk)
 		}
 		return `{"role":"user","content":` + JSONString(msg.Content) + `}`
 	case session.RoleAssistant:
@@ -130,14 +134,17 @@ func buildAssistantMessage(msg session.Message) string {
 // 单图解析失败不阻断请求，失败信息并入 text 块（失败必须可见）；
 // 无可用图片且正文为空 → text 兜底 "(图片)"。
 func buildUserMessageWithImages(msg session.Message) string {
-	return buildUserMessageWithImagesLimit(msg, -1)
+	return buildUserMessageWithImagesLimit(msg, -1, 0, nil)
 }
 
 // buildUserMessageWithImagesLimit 按张数限额展开图片——keep < 0 = 全展开；0 = 全摘（纯占位）；
 // 0 < keep < len(refs) = 只展开末尾 keep 张（保留最新），其余在 text 内计数说明。
+// shrinkAreaRatio > 0 时本地图片按像素面积比降分辨率，降级事实与尺寸变化写进 text 块（模型可见）；
+// shrunk 累计实际降级张数（可空）。
 //
-// 判据：省略必须可见（text 块写清省略张数与原因），不让模型以为「本来就没图」。
-func buildUserMessageWithImagesLimit(msg session.Message, keep int) string {
+// 判据：省略与降级都必须可见（text 块写清张数、尺寸变化与原因），不让模型以为「本来就没图」
+// 或「图本来就这么糊」。
+func buildUserMessageWithImagesLimit(msg session.Message, keep int, shrinkAreaRatio float64, shrunk *int) string {
 	refs, parseError := parseImageRefs(msg)
 	if keep < 0 || keep > len(refs) {
 		keep = len(refs)
@@ -146,6 +153,8 @@ func buildUserMessageWithImagesLimit(msg session.Message, keep int) string {
 	var text strings.Builder
 	text.WriteString(msg.Content)
 	var failures []string
+	var shrunkNotes []string
+	var notices []string
 	var urls []string
 	if parseError != "" {
 		failures = append(failures, parseError)
@@ -154,15 +163,45 @@ func buildUserMessageWithImagesLimit(msg session.Message, keep int) string {
 		if ref == "" {
 			continue
 		}
-		url, errText := ResolveImagePayload(ref)
+		var url, errText, note string
+		changed := false
+		if shrinkAreaRatio > 0 {
+			url, errText, note, changed = resolveImagePayloadForBudget(ref, shrinkAreaRatio)
+		} else {
+			url, errText = ResolveImagePayload(ref)
+		}
 		if errText != "" {
 			failures = append(failures, errText)
 			continue
 		}
 		urls = append(urls, url)
+		if note != "" {
+			if changed {
+				shrunkNotes = append(shrunkNotes, note)
+			} else {
+				notices = append(notices, note)
+			}
+		}
+		if changed && shrunk != nil {
+			*shrunk = *shrunk + 1
+		}
 	}
 	if omitted > 0 {
 		text.WriteString("\n\n" + imageDropNoticePrefix + itoa(omitted) + imageDropNoticeSuffix)
+	}
+	if len(shrunkNotes) > 0 {
+		text.WriteString("\n\n" + imageShrinkNoticePrefix + itoa(len(shrunkNotes)) + imageShrinkNoticeSuffix)
+		for _, note := range shrunkNotes {
+			text.WriteString("\n- ")
+			text.WriteString(note)
+		}
+	}
+	if len(notices) > 0 {
+		text.WriteString("\n\n[图片处理提示]")
+		for _, notice := range notices {
+			text.WriteString("\n")
+			text.WriteString(notice)
+		}
 	}
 	if len(failures) > 0 {
 		text.WriteString("\n\n[图片引用失效]")
@@ -232,16 +271,33 @@ const (
 // imageDropNotice 全摘占位（1 张版本文案，兼容既有测试与日志）。
 const imageDropNotice = "[图片已省略：请求体超过 3 MB 安全上限或视觉通道降级——图片内容未发送，请以文字线索继续；需要看图请减少同轮图片数或缩小图片]"
 
-// BuildChatRequestBodyBudget 带预算的请求体构造——**按张**摘图（从最早的消息、最早的一张开始），
-// 同一消息内保留最新；图片通道降级期全摘。返回（请求体, 省略的图片张数）。
+// imageShrinkNoticePrefix / Suffix 图片降分辨率占位——进 text 块（模型可见），
+// 中间夹降级张数，其后逐张列出尺寸变化。
+const (
+	imageShrinkNoticePrefix = "[图片已降分辨率 "
+	imageShrinkNoticeSuffix = " 张：请求体超过 3 MB 预算，已等比缩小像素尺寸（为保住图片内容，避免整张摘掉）——画面细节可能模糊；需要看清细节请单独用 image-analyze 看原图，或发送裁切后的局部图]"
+)
+
+// BuildChatRequestBodyBudget 带预算的请求体构造——**超预算先降分辨率保住图片内容，摘图是最后手段**。
 //
-// 判据：请求体 ≤ maxRequestBodyBytes；实测仍超（估算失真）→ 全摘兜底重构造一次。
+// 处置链：
+//
+//	① 估算在 3 MB 内 → 原图直发（零改动路径）；实测仍超（估算失真）也落 ②；
+//	② 超预算 → 本地图片按 budgetShrinkAreaRatios 逐档降分辨率（像素面积 1/10 → 1/100 → 1/1000），
+//	   每档实测请求体长度，命中即停；降级事实与尺寸变化写进 text 块（模型可见）；
+//	③ 降到底仍超 → 按张摘图（从最早的消息、最早的一张开始，同一消息内保留最新）；
+//	④ 仍超 → 全摘兜底（宁可不发图，也不让连接被掐）。
+//
+// 图片通道降级期（ImageChannelState）全摘——视觉通道不可用，降分辨率发出去也会失败。
+// 返回（请求体, 省略的图片张数, 降分辨率的图片张数）。
+//
 // 为什么按张：一条注入消息可带多张图，整条摘会把「正在看的那张」也丢掉
 // （2026-11-14 真链路实测：3 张同批注入 → 整条摘 → 一张不剩）。
-func BuildChatRequestBodyBudget(messages []session.Message, tools []session.ToolSpec, params Params, userID string) (string, int) {
+func BuildChatRequestBodyBudget(messages []session.Message, tools []session.ToolSpec, params Params, userID string) (string, int, int) {
 	refsByIndex := make(map[int][]string, len(messages))
 	totalImages := 0
-	estimated := len(buildChatRequestBody(messages, tools, params, userID, nilKeeps(messages)))
+	baseBody, _ := buildChatRequestBody(messages, tools, params, userID, nilKeeps(messages), 0)
+	estimated := len(baseBody)
 	for i, msg := range messages {
 		refs, _ := parseImageRefs(msg)
 		if len(refs) == 0 {
@@ -254,42 +310,54 @@ func BuildChatRequestBodyBudget(messages []session.Message, tools []session.Tool
 		}
 	}
 	if totalImages == 0 {
-		return buildChatRequestBody(messages, tools, params, userID, nil), 0
+		body, _ := buildChatRequestBody(messages, tools, params, userID, nil, 0)
+		return body, 0, 0
 	}
-	// keeps：消息下标 → 保留末尾张数（缺省 = 全留）
+	// 图片通道降级期——全摘（视觉通道不可用，降分辨率无意义）
+	if _, down := ImageChannelState.Down(); down {
+		keeps := make(map[int]int, len(refsByIndex))
+		for i := range refsByIndex {
+			keeps[i] = 0
+		}
+		body, _ := buildChatRequestBody(messages, tools, params, userID, keeps, 0)
+		return body, totalImages, 0
+	}
+	// ① 估算在预算内——原图直发；实测仍超说明估算失真，落降级路径
+	if estimated <= maxRequestBodyBytes {
+		body, _ := buildChatRequestBody(messages, tools, params, userID, nil, 0)
+		if len(body) <= maxRequestBodyBytes {
+			return body, 0, 0
+		}
+	}
+	// ② 平滑降级：逐档降分辨率，命中即停
+	for _, ratio := range budgetShrinkAreaRatios {
+		body, shrunkCount := buildChatRequestBody(messages, tools, params, userID, nil, ratio)
+		if len(body) <= maxRequestBodyBytes {
+			return body, 0, shrunkCount
+		}
+	}
+	// ③ 降到底仍超——逐张摘（每摘一张实测一次）
+	minRatio := budgetShrinkAreaRatios[len(budgetShrinkAreaRatios)-1]
 	keeps := make(map[int]int, len(refsByIndex))
 	for i, refs := range refsByIndex {
 		keeps[i] = len(refs)
 	}
-	if _, down := ImageChannelState.Down(); down {
-		for i := range keeps {
-			keeps[i] = 0
-		}
-	} else if estimated > maxRequestBodyBytes {
-		// 逐张摘：从最早消息的第一张开始，同一消息保留最新
-		for i := range messages {
-			refs := refsByIndex[i]
-			for k := 0; k < len(refs); k++ {
-				keeps[i] = len(refs) - (k + 1)
-				estimated -= estimateImageRefBytes(refs[k])
-				if estimated <= maxRequestBodyBytes {
-					break
-				}
-			}
-			if estimated <= maxRequestBodyBytes {
-				break
+	for i := range messages {
+		refs := refsByIndex[i]
+		for k := 0; k < len(refs); k++ {
+			keeps[i] = len(refs) - (k + 1)
+			body, shrunkCount := buildChatRequestBody(messages, tools, params, userID, keeps, minRatio)
+			if len(body) <= maxRequestBodyBytes {
+				return body, totalImages - keptImageCount(keeps), shrunkCount
 			}
 		}
 	}
-	body := buildChatRequestBody(messages, tools, params, userID, keeps)
-	if len(body) > maxRequestBodyBytes && keptImageCount(keeps) < totalImages {
-		// 估算失真兜底：全摘重构造（宁可不发图，也不让连接被掐）
-		for i := range keeps {
-			keeps[i] = 0
-		}
-		body = buildChatRequestBody(messages, tools, params, userID, keeps)
+	// ④ 全摘兜底
+	for i := range keeps {
+		keeps[i] = 0
 	}
-	return body, totalImages - keptImageCount(keeps)
+	body, _ := buildChatRequestBody(messages, tools, params, userID, keeps, 0)
+	return body, totalImages, 0
 }
 
 // keptImageCount keeps 表里保留的总张数。

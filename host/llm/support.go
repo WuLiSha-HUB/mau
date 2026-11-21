@@ -106,33 +106,43 @@ func isLocalOnlyHost(parsed *url.URL) bool {
 
 // fetchLocalImage 本机抓取回环 / 私网图片并内联为 data URL——失败具名报错，不回落直传。
 func fetchLocalImage(target string) (string, string) {
+	raw, mime, errText := fetchLocalImageRaw(target)
+	if errText != "" {
+		return "", errText
+	}
+	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw), ""
+}
+
+// fetchLocalImageRaw 本机抓取回环 / 私网图片——返回（原始字节, MIME, 错误文本）。
+// 预算降级链路要拿原始字节再缩，故与 data URL 包装拆开。
+func fetchLocalImageRaw(target string) ([]byte, string, string) {
 	resp, err := imageFetchClient.Get(target)
 	if err != nil {
-		return "", "ERR|IMAGE_FETCH|本机抓取图片异常: " + err.Error() + "（" + target + "）"
+		return nil, "", "ERR|IMAGE_FETCH|本机抓取图片异常: " + err.Error() + "（" + target + "）"
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", "ERR|IMAGE_FETCH|本机抓取图片失败（HTTP " + itoa(resp.StatusCode) + "）: " + target
+		return nil, "", "ERR|IMAGE_FETCH|本机抓取图片失败（HTTP " + itoa(resp.StatusCode) + "）: " + target
 	}
 	limited := io.LimitReader(resp.Body, maxInlineImageBytes+1)
 	raw, err := io.ReadAll(limited)
 	if err != nil {
-		return "", "ERR|IMAGE_FETCH|本机抓取图片异常: " + err.Error() + "（" + target + "）"
+		return nil, "", "ERR|IMAGE_FETCH|本机抓取图片异常: " + err.Error() + "（" + target + "）"
 	}
 	if len(raw) == 0 {
-		return "", "ERR|IMAGE_FETCH|本机抓取图片返回空内容: " + target
+		return nil, "", "ERR|IMAGE_FETCH|本机抓取图片返回空内容: " + target
 	}
 	if len(raw) > maxInlineImageBytes {
-		return "", "ERR|IMAGE_TOO_LARGE|本机抓取到的图片超过 32MiB 内联上限: " + target
+		return nil, "", "ERR|IMAGE_TOO_LARGE|本机抓取到的图片超过 32MiB 内联上限: " + target
 	}
 	mime := SniffImageMIME(raw)
 	if mime == "" {
 		mime = normalizeMediaType(resp.Header.Get("Content-Type"))
 	}
 	if mime == "" {
-		return "", "ERR|IMAGE_MIME|本机抓取到的内容不是可识别的图片（" + target + "）"
+		return nil, "", "ERR|IMAGE_MIME|本机抓取到的内容不是可识别的图片（" + target + "）"
 	}
-	return "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(raw), ""
+	return raw, mime, ""
 }
 
 // normalizeMediaType 响应头 media type 归一——只接受 image/* 前缀。

@@ -257,7 +257,10 @@ func (c *Client) httpClient() *http.Client {
 // 无回应超时不重试（直接进故障转移判定）；4xx 不重试；流中断不重试（事件化给上层续传）。
 func (c *Client) Stream(ctx context.Context, messages []session.Message, tools []session.ToolSpec, userID string, emit func(Event)) {
 	params := c.Params()
-	body, omittedImages := BuildChatRequestBodyBudget(messages, tools, params, userID)
+	body, omittedImages, shrunkImages := BuildChatRequestBodyBudget(messages, tools, params, userID)
+	if shrunkImages > 0 {
+		logAt(1, "请求体预算：降分辨率 "+itoa(shrunkImages)+" 张图片（安全上限 3 MB——优先降级保内容，摘图是最后手段）")
+	}
 	if omittedImages > 0 {
 		logAt(1, "请求体预算：省略 "+itoa(omittedImages)+" 张图片（安全上限 3 MB——本地网关 4 MB 断连实测）")
 		// G23：工具回执「已登记」不等于图到了——摘图事实必须回到会话面（去重：张数不变不重复刷）。
@@ -268,8 +271,8 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 	} else {
 		c.lastImageDropNotice = 0
 	}
-	// 纯文本请求体不再设硬上限（2026-11-18 口径修正）：3 MB 阈值只约束图片预算（BuildChatRequestBodyBudget 负责摘图）。
-	// 图片已按预算处理（超预算全摘）；纯文本本身超 3 MB 照发——网关 4 MB 断连实测主因是图占空间，非纯文本。
+	// 纯文本请求体不再设硬上限（2026-11-18 口径修正）：3 MB 阈值只约束图片预算（BuildChatRequestBodyBudget 负责降级 / 摘图）。
+	// 图片已按预算处理（先降分辨率、降到底才摘）；纯文本本身超 3 MB 照发——网关 4 MB 断连实测主因是图占空间，非纯文本。
 	// 超长请求若真撞网关断连，走下方传输重试 / 故障转移兜底，不再本地拒发。
 	sentWithImages := omittedImages == 0 && requestHasImages(messages)
 	imageDowngraded := false
@@ -313,7 +316,7 @@ func (c *Client) Stream(ctx context.Context, messages []session.Message, tools [
 			if sentWithImages && !imageDowngraded {
 				imageDowngraded = true
 				ImageChannelState.Mark(netError, imageChannelCooldown)
-				body, omittedImages = BuildChatRequestBodyBudget(messages, tools, params, userID)
+				body, omittedImages, shrunkImages = BuildChatRequestBodyBudget(messages, tools, params, userID)
 				sentWithImages = false
 				logAt(2, "图片通道降级：带图请求传输失败，已摘图重发（省略 "+itoa(omittedImages)+" 张）")
 				continue

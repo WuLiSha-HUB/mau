@@ -35,8 +35,8 @@ func writeSizedPNG(t *testing.T, dir, name string, width, height int) string {
 	return path
 }
 
-// TestBuildChatRequestBodyBudget_DropOldest 预算超限——摘最旧的图，保留最新的。
-func TestBuildChatRequestBodyBudget_DropOldest(t *testing.T) {
+// TestBuildChatRequestBodyBudget_ShrinkInsteadOfDrop 超预算——优先降分辨率保住图片，不摘图。
+func TestBuildChatRequestBodyBudget_ShrinkInsteadOfDrop(t *testing.T) {
 	dir := t.TempDir()
 	oldPath := writeSizedPNG(t, dir, "old.png", 900, 600)
 	newPath := writeSizedPNG(t, dir, "new.png", 900, 600)
@@ -45,43 +45,56 @@ func TestBuildChatRequestBodyBudget_DropOldest(t *testing.T) {
 		{Role: session.RoleAssistant, Content: "看到了"},
 		{Role: session.RoleUser, Content: "新图", ImagesJSON: "[" + session.JSONString(newPath) + "]"},
 	}
-	body, omitted := BuildChatRequestBodyBudget(messages, nil, Params{Model: "m", MaxTokens: 8}, "")
-	if omitted == 0 {
-		t.Fatalf("应触发预算摘图（两张 900x600 噪点 PNG 估算已超 3 MB）")
+	body, omitted, shrunk := BuildChatRequestBodyBudget(messages, nil, Params{Model: "m", MaxTokens: 8}, "")
+	if omitted != 0 {
+		t.Fatalf("应优先降分辨率而不是摘图：omitted=%d", omitted)
+	}
+	if shrunk != 2 {
+		t.Fatalf("两张图都应降分辨率：shrunk=%d", shrunk)
 	}
 	if len(body) > maxRequestBodyBytes {
 		t.Fatalf("请求体仍超上限：%d", len(body))
 	}
-	// 最旧的先摘：新图仍在（base64 片段），旧图只剩占位说明
-	if !strings.Contains(body, "旧图") || !strings.Contains(body, imageDropNoticePrefix) {
-		t.Fatalf("旧图应被摘成占位: %s", truncateVisionText(body, 400))
+	if count := strings.Count(body, `"type":"image_url"`); count != 2 {
+		t.Fatalf("两张图都应保留，实际 %d 张", count)
 	}
-	if count := strings.Count(body, `"type":"image_url"`); count != 1 {
-		t.Fatalf("应只保留新图（1 张），实际 %d 张", count)
+	if !strings.Contains(body, imageShrinkNoticePrefix) {
+		t.Fatalf("应有降分辨率提示（模型可见）: %s", truncateVisionText(body, 400))
 	}
 }
 
-// TestBuildChatRequestBodyBudget_KeepNewestInSameMessage 同一条消息多张图——按张摘，保留最新的。
-func TestBuildChatRequestBodyBudget_KeepNewestInSameMessage(t *testing.T) {
+// TestBuildChatRequestBodyBudget_KeepAllInSameMessage 同一条消息多张图——全部降级保留，不摘。
+func TestBuildChatRequestBodyBudget_KeepAllInSameMessage(t *testing.T) {
 	dir := t.TempDir()
 	first := writeSizedPNG(t, dir, "1.png", 900, 600)
 	second := writeSizedPNG(t, dir, "2.png", 900, 600)
 	third := writeSizedPNG(t, dir, "3.png", 900, 600)
 	imagesJSON := "[" + session.JSONString(first) + "," + session.JSONString(second) + "," + session.JSONString(third) + "]"
 	messages := []session.Message{{Role: session.RoleUser, Content: "三张图", ImagesJSON: imagesJSON}}
-	body, omitted := BuildChatRequestBodyBudget(messages, nil, Params{Model: "m", MaxTokens: 8}, "")
-	if omitted == 0 {
-		t.Fatalf("应触发摘图（三张 900x600 噪点 PNG 估算已超 3 MB）")
+	body, omitted, shrunk := BuildChatRequestBodyBudget(messages, nil, Params{Model: "m", MaxTokens: 8}, "")
+	if omitted != 0 || shrunk != 3 {
+		t.Fatalf("同消息三张图应全部降级保留：omitted=%d shrunk=%d", omitted, shrunk)
 	}
-	if len(body) > maxRequestBodyBytes {
-		t.Fatalf("请求体仍超上限：%d", len(body))
+	if count := strings.Count(body, `"type":"image_url"`); count != 3 {
+		t.Fatalf("三张图都应保留，实际 %d 张", count)
 	}
-	// 按张摘：至少保留最新一张，其余在 text 里计数说明
-	if count := strings.Count(body, `"type":"image_url"`); count == 0 {
-		t.Fatalf("同一消息不应全摘——应保留最新一张")
+	if !strings.Contains(body, imageShrinkNoticePrefix) {
+		t.Fatalf("应有降分辨率提示: %s", truncateVisionText(body, 300))
 	}
-	if !strings.Contains(body, imageDropNoticePrefix) {
-		t.Fatalf("部分省略应有计数占位: %s", truncateVisionText(body, 300))
+}
+
+// TestBuildChatRequestBodyBudget_DropLastResort 降到底仍超（纯文本自身超预算）——摘图兜底仍执行。
+func TestBuildChatRequestBodyBudget_DropLastResort(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSizedPNG(t, dir, "a.png", 900, 600)
+	huge := strings.Repeat("x", maxRequestBodyBytes+64*1024)
+	messages := []session.Message{{Role: session.RoleUser, Content: huge, ImagesJSON: "[" + session.JSONString(path) + "]"}}
+	body, omitted, _ := BuildChatRequestBodyBudget(messages, nil, Params{Model: "m", MaxTokens: 8}, "")
+	if omitted != 1 {
+		t.Fatalf("纯文本自身超预算时降级救不了，应摘图：omitted=%d", omitted)
+	}
+	if count := strings.Count(body, `"type":"image_url"`); count != 0 {
+		t.Fatalf("应全摘，实际 %d 张", count)
 	}
 }
 
@@ -92,12 +105,72 @@ func TestBuildChatRequestBodyBudget_ChannelDown(t *testing.T) {
 	messages := []session.Message{{Role: session.RoleUser, Content: "图", ImagesJSON: "[" + session.JSONString(path) + "]"}}
 	ImageChannelState.Mark("ERR|TRANSPORT|测试", 0)
 	defer ImageChannelState.Reset()
-	body, omitted := BuildChatRequestBodyBudget(messages, nil, Params{Model: "m"}, "")
+	body, omitted, _ := BuildChatRequestBodyBudget(messages, nil, Params{Model: "m"}, "")
 	if omitted != 1 {
 		t.Fatalf("降级期应全摘：omitted=%d", omitted)
 	}
 	if !strings.Contains(body, imageDropNoticePrefix) {
 		t.Fatalf("应留占位说明: %s", truncateVisionText(body, 300))
+	}
+}
+
+// TestShrinkImageAreaRatio 预算降级——按像素面积比缩到约 1/10（线性 1/√10）。
+func TestShrinkImageAreaRatio(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSizedPNG(t, dir, "big.png", 900, 600)
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shrunk, mime, note, changed := shrinkImageAreaRatio(raw, "image/png", 0.1)
+	if !changed || mime != "image/jpeg" {
+		t.Fatalf("应降级为 JPEG：changed=%v mime=%s", changed, mime)
+	}
+	if len(shrunk) >= len(raw) {
+		t.Fatalf("降级后字节应变小：%d → %d", len(raw), len(shrunk))
+	}
+	if !strings.Contains(note, "→") {
+		t.Fatalf("说明应含尺寸变化: %s", note)
+	}
+	rect := decodeImageConfig(shrunk)
+	if rect.Dx() < 250 || rect.Dx() > 320 || rect.Dy() < 160 || rect.Dy() > 220 {
+		t.Fatalf("尺寸应约 284x189，实际 %dx%d", rect.Dx(), rect.Dy())
+	}
+	// 已到最小尺寸——原样不动
+	tinyPath := writeSizedPNG(t, dir, "tiny.png", 1, 1)
+	tinyRaw, err := os.ReadFile(tinyPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, _, _, keptChanged := shrinkImageAreaRatio(tinyRaw, "image/png", 0.1)
+	if keptChanged || len(kept) != len(tinyRaw) {
+		t.Fatalf("1x1 图不应改动：changed=%v %d → %d", keptChanged, len(tinyRaw), len(kept))
+	}
+}
+
+// TestResolveImagePayloadForBudget 预算降级展开——本地图片出 JPEG data URL + 说明；公网 URL 直传。
+func TestResolveImagePayloadForBudget(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSizedPNG(t, dir, "shot.png", 900, 600)
+	url, errText, note, changed := resolveImagePayloadForBudget(path, 0.1)
+	if errText != "" || !changed {
+		t.Fatalf("应降级成功：err=%s changed=%v", errText, changed)
+	}
+	if !strings.HasPrefix(url, "data:image/jpeg;base64,") {
+		t.Fatalf("应为 JPEG data URL：%s", truncateVisionText(url, 60))
+	}
+	if !strings.Contains(note, "shot.png") || !strings.Contains(note, "→") {
+		t.Fatalf("说明应含文件名与尺寸变化: %s", note)
+	}
+	// 缓存命中——同图同档重跑结果一致
+	cachedURL, errText2, cachedNote, cachedChanged := resolveImagePayloadForBudget(path, 0.1)
+	if errText2 != "" || cachedURL != url || cachedNote != note || cachedChanged != changed {
+		t.Fatalf("缓存命中应返回同一结果")
+	}
+	// 公网 URL 直传（不降级）
+	direct, errText3, _, changed3 := resolveImagePayloadForBudget("https://example.com/a.png", 0.1)
+	if errText3 != "" || changed3 || direct != "https://example.com/a.png" {
+		t.Fatalf("公网 URL 应直传：%s / %s", direct, errText3)
 	}
 }
 
