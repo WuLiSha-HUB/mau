@@ -146,3 +146,25 @@ Authorization: Bearer <通道 Key>
 | 写面 | 无（纯只读） | 配置落盘 + 事件流水 |
 | 出口 | 无 | CH4 通道播报 |
 | 端口 | 7900 | 7901 |
+
+## 十二、Linux 部署
+
+> 本服务属**外围独立服务**——不走 CH4 宿主产物链（`publish-linux` / `push-app` / `take-app`），只走源码同步 + systemd 托管。
+
+| 步 | 在哪 | 动作 | 判据 |
+|:--:|:--|:--|:--|
+| 1 | 开发机 | 改源码 → `git push` | 提交进 Gitee |
+| 2 | 服务器 | `sudo git -C /cathome4/mau pull` | HEAD = 本地 |
+| 3 | 服务器 | `sudo bash /cathome4/mau/tools/biliwatch/deploy/install.sh` | 6 步全过 · `active` · `curl 127.0.0.1:7901/api/ping` 返 `pong` |
+| 4 | 服务器 | 建通道取 Key（CH4 控制台）→ 填入 `http://<tailnet>:7901/` | 群收到测试消息 |
+
+🔴 **前置一：Node 必须带 TypeScript 支持。** `apt install nodejs` 装的 Ubuntu 包是 `+dfsg` 构建，**不带** TS 支持——实跑报 `ERR_NO_TYPESCRIPT`（版本号够也不行）。装官方构建（NodeSource / 官方 tarball）。`install.sh` 以「实跑一个 `.ts` 探针」为判据，不靠版本号推断。
+
+🔴 **前置二：路径可访问性。** 服务以 `cathome` 用户运行，路径上每一级都要有**搜索权**（`x`）。`/cathome4` 若为 `750 root:root`，服务会在 `chdir` 阶段被拒（`status=200/CHDIR`）。已置 `2751`（other 仅 `x`，不可列目录）——两个 `tools/` 服务共用此前提。
+
+**unit 与 linux-see-window 的差异：**
+
+| 项 | linux-see-window | biliwatch |
+|:--|:--|:--|
+| `ReadWritePaths` | 无（纯只读） | `…/data`（`ProtectSystem=strict` 下唯一可写面） |
+| `IPAddressDeny/Allow` | 有（本机观测，不出网） | **无**——必须出站访问 `api.live.bilibili.com`；入站限制由应用层来源白名单承担 |
