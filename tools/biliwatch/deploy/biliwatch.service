@@ -1,0 +1,35 @@
+[Unit]
+Description=biliwatch (Bilibili live status monitor -> CH4 channel broadcast)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=cathome
+Group=cathome
+WorkingDirectory=/cathome4/mau/tools/biliwatch
+Environment=BW_PORT=7901
+Environment=BW_BIND=0.0.0.0
+ExecStart=/usr/bin/node /cathome4/mau/tools/biliwatch/server.ts
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillSignal=SIGTERM
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryHigh=150M
+MemoryMax=200M
+ReadWritePaths=/cathome4/mau/tools/biliwatch/data
+# 不开 IPAddressDeny/Allow——本服务必须能出站访问 api.live.bilibili.com；
+# 入站限制由应用层来源白名单（localhost + tailnet）承担（server.ts isAllowedSource）。
+# ProtectSystem=strict 下仅 data/ 可写，故显式 ReadWritePaths。
+
+[Install]
+WantedBy=multi-user.target
