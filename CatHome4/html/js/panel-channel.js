@@ -266,18 +266,43 @@ function closeChannelKey() {
     document.getElementById('chnKeyModal').style.display = 'none';
 }
 
+function channelKeyStatus(text, ok) {
+    // 反馈落弹层内可见位——外层列表消息被遮罩挡住，等于没有反馈（2026-11-24 非安全上下文复制失效）
+    var box = document.getElementById('chnKeyMsg');
+    if (!box) { return; }
+    box.textContent = text;
+    box.style.color = ok ? 'var(--ch-ok)' : 'var(--ch-warn, #d1a44a)';
+}
+
+function channelKeyLegacyCopy(input) {
+    // 非安全上下文（http:// 且非 localhost）下 navigator.clipboard 为 undefined——退到 execCommand
+    // 该命令无安全上下文限制，且点击本身是用户手势；失败一律返回 false 由调用方出声
+    try {
+        input.focus();
+        input.select();
+        if (input.setSelectionRange) { input.setSelectionRange(0, input.value.length); }
+        if (document.execCommand && document.execCommand('copy')) { return true; }
+    } catch (e) {
+        return false;
+    }
+    return false;
+}
+
 function copyChannelKey() {
     var input = document.getElementById('chnKeyValue');
     var text = input.value || '';
     if (text.length === 0) { return; }
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text)
-            .then(function () { chnMsgEl.textContent = 'Key 已复制到剪贴板'; })
-            .catch(function () { chnMsgEl.textContent = '复制失败——请手动选中后复制'; });
+            .then(function () { channelKeyStatus('已复制到剪贴板', true); })
+            .catch(function () {
+                if (channelKeyLegacyCopy(input)) { channelKeyStatus('已复制（兼容模式）', true); }
+                else { channelKeyStatus('复制失败——文本已选中，请按 Ctrl+C（Mac 为 ⌘+C）手动复制', false); }
+            });
         return;
     }
-    input.select();
-    chnMsgEl.textContent = '已选中——请按 Ctrl+C 复制';
+    if (channelKeyLegacyCopy(input)) { channelKeyStatus('已复制（兼容模式）', true); }
+    else { channelKeyStatus('复制失败——文本已选中，请按 Ctrl+C（Mac 为 ⌘+C）手动复制', false); }
 }
 
 document.getElementById('chnAddBtn').onclick = channelSubmit;

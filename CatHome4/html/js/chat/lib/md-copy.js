@@ -14,12 +14,33 @@ function mdCopySource(wrap) {
     return '';
 }
 
-function mdWriteClipboard(text) {
-    // 剪贴板写入——navigator.clipboard 单一通道（127.0.0.1 / localhost 属安全上下文）
-    if (typeof navigator === 'undefined' || !navigator.clipboard || typeof navigator.clipboard.writeText !== 'function') {
+function mdLegacyWriteClipboard(text) {
+    // 非安全上下文兜底（http:// 且非 localhost 时 navigator.clipboard 为 undefined）：
+    // 临时 textarea + execCommand('copy')——该命令无安全上下文限制，点击本身是用户手势
+    if (typeof document === 'undefined' || typeof document.execCommand !== 'function') {
         return Promise.reject(new Error('clipboard 不可用'));
     }
-    return navigator.clipboard.writeText(text);
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.top = '-1000px';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    if (ta.setSelectionRange) { ta.setSelectionRange(0, text.length); }
+    var ok = false;
+    try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    return ok ? Promise.resolve() : Promise.reject(new Error('clipboard 不可用'));
+}
+
+function mdWriteClipboard(text) {
+    // 剪贴板写入——navigator.clipboard 优先（安全上下文）；缺失或失败由调用方退到 mdLegacyWriteClipboard
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        return navigator.clipboard.writeText(text);
+    }
+    return mdLegacyWriteClipboard(text);
 }
 
 function mdCopyIcon() {
@@ -57,8 +78,15 @@ function mdAppendCopyBtn(wrap) {
     btn.addEventListener('click', function () {
         mdWriteClipboard(mdCopySource(wrap)).then(function () {
             btn.classList.add('done');
-            window.setTimeout(function () { btn.classList.remove('done'); }, 1200);
-        }).catch(function (e) { console.warn('复制原文失败', e); });
+            btn.title = '已复制';
+            window.setTimeout(function () {
+                btn.classList.remove('done');
+                btn.title = '复制原文';
+            }, 1200);
+        }).catch(function (e) {
+            btn.title = '复制失败——请手动选择文本后复制';
+            console.warn('复制原文失败', e);
+        });
     });
     wrap.insertBefore(btn, wrap.firstChild);
 }
