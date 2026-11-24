@@ -48,6 +48,10 @@ if (!(Test-Path (Join-Path $repoRoot "CatTemp")))
 }
 Write-Host ("[push-app] 仓库根：" + $repoRoot)
 
+# [段0b] 工作目录切到仓库根（2026-11-19）——SetUp 要求 cwd = 仓库根（据此找 Mau.sln 与相对路径）
+# 从任意 cwd 调起时不切换会直接失败（判例：宿主数据根调起 → 「当前目录未找到 Mau.sln」）
+Set-Location $repoRoot
+
 # [段1] 产物端——SetUp publish-linux（单一实现：门禁 build/test + 组翻译 + linux-x64 交叉发布 + 指纹；不自增版本）
 if ($SkipSetup)
 {
