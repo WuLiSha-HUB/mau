@@ -269,6 +269,23 @@
                             <button id="qgcAddBtn" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">登记群</button>
                         </div>
                     </div>
+                    <!-- A405 HTTP 注入通道池——外部程序持通道 Key 向绑定猫注入系统消息（1:1 绑定；Key 明文只在新建 / 重置时显示一次） -->
+                    <div style="margin-top:16px;border-top:1px solid var(--ch-line);padding-top:10px">
+                        <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
+                            <h2 style="margin:0">HTTP 注入通道</h2>
+                            <span id="chnMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag)"></span>
+                            <span style="flex:1"></span>
+                            <button id="chnRefresh" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:4px 10px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">刷新</button>
+                        </div>
+                        <div style="font-size:var(--ch-fs-tag);color:var(--ch-fg-weak);margin-bottom:6px">一个通道 = 一个 Key + 一只绑定猫（1:1）。外部程序持 Key 调 <code>POST /api/v1/channels/inject</code>（<code>Authorization: Bearer &lt;key&gt;</code>，body <code>{"text":"..."}</code>）即向该猫会话注入一条系统消息——外部始终不知道猫 key。🔴 Key 明文只在<strong>新建 / 重置</strong>时显示一次，之后只能看到掩码</div>
+                        <table class="box-table" id="chnTable"><thead><tr><th style="width:22%">通道名</th><th style="width:28%">绑定猫</th><th style="width:12%">通道 ID</th><th style="width:20%">Key</th><th style="width:18%">操作</th></tr></thead><tbody></tbody></table>
+                        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+                            <input id="chnNewName" placeholder="通道名（≤32 字符，全池唯一）" maxlength="32" style="width:200px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)">
+                            <select id="chnNewCat" title="绑定猫（1:1；特殊会话 majordomo 不在列表内，需走 HTTP 端点配置）" style="max-width:240px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:5px 8px;font-family:inherit;font-size:var(--ch-fs-tag)"></select>
+                            <button id="chnAddBtn" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">新建</button>
+                            <button id="chnCancelEdit" style="display:none;background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:5px 12px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消编辑</button>
+                        </div>
+                    </div>
                     <!-- 新猫默认模板——baseRole + 三字段默认值（M3d 体验轮新增） -->
                     <div style="margin-top:16px;border-top:1px solid var(--ch-line);padding-top:10px">
                         <div style="display:flex;gap:6px;align-items:center;margin-bottom:6px">
@@ -435,6 +452,24 @@
                 <button id="groupCfgCancel" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">取消</button>
             </div>
             <div id="groupCfgMsg" style="color:var(--ch-ok);font-size:var(--ch-fs-tag);margin-top:6px"></div>
+        </div>
+    </div>
+
+    <!-- A405 通道 Key 一次性展示弹层——关闭即消失（列表只回掩码；要再拿明文走「重置 Key」） -->
+    <div id="chnKeyModal" style="display:none;position:fixed;inset:0;background:var(--ch-overlay);z-index:60;align-items:center;justify-content:center">
+        <div style="width:540px;background:var(--ch-bg-panel);border:1px solid var(--ch-line);border-radius:8px;padding:14px">
+            <div style="display:flex;align-items:center;margin-bottom:8px">
+                <span style="color:var(--ch-identity);font-weight:bold;font-size:var(--ch-fs-sub)">通道 Key — </span>
+                <span id="chnKeyTitle" style="color:var(--ch-identity);font-weight:bold;font-size:var(--ch-fs-sub)"></span>
+                <span style="flex:1"></span>
+                <button id="chnKeyClose" style="background:transparent;border:none;color:var(--ch-fg-weak);font-size:var(--ch-fs-title);cursor:pointer">✕</button>
+            </div>
+            <div style="font-size:var(--ch-fs-tag);color:var(--ch-warn, #d1a44a);margin-bottom:8px">🔴 明文只显示这一次——关闭后列表只回掩码。需要再次获取请走「重置 Key」（旧 Key 立即失效）。</div>
+            <input id="chnKeyValue" readonly style="width:100%;box-sizing:border-box;background:var(--ch-bg-panel);border:1px solid var(--ch-line);color:var(--ch-fg);padding:8px;font-family:inherit;font-size:var(--ch-fs-tag);word-break:break-all">
+            <div style="display:flex;gap:6px;margin-top:10px;justify-content:flex-end">
+                <button id="chnKeyCopy" style="background:var(--ch-bg-raised);border:1px solid var(--ch-line);color:var(--ch-fg-muted);padding:6px 14px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">复制</button>
+                <button id="chnKeyDone" style="background:var(--ch-bg-accent);border:none;color:var(--ch-fg-inverse);padding:6px 16px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-tag)">我已保存</button>
+            </div>
         </div>
     </div>
 

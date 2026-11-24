@@ -89,6 +89,15 @@ namespace CatHome4.Admin
             // [段13] Token 用量统计面——A389（快照读取 + 手动刷新；数据源 Data/tokennumber/，后台每分钟自动重算）
             sink.MapGet("/api/v1/token-stats", (Delegate)AdminService.HandleTokenStatsGet);
             sink.MapPost("/api/v1/token-stats/refresh", (Delegate)AdminService.HandleTokenStatsRefresh);
+
+            // [段14] HTTP 注入通道池——A405（CRUD 在 console 面；注入端点由外部程序持通道 Key 调用，
+            // 认证在处理器内完成——ConsoleAuthGate 对该路径豁免，设计权威 design-ch4-channel.md）
+            sink.MapGet("/api/v1/channels", (Delegate)AdminService.HandleChannelsGet);
+            sink.MapPost("/api/v1/channels", (Delegate)AdminService.HandleChannelsPost);
+            sink.MapPost("/api/v1/channels/edit", (Delegate)AdminService.HandleChannelsEdit);
+            sink.MapPost("/api/v1/channels/rotate", (Delegate)AdminService.HandleChannelsRotate);
+            sink.MapPost("/api/v1/channels/delete", (Delegate)AdminService.HandleChannelsDelete);
+            sink.MapPost("/api/v1/channels/inject", (Delegate)AdminService.HandleChannelsInject);
         }
     }
 }

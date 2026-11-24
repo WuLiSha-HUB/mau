@@ -11,6 +11,7 @@ var CONSOLE_SCRIPT_LIST = [
     'js/panel-apis.js',
     'js/panel-appearance.js',
     'js/panel-qqbot.js',
+    'js/panel-channel.js',
     'js/panel-catcfg.js',
     'js/panel-packs.js',
     'js/panel-deps.js',

@@ -65,11 +65,14 @@ namespace CH4
         /// <summary>延迟族——restart 宿主重启回执来源。</summary>
         internal const string SysKindRestart = "restart";
 
+        /// <summary>系统注入族名——HTTP 注入通道（A405：通道名在正文前缀，族名只标路径）。</summary>
+        internal const string SysKindChannel = "channel";
+
         /// <summary>系统注入族名——timeback 域收拢摘要（A331：整段回收后留在前文的唯一域痕迹）。</summary>
         internal const string SysKindTimeback = "timeback";
 
-        /// <summary>系统注入族名集合——sys 路径来源值域（systemauto + 延迟族 + timeback 收拢摘要）。</summary>
-        internal static readonly string[] SysKindFamily = new string[] { SysKindSystemAuto, SysKindSleep, SysKindTimer, SysKindDelay, SysKindRestart, SysKindTimeback };
+        /// <summary>系统注入族名集合——sys 路径来源值域（systemauto + 延迟族 + timeback 收拢摘要 + HTTP 通道）。</summary>
+        internal static readonly string[] SysKindFamily = new string[] { SysKindSystemAuto, SysKindSleep, SysKindTimer, SysKindDelay, SysKindRestart, SysKindTimeback, SysKindChannel };
         /// <summary>系统注入行头前缀——固定标记（判据规范见 `L1/Discipline.md` §三：user 消息内容以该前缀开头 = 系统注入）。</summary>
         internal const string SysInjectPrefix = "[systemauto]";
         /// <summary>来源标记——人工输入（视图层不写 src 字段；缺省即人工）。</summary>

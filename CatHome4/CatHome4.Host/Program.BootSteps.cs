@@ -301,6 +301,12 @@ namespace CH4
                 Path.Combine(dataRoot, "Data", "secrets"));
             DataBox.Bind<CH_QqBotConfigStore>(qqBotStore);
             ReportStorageDegrade(qqBotStore.StorageWritable, qqBotStore.StorageError, "QQ 机器人配置池");
+            // A405 HTTP 注入通道池——channels.json 明文（零 Key）+ Data/secrets/channels.cfg 独立秘密文件
+            CH_ChannelConfigStore channelStore = new CH_ChannelConfigStore(
+                Path.Combine(dataRoot, "Data", "config"),
+                Path.Combine(dataRoot, "Data", "secrets"));
+            DataBox.Bind<CH_ChannelConfigStore>(channelStore);
+            ReportStorageDegrade(channelStore.StorageWritable, channelStore.StorageError, "HTTP 注入通道池");
             // M1 语料面 Runtime——默认端点语义（QuickCat 工单 llm.stream 消费面；Guid.Empty=每次调用实时解析默认配置）
             _llmRuntime = new DeepSeekLlmRuntime(apiConfigStore, Guid.Empty, llmConfig);
             DataBox.Bind<ILlmRuntime>(_llmRuntime);

@@ -28,6 +28,12 @@ namespace CatHome4.Http
                 await next();
                 return;
             }
+            // A405——通道注入端点：外部程序持通道 Key（不是 console 口令），认证在处理器内完成，此处放行
+            if (string.Equals(path, "/api/v1/channels/inject", StringComparison.Ordinal))
+            {
+                await next();
+                return;
+            }
             bool open = string.Equals(path, "/api/v1/auth/status", StringComparison.Ordinal)
                 || string.Equals(path, "/api/v1/auth/login", StringComparison.Ordinal);
             bool hasPassword = _consoleAuth.HasPassword();
