@@ -1,0 +1,15 @@
+{
+  "name": "biliwatch",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "B 站直播状态监控 → CH4 通道播报（服务端 TS · 前端纯 JS · 运行时零依赖）",
+  "main": "server.ts",
+  "scripts": {
+    "start": "node server.ts",
+    "selfcheck": "node server.ts --selfcheck"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6"
+  }
+}

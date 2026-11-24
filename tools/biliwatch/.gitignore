@@ -1,0 +1,5 @@
+# 运行时数据不入库——配置含通道 Key，事件流水含运行痕迹。
+data/
+
+# 编译期依赖（仅 @types/node，运行时零依赖）——按 package.json 复现。
+node_modules/

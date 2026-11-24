@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>biliwatch</title>
+<style>
+:root {
+    --bg: #12141a;
+    --panel: #1a1d26;
+    --line: #2a2f3d;
+    --txt: #d6dae4;
+    --dim: #7f8798;
+    --ok: #4ec9a5;
+    --warn: #e2b33c;
+    --err: #e2574c;
+    --acc: #6aa9ff;
+}
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--txt);
+    font: 13px/1.5 "Segoe UI", "PingFang SC", "Noto Sans CJK SC", sans-serif;
+}
+header {
+    display: flex;
+    align-items: baseline;
+    gap: 14px;
+    flex-wrap: wrap;
+    padding: 0 2px 12px;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 14px;
+}
+h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .5px; }
+.meta { color: var(--dim); font-size: 12px; }
+#status { margin-left: auto; font-size: 12px; }
+.grid { display: grid; grid-template-columns: minmax(320px, 430px) 1fr; gap: 12px; align-items: start; }
+@media (max-width: 920px) { .grid { grid-template-columns: 1fr; } }
+.card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+}
+.card h2 {
+    margin: 0 0 10px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+label { display: block; font-size: 12px; color: var(--dim); margin: 8px 0 3px; }
+input[type=text], input[type=password], input[type=number], textarea {
+    width: 100%;
+    background: #141821;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    color: var(--txt);
+    padding: 6px 8px;
+    font: 12px/1.4 inherit;
+    font-family: inherit;
+}
+textarea { resize: vertical; min-height: 54px; font-family: Consolas, monospace; }
+input:focus, textarea:focus { outline: none; border-color: var(--acc); }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--txt); margin: 8px 0; }
+.check input { accent-color: var(--acc); }
+button {
+    background: #232838;
+    color: var(--txt);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 7px 12px;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+}
+button:hover { border-color: var(--acc); color: #fff; }
+button.primary { background: #2b4a7d; border-color: #3a5f9c; }
+button.danger { background: #3a2328; border-color: #5a3339; padding: 6px 9px; }
+.btns { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th { text-align: left; color: var(--dim); font-weight: 400; padding: 3px 4px; font-size: 11px; border-bottom: 1px solid var(--line); }
+td { padding: 3px 4px; border-bottom: 1px solid #1f232e; font-variant-numeric: tabular-nums; }
+td.ell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--dim); margin-right: 5px; }
+.dot.live { background: var(--err); box-shadow: 0 0 6px var(--err); }
+.dot.ok { background: var(--ok); }
+.dot.bad { background: var(--warn); }
+.tag { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #232838; color: var(--dim); white-space: nowrap; }
+.tag.live { background: #3a2328; color: #f0a49d; }
+.tag.good { background: #1e3a30; color: #8fe0c2; }
+.tag.bad { background: #3a2328; color: #f0a49d; }
+.tag.warn { background: #3a3320; color: #e8cf8a; }
+.roomline { display: grid; grid-template-columns: 1fr 1fr auto auto; gap: 6px; align-items: center; margin-bottom: 6px; }
+.roomline input[type=text] { margin: 0; }
+.roomline label { margin: 0; display: flex; align-items: center; gap: 4px; color: var(--dim); white-space: nowrap; }
+.notice { margin-top: 10px; font-size: 12px; border-radius: 6px; padding: 8px 10px; display: none; white-space: pre-wrap; }
+.notice.ok { display: block; background: rgba(78, 201, 165, .1); color: #8fe0c2; border: 1px solid #2f6a56; }
+.notice.bad { display: block; background: rgba(226, 87, 76, .1); color: #f0a49d; border: 1px solid #6a2f2f; }
+#errors {
+    margin-top: 12px;
+    border: 1px solid var(--err);
+    border-radius: 8px;
+    padding: 10px 14px;
+    background: rgba(226, 87, 76, .08);
+    font-size: 12px;
+    color: #f0a49d;
+}
+#errors.hidden { display: none; }
+#errors ul { margin: 6px 0 0; padding-left: 18px; }
+.hint { color: var(--dim); font-size: 11px; margin-top: 4px; }
+.empty { color: var(--dim); font-size: 12px; padding: 6px 2px; }
+</style>
+</head>
+<body>
+<header>
+    <h1>biliwatch</h1>
+    <div class="meta" id="host">连接中…</div>
+    <div id="status" class="meta">—</div>
+</header>
+
+<div class="grid">
+    <div>
+        <div class="card">
+            <h2>通道出口</h2>
+            <label>CH4 播报端点</label>
+            <input type="text" id="cfgEndpoint" placeholder="http://127.0.0.1:8080/api/v1/channels/publish">
+            <label>通道 Key</label>
+            <input type="password" id="cfgKey" placeholder="未配置">
+            <div class="hint" id="keyHint">CH4 控制台「HTTP 注入通道」区块新建通道 → 一次性明文 Key 填这里。</div>
+            <div class="check"><input type="checkbox" id="cfgPubEnabled"><label for="cfgPubEnabled">出口启用（关闭 = 只检测不发送）</label></div>
+        </div>
+
+        <div class="card">
+            <h2>轮询与通知</h2>
+            <div class="row2">
+                <div><label>轮询间隔（秒）</label><input type="number" id="cfgInterval" min="5" max="3600"></div>
+                <div><label>请求超时（毫秒）</label><input type="number" id="cfgTimeout" min="1000" max="30000"></div>
+            </div>
+            <div class="row2">
+                <div><label>失败退避上限（秒）</label><input type="number" id="cfgBackoff" min="30" max="3600"></div>
+            </div>
+            <div class="check"><input type="checkbox" id="cfgOnLive"><label for="cfgOnLive">开播通知</label></div>
+            <div class="check"><input type="checkbox" id="cfgOnOffline"><label for="cfgOnOffline">下播通知</label></div>
+        </div>
+
+        <div class="card">
+            <h2>房间</h2>
+            <div id="roomList"></div>
+            <button onclick="addRoom('', '', true)">+ 添加房间</button>
+        </div>
+
+        <div class="card">
+            <h2>消息模板</h2>
+            <label>开播</label>
+            <textarea id="cfgTplLive"></textarea>
+            <label>下播</label>
+            <textarea id="cfgTplOffline"></textarea>
+            <div class="hint">占位符：{name} 备注或标题 · {roomId} · {title} · {uid} · {url} · {duration}（下播为时长）</div>
+        </div>
+
+        <div class="card">
+            <div class="btns">
+                <button class="primary" onclick="save()">保存配置</button>
+                <button onclick="checkNow()">立即检查</button>
+                <button onclick="sendTest()">发送测试消息</button>
+            </div>
+            <div class="notice" id="notice"></div>
+        </div>
+    </div>
+
+    <div>
+        <div class="card">
+            <h2>房间状态</h2>
+            <table>
+                <thead><tr><th>房间</th><th>状态</th><th>标题</th><th>上次检查</th><th>失败</th></tr></thead>
+                <tbody id="roomBody"></tbody>
+            </table>
+            <div class="empty" id="roomEmpty">尚未配置房间。</div>
+        </div>
+
+        <div class="card">
+            <h2>事件流水</h2>
+            <table>
+                <thead><tr><th>时刻</th><th>类型</th><th>房间</th><th>内容</th></tr></thead>
+                <tbody id="eventBody"></tbody>
+            </table>
+            <div class="empty" id="eventEmpty">暂无事件。</div>
+        </div>
+
+        <div id="errors" class="hidden"><strong>服务错误</strong><ul id="errorList"></ul></div>
+    </div>
+</div>
+
+<script>
+(function () {
+    'use strict';
+
+    var REFRESH_MS = 3000;
+    var formFilled = false;
+
+    function $(id) {
+        return document.getElementById(id);
+    }
+
+    function fmtClock(ms) {
+        if (!ms) {
+            return '—';
+        }
+        var d = new Date(ms);
+        function p(n) {
+            return (n < 10 ? '0' : '') + n;
+        }
+        return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+
+    function fmtAgo(ms) {
+        if (!ms) {
+            return '—';
+        }
+        var s = Math.max(0, Math.round((Date.now() - ms) / 1000));
+        if (s < 60) {
+            return s + ' 秒前';
+        }
+        if (s < 3600) {
+            return Math.floor(s / 60) + ' 分前';
+        }
+        return Math.floor(s / 3600) + ' 小时前';
+    }
+
+    function fmtDuration(sec) {
+        if (sec === null || sec === undefined) {
+            return '—';
+        }
+        var d = Math.floor(sec / 86400);
+        var h = Math.floor((sec % 86400) / 3600);
+        var m = Math.floor((sec % 3600) / 60);
+        if (d > 0) {
+            return d + ' 天 ' + h + ' 小时';
+        }
+        if (h > 0) {
+            return h + ' 小时 ' + m + ' 分';
+        }
+        return m + ' 分 ' + (sec % 60) + ' 秒';
+    }
+
+    function esc(s) {
+        return String(s === null || s === undefined ? '' : s)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    // [段2] 渲染
+
+    function notice(kind, text) {
+        var el = $('notice');
+        if (!text) {
+            el.className = 'notice';
+            el.textContent = '';
+            return;
+        }
+        el.className = 'notice ' + (kind || '');
+        el.textContent = text;
+    }
+
+    function fillForm(cfg) {
+        $('cfgEndpoint').value = cfg.publish.endpoint || '';
+        $('cfgKey').value = '';
+        $('cfgKey').placeholder = cfg.publish.keySet ? cfg.publish.keyMasked + '（已配置 · 留空即不改）' : '未配置';
+        $('cfgPubEnabled').checked = cfg.publish.enabled !== false;
+        $('cfgInterval').value = cfg.poll.intervalSec;
+        $('cfgTimeout').value = cfg.poll.timeoutMs;
+        $('cfgBackoff').value = cfg.poll.backoffMaxSec;
+        $('cfgOnLive').checked = cfg.notify.onLive !== false;
+        $('cfgOnOffline').checked = cfg.notify.onOffline !== false;
+        $('cfgTplLive').value = cfg.templates.live || '';
+        $('cfgTplOffline').value = cfg.templates.offline || '';
+        $('roomList').innerHTML = '';
+        var rooms = cfg.rooms || [];
+        for (var i = 0; i < rooms.length; i = i + 1) {
+            addRoom(rooms[i].roomId, rooms[i].note, rooms[i].enabled !== false);
+        }
+        if (rooms.length === 0) {
+            addRoom('', '', true);
+        }
+    }
+
+    function addRoom(roomId, note, enabled) {
+        var line = document.createElement('div');
+        line.className = 'roomline';
+
+        var idInput = document.createElement('input');
+        idInput.type = 'text';
+        idInput.className = 'rId';
+        idInput.placeholder = '房间号';
+        idInput.value = roomId || '';
+
+        var noteInput = document.createElement('input');
+        noteInput.type = 'text';
+        noteInput.className = 'rNote';
+        noteInput.placeholder = '备注（可空）';
+        noteInput.value = note || '';
+
+        var lab = document.createElement('label');
+        var on = document.createElement('input');
+        on.type = 'checkbox';
+        on.className = 'rOn';
+        on.checked = enabled !== false;
+        lab.appendChild(on);
+        lab.appendChild(document.createTextNode('启用'));
+
+        var del = document.createElement('button');
+        del.className = 'danger';
+        del.textContent = '×';
+        del.onclick = function () {
+            line.remove();
+        };
+
+        line.appendChild(idInput);
+        line.appendChild(noteInput);
+        line.appendChild(lab);
+        line.appendChild(del);
+        $('roomList').appendChild(line);
+    }
+
+    function stateTag(r) {
+        if (!r.enabled) {
+            return '<span class="tag">已停用</span>';
+        }
+        if (r.error) {
+            return '<span class="tag bad">取数失败</span>';
+        }
+        if (r.live) {
+            return '<span class="tag live">● 直播中</span>';
+        }
+        if (r.lastCheckAt) {
+            return '<span class="tag good">未开播</span>';
+        }
+        return '<span class="tag">待首检</span>';
+    }
+
+    function renderRooms(rooms) {
+        var html = '';
+        for (var i = 0; i < rooms.length; i = i + 1) {
+            var r = rooms[i];
+            var name = r.note ? r.note + '（' + r.roomId + '）' : r.roomId;
+            html = html + '<tr>' +
+                '<td class="ell" title="' + esc(name) + '">' + esc(name) + '</td>' +
+                '<td>' + stateTag(r) + '</td>' +
+                '<td class="ell" title="' + esc(r.title) + '">' + esc(r.title || '—') + '</td>' +
+                '<td>' + fmtAgo(r.lastCheckAt) + '</td>' +
+                '<td>' + (r.failCount ? '<span class="tag bad">' + r.failCount + '</span>' : '0') + '</td>' +
+                '</tr>';
+        }
+        $('roomBody').innerHTML = html;
+        $('roomEmpty').style.display = rooms.length ? 'none' : 'block';
+    }
+
+    function eventClass(type) {
+        if (type === 'live' || type === 'offline') {
+            return 'tag live';
+        }
+        if (type === 'sent') {
+            return 'tag good';
+        }
+        if (type === 'send-fail' || type === 'check-fail') {
+            return 'tag bad';
+        }
+        if (type === 'sent-partial' || type === 'baseline') {
+            return 'tag warn';
+        }
+        return 'tag';
+    }
+
+    function renderEvents(events) {
+        var html = '';
+        for (var i = 0; i < events.length; i = i + 1) {
+            var e = events[i];
+            html = html + '<tr>' +
+                '<td>' + fmtClock(Date.parse(e.ts)) + '</td>' +
+                '<td><span class="' + eventClass(e.type) + '">' + esc(e.type) + '</span></td>' +
+                '<td>' + esc(e.roomId || '—') + '</td>' +
+                '<td class="ell" title="' + esc(e.text) + '">' + esc(e.text) + '</td>' +
+                '</tr>';
+        }
+        $('eventBody').innerHTML = html;
+        $('eventEmpty').style.display = events.length ? 'none' : 'block';
+    }
+
+    function renderErrors(errors) {
+        var box = $('errors');
+        if (!errors || !errors.length) {
+            box.className = 'hidden';
+            return;
+        }
+        box.className = '';
+        var li = '';
+        for (var i = 0; i < errors.length; i = i + 1) {
+            li = li + '<li>' + esc(errors[i]) + '</li>';
+        }
+        $('errorList').innerHTML = li;
+    }
+
+    function setHost(data) {
+        $('host').textContent = data.host + ' · v' + data.version + ' · 运行 ' + fmtDuration(data.uptimeSec);
+    }
+
+    // [段3] 数据流
+
+    function load() {
+        fetch('/api/status', { cache: 'no-store' })
+            .then(function (r) {
+                if (!r.ok) {
+                    throw new Error('HTTP ' + r.status);
+                }
+                return r.json();
+            })
+            .then(function (data) {
+                if (!formFilled) {
+                    fillForm(data.config);
+                    formFilled = true;
+                }
+                renderRooms(data.rooms);
+                renderEvents(data.events);
+                renderErrors(data.errors);
+                setHost(data);
+                var st = $('status');
+                st.textContent = '● 实时';
+                st.style.color = 'var(--ok)';
+            })
+            .catch(function (err) {
+                var st = $('status');
+                st.textContent = '● 断开：' + err.message;
+                st.style.color = 'var(--err)';
+            });
+    }
+
+    function collect() {
+        var rooms = [];
+        var lines = document.querySelectorAll('#roomList .roomline');
+        for (var i = 0; i < lines.length; i = i + 1) {
+            var rid = lines[i].querySelector('.rId').value.trim();
+            var note = lines[i].querySelector('.rNote').value.trim();
+            if (!rid && !note) {
+                continue;
+            }
+            rooms.push({
+                roomId: rid,
+                note: note,
+                enabled: lines[i].querySelector('.rOn').checked
+            });
+        }
+        return {
+            rooms: rooms,
+            poll: {
+                intervalSec: Number($('cfgInterval').value),
+                timeoutMs: Number($('cfgTimeout').value),
+                backoffMaxSec: Number($('cfgBackoff').value)
+            },
+            publish: {
+                enabled: $('cfgPubEnabled').checked,
+                endpoint: $('cfgEndpoint').value.trim(),
+                key: $('cfgKey').value.trim()
+            },
+            notify: {
+                onLive: $('cfgOnLive').checked,
+                onOffline: $('cfgOnOffline').checked
+            },
+            templates: {
+                live: $('cfgTplLive').value,
+                offline: $('cfgTplOffline').value
+            }
+        };
+    }
+
+    function save() {
+        notice('', '');
+        fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(collect())
+        })
+            .then(function (r) {
+                return r.json().then(function (j) {
+                    return { status: r.status, json: j };
+                });
+            })
+            .then(function (res) {
+                if (!res.json || !res.json.ok) {
+                    notice('bad', '保存失败：' + (res.json && res.json.error ? res.json.error : 'HTTP ' + res.status));
+                    return;
+                }
+                var w = res.json.warnings || [];
+                notice(w.length ? 'bad' : 'ok', w.length ? '配置已保存（有告警）\n' + w.join('\n') : '配置已保存。');
+                fillForm(res.json.config);
+                load();
+            })
+            .catch(function (err) {
+                notice('bad', '保存失败：' + err.message);
+            });
+    }
+
+    function checkNow() {
+        notice('', '');
+        fetch('/api/check', { method: 'POST' })
+            .then(function (r) {
+                return r.json();
+            })
+            .then(function (j) {
+                notice(j.ok ? 'ok' : 'bad', j.ok ? '已触发一次检查——结果见事件流水。' : '检查失败：' + (j.error || ''));
+                load();
+            })
+            .catch(function (err) {
+                notice('bad', '检查失败：' + err.message);
+            });
+    }
+
+    function sendTest() {
+        notice('', '');
+        fetch('/api/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        })
+            .then(function (r) {
+                return r.json();
+            })
+            .then(function (j) {
+                if (!j.ok) {
+                    notice('bad', '测试发送失败：' + (j.error || ''));
+                } else {
+                    var last = j.events && j.events.length ? j.events[0] : null;
+                    var okType = last && (last.type === 'sent' || last.type === 'sent-partial');
+                    notice(okType ? 'ok' : 'bad', '正文：' + j.text + '\n结果：' + (last ? last.type + ' · ' + last.text : '无事件'));
+                }
+                load();
+            })
+            .catch(function (err) {
+                notice('bad', '测试失败：' + err.message);
+            });
+    }
+
+    window.addRoom = addRoom;
+    window.save = save;
+    window.checkNow = checkNow;
+    window.sendTest = sendTest;
+
+    load();
+    setInterval(load, REFRESH_MS);
+})();
+</script>
+</body>
+</html>
