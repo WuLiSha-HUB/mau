@@ -32,7 +32,7 @@ function renderAppearanceRow(apc) {
     var tdId = document.createElement('td');
     tdId.textContent = apc.appearanceId || '';
     tdId.style.color = 'var(--ch-fg-weak)';
-    tdId.style.fontSize = '10px';
+    tdId.style.fontSize = 'var(--ch-fs-tag)';
     tdId.style.wordBreak = 'break-all';
     tr.appendChild(tdId);
     var tdPet = document.createElement('td');

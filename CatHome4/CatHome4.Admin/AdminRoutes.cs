@@ -98,6 +98,8 @@ namespace CatHome4.Admin
             sink.MapPost("/api/v1/channels/rotate", (Delegate)AdminService.HandleChannelsRotate);
             sink.MapPost("/api/v1/channels/delete", (Delegate)AdminService.HandleChannelsDelete);
             sink.MapPost("/api/v1/channels/inject", (Delegate)AdminService.HandleChannelsInject);
+            // A406——下游出口播报（同一通道 Key 的第二语义：投递到 QQ 群；认证同上，在此精确豁免）
+            sink.MapPost("/api/v1/channels/publish", (Delegate)AdminService.HandleChannelsPublish);
         }
     }
 }

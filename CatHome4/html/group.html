@@ -44,7 +44,7 @@
         .grp-divider::before,
         .grp-divider::after { content: ''; flex: 1 1 auto; height: 1px; background: var(--ch-line); }
         .grp-divider span { flex: 0 0 auto; }
-        .grp-avatar { flex: 0 0 auto; width: 34px; height: 34px; margin-top: 2px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: bold; line-height: 1; color: var(--ch-bg-page); background: var(--gc-color, var(--ch-fg-inverse)); box-shadow: 0 0 0 1px var(--ch-line); user-select: none; }
+        .grp-avatar { flex: 0 0 auto; width: 34px; height: 34px; margin-top: 2px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: var(--ch-fs-strong); font-weight: bold; line-height: 1; color: var(--ch-bg-page); background: var(--gc-color, var(--ch-fg-inverse)); box-shadow: 0 0 0 1px var(--ch-line); user-select: none; }
         /* A404——猫侧头像可点（打开该猫会话端口）；人侧头像不跳 */
         .chat-row.assistant .grp-avatar { cursor: pointer; }
         .grp-body { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
@@ -85,8 +85,8 @@
         #groupCats { position: fixed; left: calc(var(--ch-col-left) - var(--ch-send-w) - 6px); top: 0; width: var(--ch-send-w); padding-top: 10px; display: flex; flex-direction: column; gap: 8px; align-items: center; overflow-y: auto; scrollbar-width: none; z-index: 6; }
         #groupCats::-webkit-scrollbar { width: 0; height: 0; }
         .gc-item { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 0 0 auto; }
-        .gc-crown { position: absolute; top: -7px; left: 50%; transform: translateX(-50%); z-index: 2; font-size: 11px; line-height: 1; pointer-events: none; filter: drop-shadow(0 0 2px var(--ch-shadow-strong)); }
-        .gc-ball { position: relative; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px; font-weight: bold; color: var(--ch-bg-page); background: var(--gc-color, var(--ch-fg-inverse)); box-shadow: 0 0 0 1px var(--ch-line); }
+        .gc-crown { position: absolute; top: -7px; left: 50%; transform: translateX(-50%); z-index: 2; font-size: var(--ch-fs-tag); line-height: 1; pointer-events: none; filter: drop-shadow(0 0 2px var(--ch-shadow-strong)); }
+        .gc-ball { position: relative; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: var(--ch-fs-title); font-weight: bold; color: var(--ch-bg-page); background: var(--gc-color, var(--ch-fg-inverse)); box-shadow: 0 0 0 1px var(--ch-line); }
         .gc-item.off .gc-ball { opacity: 0.35; }
         .gc-dot { position: absolute; right: -1px; bottom: -1px; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ch-bg-page); background: var(--ch-fg-faint); }
         .gc-dot.link { background: var(--ch-state-link); }
@@ -98,10 +98,10 @@
         .gc-item.busy .gc-dot { animation: chat-phase-pulse 1.8s ease-in-out infinite; }
         /* A399——非 IDLE 态描边转白（与 idle / 未运行的深色挖孔描边区分；尺寸与比例不变，只改颜色） */
         .gc-item.busy .gc-dot { border-color: var(--ch-fg-inverse); }
-        .gc-name { font-size: 11px; color: var(--ch-fg-weak); max-width: 60px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .gc-name { font-size: var(--ch-fs-tag); color: var(--ch-fg-weak); max-width: 60px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .gc-item.off .gc-name { color: var(--ch-fg-faint); }
         .gc-name .gc-admin { color: var(--ch-warn); }
-        .gc-tok { font-size: 10px; color: var(--ch-fg-faint); }
+        .gc-tok { font-size: var(--ch-fs-tag); color: var(--ch-fg-faint); }
         /* ═══ A320 猫主题色——气泡**只染描边**（底色保持 --ch-chat-ai-bg）；右侧滚动带刻度同取主题色 ═══ */
         #chatMsgs .chat-row.assistant .chat-bubble { --bubble-line: var(--gc-color, var(--ch-bubble-line-text)); }
         /* 刻度——scroll.js 在段首行带 --gc-color 时复制该变量并挂 gc-tint（无主题色的页面不受影响；失败红优先） */

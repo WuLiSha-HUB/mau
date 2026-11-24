@@ -209,5 +209,63 @@ namespace CatHome4.Core.Tests
             Assert.StartsWith("ch_", first);
             Assert.True(first.Length <= CH_ChannelConfigStore.KeyMaxLength);
         }
+
+        /// <summary>A406——出口字段往返：机器人 / 群白名单落盘读回一致；白名单空项与重复项被归一。</summary>
+        [Fact]
+        public void Save_RoundTripsExitFields()
+        {
+            CH_ChannelConfigStore store = NewStore();
+            CH_ChannelConfig config = MakeConfig("exit", "cat-n");
+            config.BotKey = "  bot-1  ";
+            config.Groups = new string[] { "playground", " ", "OPS", "ops" };
+            store.Save(config, "ch_exit");
+            CH_ChannelConfig loaded;
+            Assert.True(store.TryGet(config.ChannelId, out loaded));
+            Assert.Equal(2, loaded.SchemaVersion);
+            Assert.Equal("bot-1", loaded.BotKey);
+            Assert.Equal(2, loaded.Groups.Length);
+            Assert.Equal("playground", loaded.Groups[0]);
+            Assert.Equal("OPS", loaded.Groups[1]);
+        }
+
+        /// <summary>A406——旧档（schema 1、无出口字段）照常加载：读作空值，不抛异常（inject 面不受影响）。</summary>
+        [Fact]
+        public void Load_AcceptsLegacySchemaOne()
+        {
+            string path = Path.Combine(_dir, "channels.json");
+            Guid id = Guid.NewGuid();
+            string legacy = "[{\"schemaVersion\":1,\"channelId\":\"" + id.ToString("D")
+                + "\",\"displayName\":\"legacy\",\"catKey\":\"cat-o\"}]";
+            File.WriteAllText(path, legacy);
+            CH_ChannelConfigStore store = NewStore();
+            CH_ChannelConfig[] configs = store.GetAll();
+            Assert.Single(configs);
+            Assert.Equal("legacy", configs[0].DisplayName);
+            Assert.Equal("", configs[0].BotKey);
+            Assert.Empty(configs[0].Groups);
+        }
+        /// <summary>A406——纯播报通道：CatKey 可空，只要有出口机器人即可落盘。</summary>
+        [Fact]
+        public void Save_AllowsPublishOnlyChannel()
+        {
+            CH_ChannelConfigStore store = NewStore();
+            CH_ChannelConfig config = MakeConfig("bcast", "");
+            config.BotKey = "  bot-1  ";
+            config.Groups = new string[] { "ops" };
+            store.Save(config, "ch_bcast");
+            CH_ChannelConfig loaded;
+            Assert.True(store.TryGet(config.ChannelId, out loaded));
+            Assert.Equal("", loaded.CatKey);
+            Assert.Equal("bot-1", loaded.BotKey);
+            Assert.Single(loaded.Groups);
+        }
+        /// <summary>A406——两项能力皆空：通道存在却什么都做不了，保存必须被拒（失败可见）。</summary>
+        [Fact]
+        public void Save_RejectsChannelWithoutAnyAbility()
+        {
+            CH_ChannelConfigStore store = NewStore();
+            CH_ChannelConfig config = MakeConfig("ghost", "");
+            Assert.Throws<InvalidDataException>(() => store.Save(config, "ch_ghost"));
+        }
     }
 }

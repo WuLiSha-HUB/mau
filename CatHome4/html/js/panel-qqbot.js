@@ -37,7 +37,7 @@ function renderQqBotRow(bot) {
     tr.appendChild(tdName);
     var tdAppId = document.createElement('td');
     tdAppId.textContent = bot.appId || '';
-    tdAppId.style.fontSize = '10px';
+    tdAppId.style.fontSize = 'var(--ch-fs-tag)';
     tdAppId.style.wordBreak = 'break-all';
     tr.appendChild(tdAppId);
     var tdEnv = document.createElement('td');
@@ -47,7 +47,7 @@ function renderQqBotRow(bot) {
     var tdSecret = document.createElement('td');
     tdSecret.textContent = bot.hasSecret ? (bot.appSecret || '已配置') : '（未配置）';
     tdSecret.style.color = bot.hasSecret ? 'var(--ch-ok-weak)' : 'var(--ch-fg-weak)';
-    tdSecret.style.fontSize = '10px';
+    tdSecret.style.fontSize = 'var(--ch-fs-tag)';
     tr.appendChild(tdSecret);
     var tdOp = document.createElement('td');
     tdOp.style.whiteSpace = 'nowrap';
@@ -238,7 +238,7 @@ function renderQqGroups(d) {
         tr.appendChild(tdAlias);
         var tdOpen = document.createElement('td');
         tdOpen.textContent = g.openId || '';
-        tdOpen.style.fontSize = '10px';
+        tdOpen.style.fontSize = 'var(--ch-fs-tag)';
         tdOpen.style.wordBreak = 'break-all';
         tr.appendChild(tdOpen);
         var tdRole = document.createElement('td');
@@ -253,7 +253,7 @@ function renderQqGroups(d) {
         tr.appendChild(tdPro);
         var tdSeen = document.createElement('td');
         tdSeen.textContent = g.lastSeen || '';
-        tdSeen.style.fontSize = '10px';
+        tdSeen.style.fontSize = 'var(--ch-fs-tag)';
         tr.appendChild(tdSeen);
         var tdOp = document.createElement('td');
         tdOp.style.whiteSpace = 'nowrap';

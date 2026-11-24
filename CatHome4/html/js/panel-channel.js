@@ -6,6 +6,8 @@
 var chnTableBody = document.querySelector('#chnTable tbody');
 var chnMsgEl = document.getElementById('chnMsg');
 var chnCatSel = document.getElementById('chnNewCat');
+var chnBotSel = document.getElementById('chnNewBot');
+var chnGroupsEl = document.getElementById('chnNewGroups');
 var editingChnId = '';
 
 function loadChannels() {
@@ -30,27 +32,46 @@ function renderChannelRow(ch) {
     tdName.style.color = 'var(--ch-identity)';
     tr.appendChild(tdName);
     var tdCat = document.createElement('td');
-    var catLabel = ch.catName || '（猫不存在）';
-    tdCat.textContent = catLabel;
-    tdCat.style.color = ch.catName ? 'var(--ch-fg)' : 'var(--ch-err, #c86a6a)';
+    if (!ch.catKey) {
+        // A406——纯播报通道：没有注入目标
+        tdCat.textContent = '（不接注入）';
+        tdCat.style.color = 'var(--ch-fg-weak)';
+    } else {
+        var catLabel = ch.catName || '（猫不存在）';
+        tdCat.textContent = catLabel;
+        tdCat.style.color = ch.catName ? 'var(--ch-fg)' : 'var(--ch-err, #c86a6a)';
+    }
     if (ch.catKey) {
         var keyHint = document.createElement('span');
         keyHint.textContent = ' · ' + ch.catKey;
         keyHint.style.color = 'var(--ch-fg-faint)';
-        keyHint.style.fontSize = '10px';
+        keyHint.style.fontSize = 'var(--ch-fs-tag)';
         tdCat.appendChild(keyHint);
     }
     tr.appendChild(tdCat);
+    // [段1.1] 出口列——A406：有出口机器人 + 白名单才算可播报（空白名单 = 禁发，如实显示）
+    var tdExit = document.createElement('td');
+    tdExit.style.fontSize = 'var(--ch-fs-tag)';
+    if (ch.hasExit) {
+        var botLabel = ch.botName || '（机器人不在池内）';
+        tdExit.textContent = botLabel + ' · ' + ((ch.groups || []).length) + ' 群';
+        tdExit.style.color = ch.botName ? 'var(--ch-fg)' : 'var(--ch-err, #c86a6a)';
+        tdExit.title = (ch.groups || []).join(' / ') || '白名单为空 = 禁发';
+    } else {
+        tdExit.textContent = '仅注入';
+        tdExit.style.color = 'var(--ch-fg-weak)';
+    }
+    tr.appendChild(tdExit);
     var tdId = document.createElement('td');
     tdId.textContent = shortChannelId(ch.channelId);
     tdId.title = ch.channelId || '';
-    tdId.style.fontSize = '10px';
+    tdId.style.fontSize = 'var(--ch-fs-tag)';
     tdId.style.color = 'var(--ch-fg-faint)';
     tr.appendChild(tdId);
     var tdKey = document.createElement('td');
     tdKey.textContent = ch.hasKey ? (ch.key || '已配置') : '（未配置）';
     tdKey.style.color = ch.hasKey ? 'var(--ch-ok-weak)' : 'var(--ch-fg-weak)';
-    tdKey.style.fontSize = '10px';
+    tdKey.style.fontSize = 'var(--ch-fs-tag)';
     tdKey.style.wordBreak = 'break-all';
     tr.appendChild(tdKey);
     var tdOp = document.createElement('td');
@@ -102,6 +123,11 @@ function loadChannelCats(onDone) {
             var cats = d.cats || [];
             var keep = chnCatSel.value;
             chnCatSel.textContent = '';
+            // A406——绑定猫可空：纯播报通道不接注入
+            var noneCatOp = document.createElement('option');
+            noneCatOp.value = '';
+            noneCatOp.textContent = '（不接注入——仅播报）';
+            chnCatSel.appendChild(noneCatOp);
             for (var i = 0; i < cats.length; i = i + 1) {
                 var op = document.createElement('option');
                 op.value = cats[i].id || '';
@@ -114,10 +140,48 @@ function loadChannelCats(onDone) {
         .catch(function (e) { chnMsgEl.textContent = '读取猫列表失败: ' + e.message; });
 }
 
+// [段1.2] 出口机器人下拉——A406：数据源 GET /api/v1/qqbot-apis（QQ 机器人池）；首项「（不接出口）」
+function loadChannelBots(onDone) {
+    fetch('/api/v1/qqbot-apis')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+            var bots = d.items || [];
+            var keep = chnBotSel.value;
+            chnBotSel.textContent = '';
+            var noneOp = document.createElement('option');
+            noneOp.value = '';
+            noneOp.textContent = '（不接出口）';
+            chnBotSel.appendChild(noneOp);
+            for (var i = 0; i < bots.length; i = i + 1) {
+                var op = document.createElement('option');
+                op.value = bots[i].qqBotId || '';
+                op.textContent = (bots[i].displayName || bots[i].appId || '') + (bots[i].isDefault ? ' ★' : '');
+                chnBotSel.appendChild(op);
+            }
+            if (keep.length > 0) { chnBotSel.value = keep; }
+            if (onDone) { onDone(); }
+        })
+        .catch(function (e) { chnMsgEl.textContent = '读取机器人池失败: ' + e.message; });
+}
+
+// 群白名单文本 → 数组（中英文逗号 / 分号分隔；去空白项）
+function splitChannelGroups(text) {
+    var raw = (text || '').replace(/，/g, ',').replace(/；/g, ',').replace(/;/g, ',');
+    var parts = raw.split(',');
+    var result = [];
+    for (var i = 0; i < parts.length; i = i + 1) {
+        var item = parts[i].trim();
+        if (item.length > 0) { result.push(item); }
+    }
+    return result;
+}
+
 function startChannelEdit(ch) {
     editingChnId = ch.channelId;
     document.getElementById('chnNewName').value = ch.displayName || '';
-    if (ch.catKey) { chnCatSel.value = ch.catKey; }
+    chnCatSel.value = ch.catKey || '';
+    chnBotSel.value = ch.botKey || '';
+    chnGroupsEl.value = (ch.groups || []).join(', ');
     document.getElementById('chnAddBtn').textContent = '保存';
     document.getElementById('chnCancelEdit').style.display = '';
     chnMsgEl.textContent = '编辑中: ' + ch.displayName + '（Key 不变）';
@@ -126,6 +190,8 @@ function startChannelEdit(ch) {
 function cancelChannelEdit() {
     editingChnId = '';
     document.getElementById('chnNewName').value = '';
+    chnBotSel.value = '';
+    chnGroupsEl.value = '';
     document.getElementById('chnAddBtn').textContent = '新建';
     document.getElementById('chnCancelEdit').style.display = 'none';
     chnMsgEl.textContent = '';
@@ -134,10 +200,12 @@ function cancelChannelEdit() {
 function channelSubmit() {
     var payload = {
         displayName: document.getElementById('chnNewName').value.trim(),
-        catKey: chnCatSel.value || ''
+        catKey: chnCatSel.value || '',
+        botKey: chnBotSel.value || '',
+        groups: splitChannelGroups(chnGroupsEl.value)
     };
     if (payload.displayName.length === 0) { chnMsgEl.textContent = '请填通道名'; return; }
-    if (payload.catKey.length === 0) { chnMsgEl.textContent = '请选绑定猫'; return; }
+    if (payload.catKey.length === 0 && payload.botKey.length === 0) { chnMsgEl.textContent = '至少选一项能力：绑定猫（注入）或出口机器人（播报）'; return; }
     var url = '/api/v1/channels';
     var creating = editingChnId.length === 0;
     if (!creating) {
@@ -220,3 +288,4 @@ document.getElementById('chnKeyDone').onclick = closeChannelKey;
 document.getElementById('chnKeyCopy').onclick = copyChannelKey;
 loadChannels();
 loadChannelCats();
+loadChannelBots();

@@ -327,7 +327,7 @@ namespace Mau.Runtime
             return trimmed;
         }
 
-        /// <summary>归一与校验通道配置——身份 / 通道名 / 绑定猫三者必填。</summary>
+        /// <summary>归一与校验通道配置——身份 / 通道名必填；CatKey 与 BotKey 至少一项（注入或播报，A406 起 CatKey 可空）；schema 1..2 均接受（读出即升 2）。</summary>
         /// <param name="config">通道配置</param>
         private static void NormalizeAndValidate(CH_ChannelConfig config)
         {
@@ -337,14 +337,59 @@ namespace Mau.Runtime
             }
             config.DisplayName = SafeText(config.DisplayName).Trim();
             config.CatKey = SafeText(config.CatKey).Trim();
-            if (config.SchemaVersion != 1
+            config.BotKey = SafeText(config.BotKey).Trim();
+            config.Groups = NormalizeGroups(config.Groups);
+            if (config.SchemaVersion < 1
+                || config.SchemaVersion > 2
                 || config.ChannelId == Guid.Empty
                 || config.DisplayName.Length == 0
-                || config.DisplayName.Length > DisplayNameMaxLength
-                || config.CatKey.Length == 0)
+                || config.DisplayName.Length > DisplayNameMaxLength)
             {
-                throw new InvalidDataException("通道配置非法（身份 / 通道名 / 绑定猫必填，通道名 ≤" + DisplayNameMaxLength.ToString() + "）。");
+                throw new InvalidDataException("通道配置非法（身份 / 通道名必填，通道名 ≤" + DisplayNameMaxLength.ToString() + "）。");
             }
+            // A406——CatKey 可空（纯播报通道）；但两项能力至少留一项，否则通道存在却什么都做不了
+            if (config.CatKey.Length == 0 && config.BotKey.Length == 0)
+            {
+                throw new InvalidDataException("通道配置非法（至少保留一项能力：绑定猫=注入，或出口机器人=播报）。");
+            }
+            // 旧档（schema 1）无出口字段，读作空（= 仅注入）；写出恒为 2
+            config.SchemaVersion = 2;
+        }
+
+        /// <summary>
+        /// 归一群白名单（A406）——逐项 Trim、去空白项、忽略大小写去重（保序）。
+        /// </summary>
+        /// <param name="groups">原始群白名单（可 null）</param>
+        /// <returns>非 null 白名单数组</returns>
+        private static string[] NormalizeGroups(string[]? groups)
+        {
+            if (groups == null || groups.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
+            List<string> result = new List<string>();
+            for (int i = 0; i < groups.Length; i = i + 1)
+            {
+                string item = SafeText(groups[i]).Trim();
+                if (item.Length == 0)
+                {
+                    continue;
+                }
+                bool duplicated = false;
+                for (int j = 0; j < result.Count; j = j + 1)
+                {
+                    if (string.Equals(result[j], item, StringComparison.OrdinalIgnoreCase))
+                    {
+                        duplicated = true;
+                        break;
+                    }
+                }
+                if (!duplicated)
+                {
+                    result.Add(item);
+                }
+            }
+            return result.ToArray();
         }
 
         /// <summary>读取秘密 cfg 并过滤全部键值对。</summary>
@@ -472,6 +517,25 @@ namespace Mau.Runtime
             result.ChannelId = source.ChannelId;
             result.DisplayName = source.DisplayName;
             result.CatKey = source.CatKey;
+            result.BotKey = SafeText(source.BotKey);
+            result.Groups = CopyGroups(source.Groups);
+            return result;
+        }
+
+        /// <summary>复制群白名单数组（A406——数组按引用共享会让读面副本被调用方改坏存储态）。</summary>
+        /// <param name="source">来源数组（可 null）</param>
+        /// <returns>独立副本</returns>
+        private static string[] CopyGroups(string[]? source)
+        {
+            if (source == null || source.Length == 0)
+            {
+                return Array.Empty<string>();
+            }
+            string[] result = new string[source.Length];
+            for (int i = 0; i < source.Length; i = i + 1)
+            {
+                result[i] = SafeText(source[i]);
+            }
             return result;
         }
     }

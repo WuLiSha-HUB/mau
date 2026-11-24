@@ -28,8 +28,9 @@ namespace CatHome4.Http
                 await next();
                 return;
             }
-            // A405——通道注入端点：外部程序持通道 Key（不是 console 口令），认证在处理器内完成，此处放行
-            if (string.Equals(path, "/api/v1/channels/inject", StringComparison.Ordinal))
+            // A405 / A406——通道外部端点（注入 / 播报）：外部程序持通道 Key（不是 console 口令），认证在处理器内完成，此处放行
+            if (string.Equals(path, "/api/v1/channels/inject", StringComparison.Ordinal)
+                || string.Equals(path, "/api/v1/channels/publish", StringComparison.Ordinal))
             {
                 await next();
                 return;

@@ -82,17 +82,17 @@ function buildAuthOverlay(mode, message) {
     box.style.cssText = 'width:360px;padding:18px 20px;background:#161b1a;border:1px solid #2b3330;border-radius:8px;color:#e6e1d8';
     var title = document.createElement('div');
     title.textContent = 'CatHome4 Console';
-    title.style.cssText = 'font-size:15px;font-weight:bold;color:#8fd6a8;margin-bottom:4px';
+    title.style.cssText = 'font-size:var(--ch-fs-strong,15px);font-weight:bold;color:#8fd6a8;margin-bottom:4px';
     var hint = document.createElement('div');
     hint.id = 'consoleAuthHint';
     hint.textContent = message || (mode === 'setup' ? '本机尚未设置 console 口令——请设置（至少 6 位，只存哈希）' : (mode === 'offline' ? 'SSE 断联，正在尝试重新连接…' : '请输入 console 口令'));
-    hint.style.cssText = 'font-size:12px;color:#9aa5a0;margin-bottom:10px;line-height:1.5;white-space:pre-wrap';
+    hint.style.cssText = 'font-size:var(--ch-fs-tag,12px);color:#9aa5a0;margin-bottom:10px;line-height:1.5;white-space:pre-wrap';
     var pwd = document.createElement('input');
     pwd.id = 'consoleAuthPwd';
     pwd.type = 'password';
     pwd.placeholder = 'console 口令';
     pwd.autocomplete = 'current-password';
-    pwd.style.cssText = 'width:100%;box-sizing:border-box;background:#0d1110;border:1px solid #2b3330;color:#e6e1d8;padding:8px;font-family:inherit;font-size:13px';
+    pwd.style.cssText = 'width:100%;box-sizing:border-box;background:#0d1110;border:1px solid #2b3330;color:#e6e1d8;padding:8px;font-family:inherit;font-size:var(--ch-fs-sub,13px)';
     box.appendChild(title);
     box.appendChild(hint);
     if (mode === 'offline') {
@@ -108,13 +108,13 @@ function buildAuthOverlay(mode, message) {
         pwd2.type = 'password';
         pwd2.placeholder = '再输一次';
         pwd2.autocomplete = 'new-password';
-        pwd2.style.cssText = 'width:100%;box-sizing:border-box;background:#0d1110;border:1px solid #2b3330;color:#e6e1d8;padding:8px;font-family:inherit;font-size:13px;margin-top:8px';
+        pwd2.style.cssText = 'width:100%;box-sizing:border-box;background:#0d1110;border:1px solid #2b3330;color:#e6e1d8;padding:8px;font-family:inherit;font-size:var(--ch-fs-sub,13px);margin-top:8px';
         box.appendChild(pwd2);
     }
     var btn = document.createElement('button');
     btn.id = 'consoleAuthBtn';
     btn.textContent = mode === 'setup' ? '设置并进入' : '登录';
-    btn.style.cssText = 'width:100%;margin-top:12px;background:#2f6b45;border:none;color:#f2f5f3;padding:9px;cursor:pointer;font-family:inherit;font-size:13px';
+    btn.style.cssText = 'width:100%;margin-top:12px;background:#2f6b45;border:none;color:#f2f5f3;padding:9px;cursor:pointer;font-family:inherit;font-size:var(--ch-fs-sub,13px)';
     box.appendChild(btn);
     wrap.appendChild(box);
     document.body.appendChild(wrap);
