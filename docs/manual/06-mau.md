@@ -22,7 +22,7 @@ LLM 写 .mau 语料 → 门禁验真 → 翻译 C# → 编译 dll → 热重载 
 | **B 积木** | `Bricks/<类别>/BRIK-*.cs` | 索引重建 → **重翻全部引用组** → 逐个 `host-reload` |
 | **C 宿主程序集** | `CatHome4.*` / `Mau.Runtime` 等 | **必须部署链 + 重启**——热重载无效（被 ALC 持锁） |
 | **D 基座机制** | 翻译器 / Runtime 语义 | 门禁全绿 → 全组重建 → 部署 + 重启 |
-| **E 前端 / 配置** | `html/` · 配置 | 源码区形态直读即时；部署区形态须部署后生效 |
+| **E 前端 / 配置** | `html/` · 配置面 | 源码区形态直读即时；**部署区 / 运行区形态须同步或部署后才生效** |
 
 **判据一句话：** 能下沉到 Flow / 积木的改动，不下沉到宿主 dll——热重载能力决定部署面。
 
@@ -34,7 +34,7 @@ LLM 写 .mau 语料 → 门禁验真 → 翻译 C# → 编译 dll → 热重载 
 | `mau test` | 翻译器 + Runtime / 黄金哈希 / 积木谱 |
 | `mau check` | 语法谱 + 负例谱 + 关键路径报告 |
 | `mau bricks index --verify` | 积木索引 ↔ 磁盘一致性 |
-| 双 sln build + 宿主测试 | 基座 / 宿主编译 + 全绿 |
+| 双 sln build + 宿主测试 + 前端测试 | 基座 / 宿主编译 + 全绿 |
 
 **改了必测**——翻译器 / 积木 / 宿主改动后先跑对应门禁再提交；黄金文件漂移 = 语义变更，必须说明原因。
 
@@ -50,6 +50,7 @@ mau proj corpus/ch4/<组>/<组>.mauproj -o public/src/<组> --build
 **热重载**（宿主不重启换 Flow）——`host-reload`（`cat` = 组名）：部署 dll → 事务三段式（加载新版本 → 试跑验证 → 成功换句柄，失败保留旧版本）→ ToolPool 重建。
 
 > 不可热重载面：宿主程序集 dll 被 ALC 持锁——必须走部署链 + 重启。
+> 新增工具组**首次上线**走 `mau-setup`（prepare）+ 重启；`host-reload` 只做已注册组的替换。
 
 ## 写语料硬约束（高频三条）
 
@@ -61,9 +62,12 @@ mau proj corpus/ch4/<组>/<组>.mauproj -o public/src/<组> --build
 
 ## 部署链（顺序不可跳）
 
-一键：`mau-setup`（`prepare` 就地自举 / `sync-html` 前端资源同步）。
-手动六步：`dotnet build Mau.sln` → `dotnet test Mau.sln` → publish 基座 → 逐组组翻译 `--build` → publish 宿主 → 宿主自检。
+一键：`mau-setup` 工具（`prepare` 就地自举 / `sync-html` 前端资源同步 / `publish-linux` Linux 交叉发布），或在仓库根直接跑 `SetUp.exe` 的对应模式。
+
+**版本自增单点**：`SetUp prepare`（仓库内）是唯一自增点——`publish-linux` 与投放链都不自增，同一份源码只产一个代际号。
+
+手动六步（`prepare` 的内部同序动作）：`dotnet build Mau.sln` → `dotnet test` 双 sln → publish 基座 → 逐组组翻译 `--build` → publish 宿主 → 宿主自检。
 
 **硬约束：** 改基座源码后必须先刷新部署区再编积木（组翻译引用部署区 `Mau-public/Mau.Runtime.dll`，不是源码输出目录）；语料 dll 运行中可热重载，宿主 publish 前先停进程。
 
-> 详细步骤 → 07 宿主与部署。
+> 详细步骤与 Linux 投放 → 07 宿主与部署。

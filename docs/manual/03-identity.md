@@ -6,11 +6,13 @@
 
 | 术语 | 是什么 | 位置 |
 |:--|:--|:--|
-| **Worker**（人格） | 主人格单元——语言习惯 + 核心参数 + 行为准则。一次任务唯一 | `L2/Worker/<名>/` |
-| **Job**（能力） | 能力单元——只写「怎么解决问题」，被动加载。一次任务 N 个 | `L2/Job/<名>/` |
+| **Worker**（人格） | 主人格单元——语言习惯 + 核心参数 + 行为准则。一次任务唯一 | 知识库 `L2/Worker/<名>/` |
+| **Job**（能力） | 能力单元——只写「怎么解决问题」，被动加载。一次任务 N 个 | 知识库 `L2/Job/<名>/` |
 | **猫（Cat）** | 运行时容器——每猫独立会话 / 端口 / 工具面 / 受控根 / 配置 | 数据区 `sessions/<id>/` |
 
 **判据：** 换人格（语气 / 决策风格）改 Worker；换能力（会不会用 C# 工具）改挂载的 Job；换运行参数（端口 / 工具面 / 配置）改猫。
+
+> 「知识库」指与仓库配套的 CCBP 知识网络（`Worker/` / `Job/` 是其中的目录）；只做使用与部署的话不需要读它，改造猫的行为时才需要。
 
 ## Worker 与 Job 的文件结构
 
@@ -36,10 +38,20 @@
 | **Coder** | 编程主人格——通用工程认知 |
 | **Chat** | 聊天人格——日常社交 |
 | **DM** | 故事扮演人格——跑团叙事 |
+| **Admin** | 组务管理员——派单 / 验收 / 会话重建 / 成果汇总 |
+| **ChiefMaid** | 运营猫——项目维护 / 汇总汇报 / 定期清理（无人环） |
 
-**Job（部分）：** CSharp（C# 语言栈 + cs-* 工具）· Mau（自举工具包）· Git · WinForms · Html · Unity · Godot（+Tscn/Shader/Video）· AVG · Drama · Product · FFmpeg · Node · Steam · Browser ……每个 Job 提供一类领域能力。
+**Job（按域列，非全量）：**
 
-> 项目声明「主人格 + 加载 Job」，例：CH4 = Coder + CSharp/Mau。
+| 域 | Job |
+|:--|:--|
+| 语言与工程 | CSharp · TypeScript · Node · Go · Unity · Godot（+ Tscn / Shader / Pack / Video）· Cocos · WinForms · Html |
+| 工具与链路 | Mau（自举工具包）· MauLinux（Linux 部署运维）· Git · Steam · WeChatGame · Browser · FFmpeg |
+| 协作与治理 | Group（派单 / 配员 / 会话重建）· ProjectKit（项目建档治理）· Db（条目库）· QqBot（QQ 通道） |
+| 内容与产品 | AVG · Drama · Product |
+| 多猫叙事 | DM-Host（主持）· DM-NPC（NPC 演出）· DM-Check（设定校验） |
+
+> 项目声明「主人格 + 加载 Job」，例：CH4 = Coder + CSharp / Mau（+ Group 等按需）。
 
 ## 面——知识按「什么时候读」分层
 

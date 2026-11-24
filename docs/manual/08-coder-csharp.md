@@ -5,7 +5,7 @@
 ## 改造前的准备
 
 1. **确认入口**：仓库根 = 受控根 `mau`。宿主入口 `CatHome4.sln`，基座入口 `Mau.sln`。
-2. **确认环境**：Windows + .NET 10 SDK；`dotnet --version` ≥ 10.0。
+2. **确认环境**：.NET 10 SDK（`dotnet --version` ≥ 10.0）；Linux 侧另需运行时。
 3. **确认改动分类**（见 06）——宿主程序集改动走「部署 + 重启」，语料 / 积木改动走「热重载」。分类错了，就会得到「改了没生效」。
 
 ## Coder 方法论（动手前的思维）
@@ -50,6 +50,8 @@
 
 **cs-* 铁律：** 修改前先读（`cs-read`）· 每步改完立即 `cs-check` + `cs-build` · 裁决以 `cs-build` 为准 · 写操作串行单发 · 改方法体优先 `cs-patch`（只支持方法 / 构造函数体）· 行级与结构级走 `text-*` · 项目有残留编译错先修错误再改 · 被拒参数是保护（改参数不绕行）。
 
+**TypeScript 同构：** 同样的读 / 改 / 验节奏换 `ts-*`（`ts-read` → `ts-patch` → `ts-check`），工程口径以 `tsconfig` 为准（`ts-info` 可查生效档位）。
+
 ## 编码规范要点
 
 | 项 | 要求 |
@@ -90,14 +92,25 @@
 | 命令 | 用途 |
 |:--|:--|
 | `dotnet build CatHome4.sln` · `dotnet build Mau.sln` | 宿主 / 基座全量构建（0 error 0 warning） |
-| `dotnet test CatHome4.sln` | 宿主测试 |
+| `dotnet test CatHome4.sln` · `dotnet test Mau.sln` | 宿主 / 基座测试 |
 | `mau test` / `mau check` | 三段门禁 / 语法谱 + 负例谱 |
 | `mau verify <file.mau>` | 语料全链检查 |
 | `mau proj <组>.mauproj -o <dir> --build` | 组翻译 + 出 dll |
+| `mau bricks index --update` | 积木索引重建（唯一写入通道） |
+| `SetUp.exe prepare` · `SetUp.exe deploy <目录>` | 仓库内重建 / 发布正式实例 |
 | `CatHome4.exe --run "<指令>"` | CLI 全链（脚本化跑测） |
+
+## 仓库约定
+
+| 约定 | 内容 |
+|:--|:--|
+| 提交信息 | `vX.Y: 变更摘要`（≤30 字，动词开头） |
+| 发布标签 | 重要版本打 `v<版本号>` 标签 |
+| 版本单点 | 仓库根 `Directory.Build.props` 的 `<Version>`——宿主与基座同一条版本线 |
+| 双远程 | Gitee `origin`（日常推送）· GitHub 镜像（自动同步，不直接推） |
 
 ## 进阶：减少上下文膨胀（timeback）
 
-改码 / 编译 / 跑测的过程输出（编译日志、报错栈、测试流水）体量大且用完即弃——**预期串接 ≥3 次工具调用才收口**的环节，开一个 `code_write` 作用域在其中完成读 / 改 / 编译 / 跑测，收回时只带回「变更位置 + 可复跑跑测」，过程输出留在域内销毁。审查取证（读码 / 查引用）走 `code_review` 域，网页 / 看图走 `browser_vision` 域。
+改码 / 编译 / 跑测的过程输出（编译日志、报错栈、测试流水）体量大且用完即弃——**预期串接 ≥3 次工具调用才收口**的环节，开一个 `code_write` 作用域在其中完成读 / 改 / 编译 / 跑测，收回时只带回「变更位置 + 可复跑跑测」，过程输出留在域内销毁。审查取证（读码 / 查引用）走 `code_review` 域，网页 / 看图走 `browser_vision` / `image_vision` 域。
 
 > 收域后**必按变更位置回读**（未回读 = 本域未闭合）。
