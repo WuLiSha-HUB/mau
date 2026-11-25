@@ -38,6 +38,10 @@ namespace CH4
         /// 是否已 TimeOut——工单超时判定（超时→诚实 ERR 报错，不再直执）
         /// </summary>
         public bool IsTimedOut;
+        /// <summary>
+        /// 超时前是否曾被认领——排队超时（未认领 = 从未执行）与执行超时的分流判据
+        /// </summary>
+        public bool ClaimedBeforeTimeout;
 
         /// <summary>
         /// 回执结果文本（Closed 后有效）
@@ -141,6 +145,11 @@ namespace CH4
             else if (state == OfficeState.TimeOut)
             {
                 IsTimedOut = true;
+                // [段1b] 超时分流判据——超时前是否曾被认领：取 OA 的 ClaimByWorkerId（认领置执行方 ID，仅 Post/Relist/ReleaseByWorker 清零）。
+                //   不用 ClaimFrame > 0——帧号可从 0 起，第 0 帧认领会误判为未认领（单测 Tick_TimeoutAfterClaim_MarksClaimed 抓出）。
+                //   false = 排队超时（从未认领 = 从未执行，可安全重试）；true = 执行超时（可能仍在跑，勿盲目重试）。
+                Office timedOutOffice = oa.GetOffice(OfficeId);
+                ClaimedBeforeTimeout = timedOutOffice.ClaimByWorkerId > 0;
                 // 超时同样闭幕——闭合时刻置值，避免下游按「未闭合」回落采样时刻（两段计时口径一致）
                 if (ClosedAtMs <= 0)
                 {

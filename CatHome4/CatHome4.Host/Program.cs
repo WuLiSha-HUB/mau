@@ -857,10 +857,7 @@ namespace CH4
             }
         }
 
-        /// <summary>
-        /// 工具组实例池尺寸——组名 → 实例数（缺省 1 = 单实例）。
-        /// 池化组一次加载 K 个实例（独立 FlowId），由 OA 原子接单天然分流——服务型组并发吞吐。
-        /// </summary>
+        /// <summary>工具组实例池尺寸——组名 → 实例数（缺省 1 = 单实例）。池化组一次加载 K 个实例（独立 ALC + FlowId），由 OA 原子接单天然分流——服务型组与高并发工具组并发吞吐。工具定义只从首实例取（ToolPool 见首实例），兄弟实例（~2..~K）只承载执行；盒按 FlowId 段化隔离（语料零改动）。</summary>
         /// <param name="flowName">Flow 名</param>
         /// <returns>实例数（≥1）</returns>
         private static int PoolSizeOf(string flowName)
@@ -868,6 +865,12 @@ namespace CH4
             if (flowName == "LLMSimpleRequest")
             {
                 return 4;
+            }
+            // PsCat——多猫共用宿主时的外部通道并发（每实例 2 条认领线：powershell / powershell7；
+            // 池化 = 每工具 8 个并行槽，破队头阻塞：单条长命令不再按死全局线）
+            if (flowName == "PsCat")
+            {
+                return 8;
             }
             return 1;
         }

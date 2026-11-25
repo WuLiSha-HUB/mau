@@ -2433,8 +2433,18 @@ namespace CH4
             {
                 if (dog.IsTimedOut)
                 {
-                    LogStore.Add("CatHome4", 2, "工具 " + dog.Name + " 工单 #" + dog.OfficeId + " 超时（时限内无回执）——诚实 ERR；超时 ≠ 终止：底层执行可能仍在跑", "TOOL");
-                    dog.Result = "ERR|OA_TIMEOUT|工单超时（时限内无回执）: " + dog.Name + "——超时 ≠ 终止：只失去回执，宿主不中断已认领的执行，底层可能仍在跑；勿用同参数重试（可能重复执行），长任务请分片（拆成多次小批）或走断点续传";
+                    // 超时分流（A410）——排队超时（从未认领 = 从未执行，可安全重试）与执行超时（可能仍在跑，勿重试）各自成码：
+                    //   码分流判据在 ToolOrderDog.Tick（ClaimedBeforeTimeout ← OA ClaimFrame 权威记录）。
+                    if (dog.ClaimedBeforeTimeout)
+                    {
+                        LogStore.Add("CatHome4", 2, "工具 " + dog.Name + " 工单 #" + dog.OfficeId + " 执行超时（已认领，时限内无回执）——诚实 ERR；超时 ≠ 终止：底层执行可能仍在跑", "TOOL");
+                        dog.Result = "ERR|OA_TIMEOUT|工单超时（时限内无回执）: " + dog.Name + "——超时 ≠ 终止：只失去回执，宿主不中断已认领的执行，底层可能仍在跑；勿用同参数重试（可能重复执行），长任务请分片（拆成多次小批）或走断点续传";
+                    }
+                    else
+                    {
+                        LogStore.Add("CatHome4", 2, "工具 " + dog.Name + " 工单 #" + dog.OfficeId + " 排队超时（时限内未被认领——从未执行）——可安全重试", "TOOL");
+                        dog.Result = "ERR|OA_QUEUE_TIMEOUT|工单排队超时（时限内未被认领，从未执行）: " + dog.Name + "——本单未被执行，同参数重发不会重复执行；持续出现说明队列拥塞，请错峰提交或分片（拆成多次小批）";
+                    }
                 }
                 else
                 {

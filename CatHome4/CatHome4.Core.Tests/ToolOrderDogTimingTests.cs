@@ -1,4 +1,5 @@
 ﻿using System;
+using Mau.Runtime;
 using Xunit;
 
 namespace CatHome4.Core.Tests
@@ -70,6 +71,54 @@ namespace CatHome4.Core.Tests
             dog.ClosedAtMs = 1200;
             Assert.Equal(-1, dog.QueueMs());
             Assert.Equal(-1, dog.RunMs());
+        }
+    }
+
+    /// <summary>
+    /// 工具单超时分流测试（A410）——排队超时（未被认领 = 从未执行，可安全重试）与执行超时（已认领 = 可能仍在跑，勿盲目重试）分流成不同码。
+    /// 判据源 = OA 的 ClaimFrame（Complete 不清零、仅 Post/Relist 清零）。
+    /// </summary>
+    public class ToolOrderDogTimeoutTests
+    {
+        /// <summary>
+        /// 未被认领即超时——ClaimedBeforeTimeout=false（下游选 OA_QUEUE_TIMEOUT）。
+        /// </summary>
+        [Fact]
+        public void Tick_TimeoutWithoutClaim_MarksUnclaimed()
+        {
+            OA oa = new OA(new ThreadGuard());
+            CH4.ToolOrderDog dog = new CH4.ToolOrderDog("1", "tool.a", "{}");
+            dog.TimeoutFrames = 2;
+            dog.Post(oa, 1);
+            for (int i = 0; i < 5; i = i + 1)
+            {
+                oa.Tick();
+            }
+            dog.Tick(oa);
+            Assert.True(dog.IsTimedOut);
+            Assert.False(dog.ClaimedBeforeTimeout);
+        }
+
+        /// <summary>
+        /// 已被认领后超时——ClaimedBeforeTimeout=true（下游选 OA_TIMEOUT）。
+        /// </summary>
+        [Fact]
+        public void Tick_TimeoutAfterClaim_MarksClaimed()
+        {
+            OA oa = new OA(new ThreadGuard());
+            CH4.ToolOrderDog dog = new CH4.ToolOrderDog("2", "tool.a", "{}");
+            dog.TimeoutFrames = 2;
+            dog.Post(oa, 1);
+            long[] ids = new long[1];
+            ids[0] = dog.OfficeId;
+            oa.ClaimBatch(2, ids);
+            for (int i = 0; i < 5; i = i + 1)
+            {
+                oa.Tick();
+            }
+            dog.Tick(oa);
+            Assert.True(dog.IsTimedOut);
+            Assert.True(dog.ClaimedBeforeTimeout);
         }
     }
 }
