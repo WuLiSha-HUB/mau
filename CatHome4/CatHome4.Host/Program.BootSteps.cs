@@ -357,6 +357,8 @@ namespace CH4
             DataBox.Bind<Mau.Contracts.IQQBotService>(qqBotSvc);
             // A380 业务面——同一实例挂 IQQBotOps（工具组发言 / 通道自述 / 群目录维护）
             DataBox.Bind<Mau.Contracts.IQQBotOps>(qqBotSvc);
+            // A409 狼人杀本体对接——WwCat 工具组执行面（零配置项：出站以 catId 为凭证打本体，由本体匹配座位）
+            DataBox.Bind<Mau.Contracts.IWerewolfOps>(new Mau.Providers.WerewolfService());
             AuditStore audit = new AuditStore();
             AuditStore.Default = audit;
             _runner.Audit = audit;

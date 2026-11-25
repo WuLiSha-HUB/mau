@@ -1,6 +1,6 @@
 ﻿# Mau 积木索引 — INDEX
 
-> 版本：v3.3 | 更新：2026-11-19（mau bricks index --update 源码驱动重建）
+> 版本：v3.3 | 更新：2026-11-25（mau bricks index --update 源码驱动重建）
 > 全量积木登记——一行一条。ID 永不重用。
 
 ## 全部积木
@@ -108,6 +108,7 @@
 | BRIK-TOOLS-020 | tools.groupcat | TOOLS | TOOLS/BRIK-TOOLS-020_tools.groupcat.cs | 无 | active |  |
 | BRIK-TOOLS-021 | tools.shcat | TOOLS | TOOLS/BRIK-TOOLS-021_tools.shcat.cs | 无 | active |  |
 | BRIK-TOOLS-022 | tools.qqbotcat | TOOLS | TOOLS/BRIK-TOOLS-022_tools.qqbotcat.cs | 无 | active |  |
+| BRIK-TOOLS-023 | tools.wwcat | TOOLS | TOOLS/BRIK-TOOLS-023_tools.wwcat.cs | 无 | active |  |
 | BRIK-TS-001 | ts.check | TS | TS/BRIK-TS-001_ts.check.cs | 无 | active |  |
 | BRIK-TS-002 | ts.list | TS | TS/BRIK-TS-002_ts.list.cs | 无 | active |  |
 | BRIK-TS-003 | ts.read | TS | TS/BRIK-TS-003_ts.read.cs | 无 | active |  |
@@ -123,7 +124,11 @@
 | BRIK-WEB-002 | web.fetch | WEB | WEB/BRIK-WEB-002_web.fetch.cs | 无 | active |  |
 | BRIK-WEB-003 | web.fetch.jobs | WEB | WEB/BRIK-WEB-003_web.fetch.jobs.cs | 无 | active |  |
 | BRIK-WEB-004 | web.ds.search | WEB | WEB/BRIK-WEB-004_web.ds.search.cs | 无 | active |  |
+| BRIK-WEREWOLF-001 | werewolf.state | WEREWOLF | WEREWOLF/BRIK-WEREWOLF-001_werewolf.state.cs | 无 | active |  |
+| BRIK-WEREWOLF-002 | werewolf.whoami | WEREWOLF | WEREWOLF/BRIK-WEREWOLF-002_werewolf.whoami.cs | 无 | active |  |
+| BRIK-WEREWOLF-003 | werewolf.events | WEREWOLF | WEREWOLF/BRIK-WEREWOLF-003_werewolf.events.cs | 无 | active |  |
+| BRIK-WEREWOLF-004 | werewolf.act | WEREWOLF | WEREWOLF/BRIK-WEREWOLF-004_werewolf.act.cs | 无 | active |  |
 
 ---
 
-_版本：v3.3 | 2026-11-19 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_
+_版本：v3.3 | 2026-11-25 | 自动生成——mau bricks index --update（源码唯一真相源：文件头 + 静态签名；来源列为人工维护区）_

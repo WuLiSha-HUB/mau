@@ -1,0 +1,91 @@
+﻿// ww_cat.mau —— WwCat 语料（CH4 狼人杀工具组——A409）
+// 角色：工具组 Flow——认领 TOOL 域 4 工具（ww-state 牌面 / ww-whoami 身份 / ww-events 事件增量 / ww-act 动作提交）
+// 出口铁律：工具参数面与回执面永不出现本体凭证——身份由宿主注入（catId），地址与座位 Key 落宿主侧对局配置
+// 单级 OA 单：Dog（宿主 ToolOrderDog 实体）Post → 本 Flow 4 线认领执行 → complete_str 回执
+// 载荷协议：officeName = 工具名；载荷 key "args" = 整包工具参数 JSON（零参数 · after · action/target/text）
+// 数据面：@wsOffice/@wsArgs/@wsRes + @wo*/@we*/@wa* 私有盒（FlowId 隔离）
+// 线程模型：全部主线程同步——积木内 HTTP 打本体（本地进程，秒级）
+// 观测：trace 埋点生成器内建 + OA 机制专属 Log（帧号回溯）
+
+// ── 状态机（4 线——ww-state / ww-whoami / ww-events / ww-act）──
+§ 'S_State' = { 'Init', 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Who' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Events' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+§ 'S_Act' = { 'Idle', 'Claimed', 'Ready', 'Done', 'Failed' }
+
+// T_Init：启动初始化自述——Init → Idle 首帧写"空闲待命"
+§ 'T_Init' : 'S_State' = 'Init' → 'self.desc'["狼人杀通道空闲待命", "", ""] | 'S_State' = 'Idle' | 'S_State' = 'Idle'
+
+// ── 主动传感器壳——4 线探测（纯只读判断积木 → bool 落盒）──
+§ 'P_StateOpen' ↻ [1]: 'oa.is_open'["TOOL", "ww-state"] > @wsOpen
+§ 'P_WhoOpen' ↻ [1]: 'oa.is_open'["TOOL", "ww-whoami"] > @woOpen
+§ 'P_EventsOpen' ↻ [1]: 'oa.is_open'["TOOL", "ww-events"] > @weOpen
+§ 'P_ActOpen' ↻ [1]: 'oa.is_open'["TOOL", "ww-act"] > @waOpen
+
+// ══════════════ ww-state 线（牌面读取）══════════════
+
+// T_StateClaim：探测真 + Idle → 原子接单（竞态失败回 Idle 重试）
+§ 'T_StateClaim' : @wsOpen & 'S_State' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ww-state"] > @wsOffice | 'S_State' = 'Claimed' | 'S_State' = 'Idle'
+
+// T_StateArgs：读载荷 args（零业务参数——catId 由宿主注入）
+§ 'T_StateArgs' : 'S_State' = 'Claimed' → 'oa.get_str'[@wsOffice, "args"] > @wsArgs | 'S_State' = 'Ready' | 'S_State' = 'Failed'
+
+// T_StateRun：取牌面（失败侧 ERR 文本也在 @wsRes——未配对局 / 不可达 / 本体错误码）
+§ 'T_StateRun' : 'S_State' = 'Ready' → 'werewolf.state'[@wsArgs] > @wsRes | 'self.desc'["狼人杀牌面读取中", "", ""] | 'S_State' = 'Done' | 'S_State' = 'Failed'
+
+// T_StateReply：成功回执（裁剪视图 JSON）
+§ 'T_StateReply' : 'S_State' = 'Done' → 'oa.complete_str'[@wsOffice, @wsRes] | 'self.desc'["狼人杀通道空闲待命", "", ""] | 'S_State' = 'Idle' | 'S_State' = 'Idle'
+
+// T_StateAbort：失败回执（@wsRes 含 ERR| 文本——失败可见）
+§ 'T_StateAbort' : 'S_State' = 'Failed' → 'oa.complete_str'[@wsOffice, @wsRes] | 'S_State' = 'Idle' | 'S_State' = 'Idle'
+
+// ══════════════ ww-whoami 线（身份自省）══════════════
+
+// T_WhoClaim：探测真 + Idle → 原子接单
+§ 'T_WhoClaim' : @woOpen & 'S_Who' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ww-whoami"] > @woOffice | 'S_Who' = 'Claimed' | 'S_Who' = 'Idle'
+
+// T_WhoArgs：读载荷 args（零业务参数）
+§ 'T_WhoArgs' : 'S_Who' = 'Claimed' → 'oa.get_str'[@woOffice, "args"] > @woArgs | 'S_Who' = 'Ready' | 'S_Who' = 'Failed'
+
+// T_WhoRun：取自省（局号 / 座位 / 角色 / 存活）
+§ 'T_WhoRun' : 'S_Who' = 'Ready' → 'werewolf.whoami'[@woArgs] > @woRes | 'S_Who' = 'Done' | 'S_Who' = 'Failed'
+
+// T_WhoReply：成功回执
+§ 'T_WhoReply' : 'S_Who' = 'Done' → 'oa.complete_str'[@woOffice, @woRes] | 'S_Who' = 'Idle' | 'S_Who' = 'Idle'
+
+// T_WhoAbort：失败回执
+§ 'T_WhoAbort' : 'S_Who' = 'Failed' → 'oa.complete_str'[@woOffice, @woRes] | 'S_Who' = 'Idle' | 'S_Who' = 'Idle'
+
+// ══════════════ ww-events 线（事件增量）══════════════
+
+// T_EventsClaim：探测真 + Idle → 原子接单
+§ 'T_EventsClaim' : @weOpen & 'S_Events' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ww-events"] > @weOffice | 'S_Events' = 'Claimed' | 'S_Events' = 'Idle'
+
+// T_EventsArgs：读载荷 args（after）
+§ 'T_EventsArgs' : 'S_Events' = 'Claimed' → 'oa.get_str'[@weOffice, "args"] > @weArgs | 'S_Events' = 'Ready' | 'S_Events' = 'Failed'
+
+// T_EventsRun：取增量（已按视角裁剪）
+§ 'T_EventsRun' : 'S_Events' = 'Ready' → 'werewolf.events'[@weArgs] > @weRes | 'self.desc'["狼人杀事件读取中", "", ""] | 'S_Events' = 'Done' | 'S_Events' = 'Failed'
+
+// T_EventsReply：成功回执
+§ 'T_EventsReply' : 'S_Events' = 'Done' → 'oa.complete_str'[@weOffice, @weRes] | 'self.desc'["狼人杀通道空闲待命", "", ""] | 'S_Events' = 'Idle' | 'S_Events' = 'Idle'
+
+// T_EventsAbort：失败回执
+§ 'T_EventsAbort' : 'S_Events' = 'Failed' → 'oa.complete_str'[@weOffice, @weRes] | 'S_Events' = 'Idle' | 'S_Events' = 'Idle'
+
+// ══════════════ ww-act 线（动作提交）══════════════
+
+// T_ActClaim：探测真 + Idle → 原子接单
+§ 'T_ActClaim' : @waOpen & 'S_Act' = 'Idle' → 'oa.claim_next_simple'["TOOL", "ww-act"] > @waOffice | 'S_Act' = 'Claimed' | 'S_Act' = 'Idle'
+
+// T_ActArgs：读载荷 args（action / target / text）
+§ 'T_ActArgs' : 'S_Act' = 'Claimed' → 'oa.get_str'[@waOffice, "args"] > @waArgs | 'S_Act' = 'Ready' | 'S_Act' = 'Failed'
+
+// T_ActRun：提交（失败侧 ERR 文本也在 @waRes——本体错误码直通不吞）
+§ 'T_ActRun' : 'S_Act' = 'Ready' → 'werewolf.act'[@waArgs] > @waRes | 'self.desc'["狼人杀动作提交中", "", ""] | 'S_Act' = 'Done' | 'S_Act' = 'Failed'
+
+// T_ActReply：成功回执（受理回执 JSON）
+§ 'T_ActReply' : 'S_Act' = 'Done' → 'oa.complete_str'[@waOffice, @waRes] | 'self.desc'["狼人杀通道空闲待命", "", ""] | 'S_Act' = 'Idle' | 'S_Act' = 'Idle'
+
+// T_ActAbort：失败回执（@waRes 含 ERR| 文本——失败可见）
+§ 'T_ActAbort' : 'S_Act' = 'Failed' → 'oa.complete_str'[@waOffice, @waRes] | 'S_Act' = 'Idle' | 'S_Act' = 'Idle'
