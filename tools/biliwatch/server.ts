@@ -216,8 +216,8 @@ const DEFAULT_CONFIG: BiliwatchConfig = {
     publish: { enabled: true, endpoint: 'http://127.0.0.1:8080/api/v1/channels/publish', key: '' },
     notify: { onLive: true, onOffline: true },
     templates: {
-        live: '【开播】{name}\n{title}\n{url}',
-        offline: '【下播】{name}\n本次直播时长：{duration}\n{url}'
+        live: '# 🔴 {name} 开播了\n\n> 📺 {title}\n\n[▶ 点击进入直播间]({url})',
+        offline: '# ⚫ {name} 下播了\n\n⏱ 时长：**{duration}**\n\n[▶ 点击进入直播间]({url})'
     }
 };
 
@@ -351,6 +351,14 @@ function renderTemplate(tpl: string, ctx: Record<string, string | undefined>): s
         }
         return String(v);
     });
+}
+
+/**
+ * Markdown 控制字符剥除——B 站标题里的 [* _ ` # [ ] ~] 会把后续正文吃成斜体 / 链接 / 代码，
+ * 渲染出来是残句；发送前统一剥掉（只作用于人写字段，URL 不过本函数）。
+ */
+function stripMd(s: string): string {
+    return String(s).replace(/[*_`#\[\]~]/g, '');
 }
 
 /**
@@ -712,9 +720,9 @@ async function notifyTransition(roomCfg: RoomConfig, st: RoomState, kind: Transi
         return;
     }
     const ctx: Record<string, string | undefined> = {
-        name: roomCfg.note || st.title || ('房间 ' + st.roomId),
+        name: stripMd(roomCfg.note || st.title || ('房间 ' + st.roomId)),
         roomId: st.roomId,
-        title: st.title,
+        title: stripMd(st.title),
         uid: st.uid,
         url: ROOM_URL + st.roomId,
         duration: kind === 'offline' && sinceMs ? formatDuration(Math.round((Date.now() - sinceMs) / 1000)) : ''
